@@ -1,0 +1,55 @@
+# Real environments — never committed. Only environments/example/ is in git.
+environments/*
+!environments/example/
+
+# Customer/testing data — fully gitignored (dogfooding safety)
+customer/
+
+# Local tool output, logs, state files
+data/
+*.log
+.local/
+
+# Semaphore state (generated from catalogue, not canonical)
+semaphore-state/
+
+# NetBox export cache (generated from API)
+netbox-export/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+venv/
+
+# Ansible retry files
+*.retry
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets (belt-and-suspenders with pre-commit hook)
+*.pem
+*.key
+*.crt
+credentials.yml
+vault-pass*
+**/secrets.yml
+**/vault.yml
+
+# Dotenv (may contain tokens)
+.env
+.env.*
+
+# gitleaks report (generated in CI)
+gitleaks-report.json

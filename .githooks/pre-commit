@@ -1,0 +1,36 @@
+#!/bin/bash
+set -euo pipefail
+
+echo "=== opskit pre-commit ==="
+
+# Secret scan (fast grep-based, belt-and-suspenders with CI gitleaks)
+PATTERNS=(
+    'password\s*=\s*"[^"]{8,}"'
+    'api[_-]?key\s*=\s*"[^"]{8,}"'
+    '-----BEGIN (RSA|EC|DSA|OPENSSH) PRIVATE KEY-----'
+    'ghp_[A-Za-z0-9]{36}'
+    'AIza[0-9A-Za-z\-_]{35}'
+)
+
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
+
+for pattern in "${PATTERNS[@]}"; do
+    matches=$(echo "$STAGED_FILES" | xargs -r grep -nE "$pattern" 2>/dev/null || true)
+    if [ -n "$matches" ]; then
+        echo "ERROR: Possible secret detected:"
+        echo "$matches"
+        echo "Remove the secret and try again."
+        exit 1
+    fi
+done
+
+# Environment isolation — only environments/example/ may be committed
+ENV_FILES=$(echo "$STAGED_FILES" | grep '^environments/' | grep -v '^environments/example/' || true)
+if [ -n "$ENV_FILES" ]; then
+    echo "ERROR: Real environment files cannot be committed:"
+    echo "$ENV_FILES"
+    echo "Only environments/example/ is allowed in git. Use customer/ for dogfooding data."
+    exit 1
+fi
+
+echo "All checks passed."
