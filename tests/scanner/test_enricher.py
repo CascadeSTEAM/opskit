@@ -18,10 +18,10 @@ from pathlib import Path
 
 import yaml
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.scanner.lib import enricher  # noqa: E402
+from bin.scanner_lib import enricher  # noqa: E402
 
 
 def _device(name, dtype='server', mac=None, ip=None, description='',
