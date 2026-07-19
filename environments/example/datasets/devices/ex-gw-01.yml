@@ -1,0 +1,12 @@
+# Device: ex-gw-01
+# Maturity: L1 — basic discovery (IP, MAC, hostname only)
+name: ex-gw-01
+hostname: gw.example.local
+ip_address: 192.0.2.1
+mac_address: "00:11:22:33:44:01"
+role: router
+status: active
+owner: example
+maturity: 1
+tags: [gateway, infrastructure]
+notes: Generated from NetBox. Fictional gateway for the example environment.

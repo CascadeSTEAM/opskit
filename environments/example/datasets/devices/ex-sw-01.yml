@@ -1,0 +1,16 @@
+# Device: ex-sw-01
+# Maturity: L2 — L1 + role, OS, basic hardware
+name: ex-sw-01
+hostname: sw01.example.local
+ip_address: 192.0.2.2
+mac_address: "00:11:22:33:44:02"
+role: switch
+os: RouterOS
+os_version: "7.16"
+hardware: CRS326-24G-2S+
+status: active
+owner: example
+maturity: 2
+vlans: [10, 20, 30]
+tags: [switch, infrastructure]
+notes: Generated from NetBox. 24-port managed switch. Carries VLANs 10 (mgmt), 20 (servers), 30 (clients).

@@ -1,0 +1,33 @@
+#environments/example/base-view.yml
+# Device-note generation config for the example environment.
+
+live_sources:
+  - type: yaml
+    path: datasets/devices/
+
+relationships:
+  uplink: switch → router
+  downlink: router → switch
+  serves: server → clients
+  connects_to: access-point → switch
+
+views:
+  index:
+    title: "Example Environment — Device Inventory"
+    group_by: role
+    sort: name
+
+  device:
+    fields:
+      - name
+      - hostname
+      - ip_address
+      - mac_address
+      - role
+      - status
+      - os
+      - hardware
+      - maturity
+      - services
+      - vlans
+      - notes
