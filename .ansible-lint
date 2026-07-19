@@ -1,0 +1,23 @@
+---
+# opskit ansible-lint config — migration phase (lenient)
+# Will be tightened in post-migration cleanup per GPA standards.
+
+exclude_paths:
+  - ansible/roles/frappe-upgrade/
+  - ansible/roles/frappe-bench/
+  - ansible/roles/frappe-site/
+  - ansible/roles/mariadb-frappe/
+  - ansible/roles/frappe-dependencies/
+
+skip_list:
+  - syntax-check[specific]
+  - schema[meta]
+  - name[casing]
+  - fqcn[action-core]
+
+warn_list:
+  - experimental
+  - no-changed-when
+  - no-handler
+  - risky-file-permissions
+  - risky-shell-pipe
