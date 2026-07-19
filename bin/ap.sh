@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
+RED='\033[0;31m'; NC='\033[0m'
 
 ACTIVE_ENV=$(grep '^ACTIVE_ENV=' "$REPO_ROOT/.env" 2>/dev/null | cut -d= -f2 | tr -d '"' | xargs || true)
 if [ -z "$ACTIVE_ENV" ]; then
