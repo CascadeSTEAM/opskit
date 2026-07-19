@@ -1,0 +1,13 @@
+---
+# Non-overridable constants — bench installation layout
+frappe_user: frappe
+frappe_user_home: /home/frappe
+frappe_bench_name: frappe-bench
+frappe_bench_path: "{{ frappe_user_home }}/{{ frappe_bench_name }}"
+frappe_apps_path: "{{ frappe_bench_path }}/apps"
+
+# MariaDB dump path — includes version so reruns don't collide
+frappe_db_dump_path: "/root/pre-{{ frappe_target_branch }}-dump.sql"
+
+# Proxmox snapshot description
+pve_snapshot_description: "Pre-{{ frappe_target_branch }} upgrade — Ansible {{ ansible_date_time.date | default('unknown') }}"

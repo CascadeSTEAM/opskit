@@ -1,0 +1,55 @@
+# Managed by Ansible — do not edit directly
+# Source: ansible/roles/caddy/templates/Caddyfile.j2
+
+# Global Options
+{
+	email {{ caddy_global_email }}
+	admin 127.0.0.1:2019 {
+		origins {{ ansible_default_ipv4.address }}:2019 127.0.0.1:2019 localhost:2019
+	}
+	servers {
+		metrics
+	}
+}
+
+# Snippet for internal restriction
+(internal_only) {
+	@external {
+		not remote_ip {{ caddy_internal_subnets | join(' ') }}
+	}
+	respond @external "Access Denied" 403
+}
+
+# Snippet for logging
+(logging) {
+	log {
+		output file /var/log/caddy/access.log
+		format json
+	}
+}
+{% for route in caddy_routes %}
+
+# {{ "External" if not route.internal else "Internal" }} Service
+{{ route.domain }} {
+	import logging
+{% if route.internal %}
+	import internal_only
+{% endif %}
+{% if route.handler is defined and route.handler == "file_server" %}
+	handle /ws {
+		reverse_proxy localhost:7890
+	}
+	handle {
+		root * /var/www/html
+		file_server
+	}
+{% elif route.extra is defined %}
+{% for line in route.extra.split('\n') %}
+	{{ line }}
+{% endfor %}
+	reverse_proxy {{ route.target }}
+{% else %}
+	reverse_proxy {{ route.target }}
+{% endif %}
+}
+{% endfor %}

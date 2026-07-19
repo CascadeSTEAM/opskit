@@ -1,0 +1,53 @@
+---
+# tasks file for frappe-dependencies role
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: yes
+  become: yes
+
+- name: Install system dependencies
+  ansible.builtin.apt:
+    name:
+      - python3-dev
+      - python3-venv
+      - python3-pip
+      - xvfb
+      - libfontconfig
+      - wkhtmltopdf
+      - curl
+      - git
+      - redis-server
+      - software-properties-common
+      - mariadb-server
+      - mariadb-client
+      - supervisor
+      - nginx
+      - sudo
+    state: present
+  become: yes
+
+- name: Download Node.js setup script
+  ansible.builtin.get_url:
+    url: "https://deb.nodesource.com/setup_{{ node_version }}.x"
+    dest: "/tmp/node_setup.sh"
+    mode: '0755'
+  become: yes
+
+- name: Run Node.js setup script
+  ansible.builtin.command:
+    cmd: "/tmp/node_setup.sh"
+  become: yes
+  changed_when: false
+
+- name: Install Node.js
+  ansible.builtin.apt:
+    name: nodejs
+    state: present
+  become: yes
+
+- name: Install Yarn globally
+  ansible.builtin.npm:
+    name: yarn
+    global: yes
+  become: yes

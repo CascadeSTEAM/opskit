@@ -1,0 +1,13 @@
+---
+- name: restart frappe bench
+  ansible.builtin.command:
+    cmd: bench restart
+    chdir: "{{ frappe_bench_path }}"
+  become_user: "{{ frappe_user }}"
+  listen: restart frappe
+
+- name: reload supervisor
+  ansible.builtin.service:
+    name: supervisor
+    state: reloaded
+  listen: reload supervisor

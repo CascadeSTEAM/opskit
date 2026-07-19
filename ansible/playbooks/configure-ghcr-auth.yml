@@ -1,0 +1,45 @@
+---
+# configure-ghcr-auth.yml
+#
+# PURPOSE: Configure docker login to ghcr.io on a deploy target so it can pull
+#          private cascadesteam packages (erp-cs, etc). erp-cs is currently
+#          private — see cs-erp-images CS-0029 notes.
+#
+# VAULT ITEMS REQUIRED (ansible/inventory/group_vars/all/vault.yml):
+#   vault_cs_ghcr_pull_user   — GitHub username owning the PAT
+#   vault_cs_ghcr_pull_token  — classic PAT, scope: read:packages
+#                                (Bitwarden: "GHCR Pull Token - cascadesteam")
+#
+# Usage:
+#   ansible-playbook playbooks/configure-ghcr-auth.yml -i inventory/cascadesteam.yml \
+#     --limit cs-erpnext --vault-password-file ../scripts/vault-pass.sh
+
+- name: Configure GHCR pull credentials
+  hosts: cs-erpnext
+  gather_facts: no
+  vars_files:
+    - ../inventory/group_vars/all/vault.yml
+  vars:
+    ansible_ssh_common_args: >-
+      -o ProxyCommand="ssh -i ~/.ssh/id_ed25519
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -W %h:%p -p 666 vpn.cascadesteam.org"
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+    ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+
+  tasks:
+    - name: Log in to ghcr.io
+      command: "docker login ghcr.io -u {{ vault_cs_ghcr_pull_user }} --password-stdin"
+      args:
+        stdin: "{{ vault_cs_ghcr_pull_token }}"
+      no_log: true
+      changed_when: true
+
+    - name: Verify pull of erp-cs image
+      command: docker pull ghcr.io/cascadesteam/erp-cs:v16.2.0
+      register: pull_check
+      changed_when: false
+
+    - name: Pull result
+      debug:
+        msg: "{{ pull_check.stdout_lines[-3:] }}"

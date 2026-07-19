@@ -1,0 +1,65 @@
+---
+# set-lxc-swap.yml — Set the swap allocation (MB) on a Proxmox LXC container
+#
+# Written for TKT-0105: pilot (CT 118 on pve2) had swap=5128192 (~5 TiB),
+# a typo for 8192. Reusable for any CT swap correction.
+#
+# Refuses to change anything unless the container's current swap value matches
+# expected_swap_mb — so a re-run (or a wrong vmid) is a no-op, not a surprise.
+#
+# Run from this repo root:
+#   ansible-playbook -i ansible/inventory/client1.yml \
+#     ansible/playbooks/set-lxc-swap.yml \
+#     -e target_host=pve2 -e vmid=118 \
+#     -e expected_swap_mb=5128192 -e new_swap_mb=8192
+
+- name: Set LXC container swap allocation
+  hosts: "{{ target_host }}"
+  gather_facts: no
+
+  tasks:
+    - name: Require all parameters
+      ansible.builtin.assert:
+        that:
+          - vmid is defined
+          - expected_swap_mb is defined
+          - new_swap_mb is defined
+        fail_msg: "Pass -e vmid=<id> -e expected_swap_mb=<mb> -e new_swap_mb=<mb>"
+
+    - name: Read current CT config
+      ansible.builtin.command: "pct config {{ vmid }}"
+      register: ct_config
+      changed_when: false
+
+    - name: Extract current swap value
+      ansible.builtin.set_fact:
+        current_swap_mb: "{{ ct_config.stdout | regex_search('(?m)^swap: (\\d+)$', '\\1') | first }}"
+
+    - name: Abort if current swap does not match expected
+      ansible.builtin.assert:
+        that:
+          - current_swap_mb | int == expected_swap_mb | int
+        fail_msg: >-
+          CT {{ vmid }} swap is {{ current_swap_mb }} MB, expected
+          {{ expected_swap_mb }} MB — refusing to change. If the config was
+          already fixed this is a no-op failure; otherwise re-check the vmid.
+      when: current_swap_mb | int != new_swap_mb | int
+
+    - name: Set new swap value
+      ansible.builtin.command: "pct set {{ vmid }} --swap {{ new_swap_mb }}"
+      when: current_swap_mb | int != new_swap_mb | int
+
+    - name: Verify new swap value
+      ansible.builtin.command: "pct config {{ vmid }}"
+      register: ct_config_after
+      changed_when: false
+
+    - name: Confirm swap is now the requested value
+      ansible.builtin.assert:
+        that:
+          - "ct_config_after.stdout is search('(?m)^swap: ' ~ (new_swap_mb | string) ~ '$')"
+        fail_msg: "CT {{ vmid }} swap did not update to {{ new_swap_mb }} MB"
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: "CT {{ vmid }} swap: {{ current_swap_mb }} MB → {{ new_swap_mb }} MB"

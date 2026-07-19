@@ -1,0 +1,69 @@
+---
+# workstation-ansible-toolchain.yml — pipx-managed Ansible toolchain on THIS system.
+#
+# Executes the approved remediation proposal's Phase 1 toolchain step, per the
+# IaC rule extension: control-node software lands via playbook, not ad-hoc shell.
+#
+# Installs/upgrades (user scope, no root):
+#   - ansible-core via pipx (latest; shadows distro /usr/bin/ansible via ~/.local/bin)
+#   - ansible-lint via pipx (quality gate for Phase 4)
+#   - pinned collections from ansible/requirements.yml (into ~/.ansible/collections)
+#
+# The distro ansible package is left untouched — rollback is `pipx uninstall ansible-core`.
+#
+# Usage:
+#   bash scripts/ap.sh playbooks/workstation-ansible-toolchain.yml
+
+- name: Workstation Ansible toolchain (pipx ansible-core + lint + collections)
+  hosts: workstations
+  gather_facts: yes
+  vars:
+    local_bin: "{{ ansible_env.HOME }}/.local/bin"
+
+  tasks:
+    - name: Refuse to run on the wrong machine (mandatory for connection=local)
+      ansible.builtin.assert:
+        that: ansible_hostname == inventory_hostname
+        fail_msg: >-
+          This machine is {{ ansible_hostname }}, not {{ inventory_hostname }} —
+          refusing to run a workstation play meant for another host.
+
+    - name: Require pipx
+      ansible.builtin.command: pipx --version
+      register: pipx_check
+      changed_when: false
+      failed_when: pipx_check.rc != 0
+
+    - name: Install/upgrade ansible-core via pipx
+      community.general.pipx:
+        name: ansible-core
+        state: latest
+
+    - name: Install/upgrade ansible-lint via pipx
+      community.general.pipx:
+        name: ansible-lint
+        state: latest
+
+    - name: Install pinned collections from requirements.yml
+      ansible.builtin.command: >
+        {{ local_bin }}/ansible-galaxy collection install
+        -r {{ playbook_dir }}/../requirements.yml --upgrade
+      register: galaxy_out
+      changed_when: "'Installing' in galaxy_out.stdout or 'Downloading' in galaxy_out.stdout"
+
+    - name: Verify new ansible-core resolves and report version
+      ansible.builtin.command: "{{ local_bin }}/ansible --version"
+      register: new_ansible
+      changed_when: false
+
+    - name: Verify shell PATH picks up the pipx ansible
+      ansible.builtin.shell: which ansible
+      register: which_ansible
+      changed_when: false
+
+    - name: Report toolchain state
+      ansible.builtin.debug:
+        msg:
+          - "{{ new_ansible.stdout_lines[0] }}"
+          - "PATH resolves ansible -> {{ which_ansible.stdout }}"
+          - "{{ 'OK: pipx ansible shadows distro' if local_bin in which_ansible.stdout else 'WARNING: PATH still resolves to distro ansible — check ~/.local/bin precedence (pipx ensurepath)' }}"

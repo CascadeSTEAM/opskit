@@ -1,0 +1,50 @@
+# olla.yaml — Olla proxy configuration (Ansible-managed)
+# Docs: https://thushan.github.io/olla/
+#
+# Routing priority (highest first):
+#   100 — cluster-llm  (RTX 3090 via GPU passthrough)
+#    75 — lab1, lab2, lab4 (remote LAN nodes)
+#    50 — litellm-cloud  (Claude, Gemini — cloud fallback)
+
+server:
+  host: "0.0.0.0"
+  port: {{ olla_port }}
+  request_logging: {{ olla_request_logging | lower }}
+  write_timeout: {{ olla_write_timeout }}
+
+proxy:
+  engine: "{{ olla_engine }}"
+  load_balancer: "{{ olla_load_balancer }}"
+  response_timeout: {{ olla_response_timeout }}
+  connection_timeout: {{ olla_connection_timeout }}
+
+discovery:
+  type: "static"
+  static:
+    endpoints:
+      # ── Ollama cluster nodes ──────────────────────────────────
+{% for node in olla_nodes %}
+      - url: "{{ node.url }}"
+        name: "{{ node.name }}"
+        type: "ollama"
+        priority: {{ node.priority }}
+        check_interval: {{ node.check_interval }}
+        check_timeout: {{ node.check_timeout }}
+
+{% endfor %}
+      # ── Cloud gateway via LiteLLM (Claude, Gemini) ────────────
+      # Lower priority — used when local nodes are busy/down
+      - url: "{{ litellm_url }}"
+        name: "litellm-cloud"
+        type: "litellm"
+        priority: {{ litellm_priority }}
+        check_interval: {{ litellm_check_interval }}
+        check_timeout: {{ litellm_check_timeout }}
+
+  model_discovery:
+    enabled: true
+    interval: {{ olla_model_discovery_interval }}
+
+logging:
+  level: "{{ olla_log_level }}"
+  format: "text"

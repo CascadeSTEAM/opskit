@@ -1,0 +1,7 @@
+---
+# vars file for frappe-bench
+frappe_user: frappe
+frappe_user_home: /home/frappe
+frappe_bench_name: frappe-bench
+frappe_bench_path: "{{ frappe_user_home }}/{{ frappe_bench_name }}"
+frappe_branch: version-15

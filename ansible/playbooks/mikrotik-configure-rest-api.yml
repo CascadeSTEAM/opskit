@@ -1,0 +1,126 @@
+---
+# ansible/playbooks/mikrotik-configure-rest-api.yml
+# Configures RouterOS devices for Zabbix REST API monitoring.
+#
+# Prerequisites:
+#   - community.routeros collection (v2.12+)
+#   - SSH access to MikroTik device with admin privileges
+#   - Vault file with {network}_mikrotik_admin_password
+#
+# Usage:
+#   ansible-playbook ansible/playbooks/mikrotik-configure-rest-api.yml \
+#     -e "network=yeticraft" \
+#     -e "target=crs326-router" \
+#     --ask-vault-pass
+#
+#   For all devices in a network:
+#   ansible-playbook ansible/playbooks/mikrotik-configure-rest-api.yml \
+#     -e "network=yeticraft" \
+#     -e "target=all" \
+#     --ask-vault-pass
+
+- name: Configure MikroTik REST API for Zabbix monitoring
+  hosts: "{{ target | default('all') }}"
+  gather_facts: no
+  vars:
+    # Set these per-device in inventory or via vault
+    # mikrotik_admin_user: "admin"
+    # mikrotik_admin_password: "{{ vault_mikrotik_admin_password }}"
+    zabbix_api_user: "zabbix-api"
+    # Must come from vault — no generated fallback. A generated password would need
+    # plaintext persistence somewhere to be usable by Zabbix later (hard-rule violation).
+    zabbix_api_password: "{{ vault_zabbix_mikrotik_password }}"
+    zabbix_server_ip: "{{ zabbix_server | default('127.0.0.1') }}"
+
+  tasks:
+    - name: Require the Zabbix API password from vault
+      assert:
+        that:
+          - vault_zabbix_mikrotik_password is defined
+          - vault_zabbix_mikrotik_password | length >= 16
+        fail_msg: >-
+          vault_zabbix_mikrotik_password is not set. Create it in VaultWarden
+          (item: mikrotik-zabbix-rest-api) and supply it via ansible-vault or -e;
+          this playbook no longer generates or writes credentials to disk.
+
+    - name: Ensure www-ssl service is enabled (RouterOS REST API)
+      community.routeros.api_modify:
+        hostname: "{{ ansible_host | default(inventory_hostname) }}"
+        username: "{{ mikrotik_admin_user | default('admin') }}"
+        password: "{{ mikrotik_admin_password }}"
+        validate_certs: no
+        path: /ip/service
+        operation: set
+        attribute: "=enabled=yes"
+        where: "=name=www-ssl"
+      register: enable_www_ssl
+
+    - name: Enable API-SSL service (alternative REST method)
+      community.routeros.api_modify:
+        hostname: "{{ ansible_host | default(inventory_hostname) }}"
+        username: "{{ mikrotik_admin_user | default('admin') }}"
+        password: "{{ mikrotik_admin_password }}"
+        validate_certs: no
+        path: /ip/service
+        operation: set
+        attribute: "=enabled=yes"
+        where: "=name=api-ssl"
+      ignore_errors: yes
+
+    - name: Create Zabbix monitoring user group
+      community.routeros.command:
+        hostname: "{{ ansible_host | default(inventory_hostname) }}"
+        username: "{{ mikrotik_admin_user | default('admin') }}"
+        password: "{{ mikrotik_admin_password }}"
+        commands:
+          - /user group add name=zabbix-monitoring policy=read,api,!local,!telnet,!ssh,!ftp,!reboot,!policy,!test,!winbox,!password,!web,!sniff,!sensitive,!romon
+      register: group_create
+      failed_when: false
+
+    - name: Create Zabbix API monitoring user
+      community.routeros.api:
+        hostname: "{{ ansible_host | default(inventory_hostname) }}"
+        username: "{{ mikrotik_admin_user | default('admin') }}"
+        password: "{{ mikrotik_admin_password }}"
+        validate_certs: no
+        path: /user
+        add:
+          =name="{{ zabbix_api_user }}"
+          =group=zabbix-monitoring
+          =password="{{ zabbix_api_password }}"
+          =disabled=no
+      register: user_create
+      failed_when: false
+      no_log: true
+
+    - name: Add firewall rule allowing Zabbix server to REST API
+      community.routeros.api_modify:
+        hostname: "{{ ansible_host | default(inventory_hostname) }}"
+        username: "{{ mikrotik_admin_user | default('admin') }}"
+        password: "{{ mikrotik_admin_password }}"
+        validate_certs: no
+        path: /ip/firewall/filter
+        operation: add
+        attribute: "=chain=input=protocol=tcp=dst-port=443,8728,8729=src-address={{ zabbix_server_ip }}=comment=Allow Zabbix monitoring=disabled=no"
+      register: fw_rule
+
+    - name: Verify REST API is responding
+      uri:
+        url: "https://{{ ansible_host | default(inventory_hostname) }}/rest/system/identity"
+        user: "{{ zabbix_api_user }}"
+        password: "{{ zabbix_api_password }}"
+        force_basic_auth: yes
+        validate_certs: no
+        return_content: yes
+      register: api_test
+      ignore_errors: yes
+
+    - name: Report API status
+      debug:
+        msg: >
+          {% if api_test.status == 200 %}
+          ✓ REST API accessible for {{ inventory_hostname }}
+          Device: {{ (api_test.json | default({})).name | default('unknown') }}
+          {% else %}
+          ✗ REST API not accessible for {{ inventory_hostname }}
+          {% endif %}

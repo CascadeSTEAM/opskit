@@ -1,0 +1,100 @@
+---
+# zabbix-agent — Install and configure Zabbix agent 2 on Linux hosts
+# Supports Debian/Ubuntu (apt) and Alpine (apk)
+
+- name: Detect OS family
+  set_fact:
+    is_debian: "{{ ansible_os_family == 'Debian' }}"
+    is_alpine: "{{ ansible_os_family == 'Alpine' }}"
+
+- name: Fail on unsupported OS
+  fail:
+    msg: "Unsupported OS family: {{ ansible_os_family }}. Only Debian/Ubuntu and Alpine are supported."
+  when: not is_debian and not is_alpine
+
+# ── Debian/Ubuntu ──
+- name: Remove apt proxy configs (if any)
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/apt.conf.d/01proxy
+    - /etc/apt/apt.conf.d/02proxy
+    - /etc/apt/apt.conf.d/proxy
+  when: is_debian
+  ignore_errors: yes
+
+- name: Install Zabbix repository (Debian/Ubuntu)
+  apt:
+    deb: "https://repo.zabbix.com/zabbix/{{ zabbix_version }}/{{ ansible_distribution | lower }}/pool/main/z/zabbix-release/zabbix-release_latest_{{ zabbix_version }}+{{ ansible_distribution | lower }}{{ ansible_distribution_version if ansible_distribution == 'Ubuntu' else ansible_distribution_major_version }}_all.deb"
+  when: is_debian
+  register: repo_installed
+
+
+- name: Update apt cache (Debian/Ubuntu)
+  apt:
+    update_cache: yes
+  when: is_debian
+
+- name: Install zabbix-agent2 (Debian/Ubuntu)
+  apt:
+    name: "{{ zabbix_agent_package }}"
+    state: present
+  when: is_debian
+
+# ── Alpine ──
+- name: Install zabbix-agent2 (Alpine)
+  apk:
+    name: "{{ zabbix_agent_package }}"
+    state: present
+  when: is_alpine
+
+# ── Configuration ──
+- name: Deploy Zabbix agent 2 configuration
+  template:
+    src: zabbix_agent2.conf.j2
+    dest: "{{ zabbix_agent_conf }}"
+    owner: zabbix
+    group: zabbix
+    mode: '0644'
+
+- name: Create PSK file
+  copy:
+    content: "{{ zabbix_psk_key }}"
+    dest: "{{ zabbix_agent_psk_file }}"
+    owner: zabbix
+    group: zabbix
+    mode: '0400'
+  when: zabbix_psk_key is defined and zabbix_psk_key | length > 0
+
+# ── Service management ──
+- name: Start and enable zabbix-agent2 (systemd)
+  systemd:
+    name: "{{ zabbix_agent_service }}"
+    state: restarted
+    enabled: yes
+    daemon_reload: yes
+  when: not is_alpine
+
+- name: Start and enable zabbix-agent2 (Alpine openrc)
+  command: "rc-service {{ zabbix_agent_service }} restart"
+  when: is_alpine
+  changed_when: false
+
+- name: Enable zabbix-agent2 at boot (Alpine)
+  command: "rc-update add {{ zabbix_agent_service }} default"
+  when: is_alpine
+  changed_when: false
+
+# ── Verification ──
+- name: Verify zabbix-agent2 is running
+  command: "systemctl is-active {{ zabbix_agent_service }}"
+  register: agent_status
+  changed_when: false
+  failed_when: agent_status.rc != 0
+  when: not is_alpine
+
+- name: Display agent status
+  debug:
+    msg: "Zabbix agent status on {{ ansible_hostname }}: {{ agent_status.stdout }}"
+  when: not is_alpine

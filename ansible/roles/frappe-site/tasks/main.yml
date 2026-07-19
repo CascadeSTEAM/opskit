@@ -1,0 +1,59 @@
+---
+# tasks file for frappe-site role
+
+- name: Check if site exists
+  ansible.builtin.stat:
+    path: "{{ frappe_bench_path }}/sites/{{ site_name }}"
+  register: site_stat
+
+- name: Create new Frappe site
+  ansible.builtin.command:
+    cmd: "bench new-site {{ site_name }} --db-root-password {{ db_root_password }} --admin-password {{ site_admin_password }} --mariadb-user-host-login-scope '%'"
+    chdir: "{{ frappe_bench_path }}"
+  become: yes
+  become_user: "{{ frappe_user }}"
+  when: not site_stat.stat.exists
+  no_log: true
+
+- name: Fetch and install apps
+  ansible.builtin.command:
+    cmd: "bench get-app {{ item.name }} {{ item.branch_arg | default('') }}"
+    chdir: "{{ frappe_bench_path }}"
+  loop: "{{ site_apps }}"
+  become: yes
+  become_user: "{{ frappe_user }}"
+  register: get_app_result
+  failed_when: 
+    - get_app_result.rc != 0 
+    - "'already exists' not in get_app_result.stderr"
+
+- name: Install apps on site
+  ansible.builtin.command:
+    cmd: "bench --site {{ site_name }} install-app {{ item.name }}"
+    chdir: "{{ frappe_bench_path }}"
+  loop: "{{ site_apps }}"
+  become: yes
+  become_user: "{{ frappe_user }}"
+  no_log: true
+
+- name: Setup production mode (Supervisor and Nginx)
+  ansible.builtin.command:
+    cmd: "bench setup production {{ frappe_user }} --yes"
+    chdir: "{{ frappe_bench_path }}"
+  become: yes
+  register: setup_production_result
+  changed_when: "'Setting Up' in setup_production_result.stdout"
+
+- name: Ensure Supervisor config is symlinked
+  ansible.builtin.file:
+    src: "{{ frappe_bench_path }}/config/supervisor.conf"
+    dest: /etc/supervisor/conf.d/frappe-bench.conf
+    state: link
+  become: yes
+  notify: reload supervisor
+
+- name: Reload Nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded
+  become: yes

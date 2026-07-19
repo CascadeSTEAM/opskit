@@ -1,0 +1,107 @@
+---
+- name: Health check all AI cluster nodes
+  hosts: ollama_spokes
+  gather_facts: yes
+
+  tasks:
+    - name: Check SSH connectivity
+      ansible.builtin.ping:
+      register: ping_result
+      ignore_errors: yes
+
+    - name: Skip unreachable nodes
+      meta: end_host
+      when: ping_result.ping is not defined or ping_result.ping == false
+
+    - name: Check Ollama service status (systemd)
+      ansible.builtin.systemd:
+        name: "{{ ollama_service }}"
+      register: ollama_service_result
+      when: not (ollama_docker | default(false))
+
+    - name: Check Ollama service status (docker)
+      ansible.builtin.shell: "docker inspect --format '{% raw %}{{.State.Running}}{% endraw %}' {{ ollama_container_name | default('ollama') }}"
+      register: ollama_docker_status
+      changed_when: false
+      ignore_errors: yes
+      check_mode: false
+      when: ollama_docker | default(false)
+
+    - name: Set ollama service state fact
+      ansible.builtin.set_fact:
+        ollama_running: >-
+          {{
+            (ollama_service_result.status.ActiveState == 'active')
+            if not (ollama_docker | default(false))
+            else (ollama_docker_status.stdout | default('false') == 'true')
+          }}
+
+    - name: Get model list (native)
+      ansible.builtin.command: ollama list
+      register: ollama_models
+      changed_when: false
+      ignore_errors: yes
+      check_mode: false
+      when: not (ollama_docker | default(false))
+
+    - name: Get model list (docker)
+      ansible.builtin.shell: docker exec {{ ollama_container_name | default('ollama') }} ollama list
+      register: ollama_models
+      changed_when: false
+      ignore_errors: yes
+      check_mode: false
+      when: ollama_docker | default(false)
+
+    - name: Parse model count
+      ansible.builtin.set_fact:
+        model_count: >-
+          {{
+            (ollama_models.stdout_lines
+            | map('regex_replace', '^\\s+', '')
+            | map('regex_replace', '\\s+.*$', '')
+            | map('trim')
+            | reject('equalto', '')
+            | reject('match', '^NAME')
+            | list
+            | length)
+            if ollama_models.rc is defined and ollama_models.rc == 0
+            else -1
+          }}
+
+    - name: Check disk space
+      ansible.builtin.shell: df -h / | awk 'NR==2 {print $5}'
+      register: disk_usage
+      changed_when: false
+      check_mode: false
+
+    - name: Check memory usage
+      ansible.builtin.shell: free -m | awk '/Mem:/ {printf "%.0f%%", $3/$2*100}'
+      register: mem_usage
+      changed_when: false
+      check_mode: false
+
+    - name: Check DNS resolution
+      ansible.builtin.shell: nslookup google.com
+      register: dns_check
+      failed_when: dns_check.rc != 0
+      changed_when: false
+      check_mode: false
+
+    - name: Check gateway reachability
+      ansible.builtin.shell: ping -c 1 {{ ansible_default_ipv4.gateway }}
+      register: gw_check
+      failed_when: gw_check.rc != 0
+      changed_when: false
+      check_mode: false
+
+    - name: Report health status
+      ansible.builtin.debug:
+        msg: |
+          {{ inventory_hostname }}:
+            Status: ONLINE
+            Ollama: {{ 'RUNNING' if ollama_running else 'STOPPED' }}
+            Models: {{ model_count }}
+            Disk: {{ disk_usage.stdout }} used
+            Memory: {{ mem_usage.stdout }} used
+            DNS: {{ 'OK' if dns_check.rc == 0 else 'FAIL' }}
+            Gateway: {{ 'OK' if gw_check.rc == 0 else 'FAIL' }}

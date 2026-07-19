@@ -1,0 +1,8 @@
+---
+# Olla handlers
+
+- name: "restart olla"
+  ansible.builtin.systemd:
+    name: olla
+    state: restarted
+  become: yes

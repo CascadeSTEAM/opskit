@@ -1,0 +1,85 @@
+---
+# Phase 5 — Post-upgrade verification
+# bench doctor → version check → disable maintenance mode → HTTP ping → smoke checks.
+# If any check fails, the rescue block in main.yml triggers rollback.
+
+- name: "Verify | Run bench doctor"
+  ansible.builtin.command:
+    cmd: bench doctor
+    chdir: "{{ frappe_bench_path }}"
+  become_user: "{{ frappe_user }}"
+  register: bench_doctor_output
+  changed_when: false
+
+- name: "Verify | bench doctor output"
+  ansible.builtin.debug:
+    msg: "{{ bench_doctor_output.stdout_lines }}"
+
+- name: "Verify | Check bench version reports v16 for Frappe and ERPNext"
+  ansible.builtin.command:
+    cmd: bench version
+    chdir: "{{ frappe_bench_path }}"
+  become_user: "{{ frappe_user }}"
+  register: bench_final_versions
+  changed_when: false
+
+- name: "Verify | Final bench versions"
+  ansible.builtin.debug:
+    msg: "{{ bench_final_versions.stdout_lines }}"
+
+- name: "Verify | Fail if Frappe not on v16"
+  ansible.builtin.fail:
+    msg: "Frappe does not report v16.x after upgrade. bench version: {{ bench_final_versions.stdout }}"
+  when: bench_final_versions.stdout is not search('frappe 16\\.')
+
+- name: "Verify | Fail if ERPNext not on v16"
+  ansible.builtin.fail:
+    msg: "ERPNext does not report v16.x after upgrade. bench version: {{ bench_final_versions.stdout }}"
+  when: bench_final_versions.stdout is not search('erpnext 16\\.')
+
+- name: "Verify | Disable maintenance mode on all sites"
+  ansible.builtin.command:
+    cmd: "bench --site {{ item }} set-maintenance-mode off"
+    chdir: "{{ frappe_bench_path }}"
+  become_user: "{{ frappe_user }}"
+  loop: "{{ frappe_sites }}"
+
+- name: "Verify | Pause 15s for services to stabilise"
+  ansible.builtin.pause:
+    seconds: 15
+
+- name: "Verify | HTTP ping check for all sites"
+  ansible.builtin.command:
+    cmd: >-
+      curl -sf --max-time {{ http_check_timeout }}
+      -H "Host: {{ item }}"
+      http://localhost/api/method/frappe.ping
+  loop: "{{ frappe_sites }}"
+  register: ping_check_results
+  changed_when: false
+  retries: 3
+  delay: 10
+  until: ping_check_results.rc == 0
+
+- name: "Verify | HTTP ping results"
+  ansible.builtin.debug:
+    msg: "{{ item.item }} → {{ item.stdout }}"
+  loop: "{{ ping_check_results.results }}"
+
+- name: "Verify | UPGRADE SUCCESSFUL"
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - "Frappe / ERPNext upgrade to {{ frappe_target_branch }} COMPLETE"
+      - ""
+      - "Sites online and verified:"
+      - "{% for s in frappe_sites %}  ✓ {{ s }}{% endfor %}"
+      - ""
+      - "NEXT STEPS (manual):"
+      - "  1. Monitor Zabbix and Frappe logs for 48 hours"
+      - "  2. Confirm background jobs and email pull are healthy"
+      - "  3. After 48h observation: delete snapshot '{{ pve_snapshot_name }}'"
+      - "     pct delsnapshot {{ pve_ctid }} {{ pve_snapshot_name }}  (on {{ pve_host }})"
+      - "  4. Update group_vars/frappe_nodes.yml to {{ frappe_target_branch }}"
+      - "  5. Resolve CS-0024 and {{ client1_coordination_ticket | default('CLIENT1 ticket') }}"
+      - "================================================================"

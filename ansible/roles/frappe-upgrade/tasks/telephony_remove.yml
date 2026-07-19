@@ -1,0 +1,51 @@
+---
+# Phase 0b — Remove telephony app before any schema migration.
+# telephony owns 5 custom Doctypes; must use bench uninstall (not remove-app)
+# so Frappe's ORM drops the tables cleanly before the framework migration.
+
+- name: "Telephony | Check if app directory exists"
+  ansible.builtin.stat:
+    path: "{{ frappe_apps_path }}/telephony"
+  register: telephony_app_dir
+
+- name: "Telephony | App not present — skipping removal"
+  ansible.builtin.debug:
+    msg: "telephony not found at {{ frappe_apps_path }}/telephony — nothing to remove."
+  when: not telephony_app_dir.stat.exists
+
+- name: "Telephony | Uninstall from each site (drops Doctypes via Frappe ORM)"
+  ansible.builtin.command:
+    cmd: "bench --site {{ item }} uninstall-app telephony"
+    chdir: "{{ frappe_bench_path }}"
+  become_user: "{{ frappe_user }}"
+  loop: "{{ frappe_sites }}"
+  when: telephony_app_dir.stat.exists
+  register: telephony_uninstall_result
+
+- name: "Telephony | Remove app from bench"
+  ansible.builtin.command:
+    cmd: bench remove-app telephony --force
+    chdir: "{{ frappe_bench_path }}"
+  become_user: "{{ frappe_user }}"
+  when: telephony_app_dir.stat.exists
+
+- name: "Telephony | Verify removal via bench version"
+  ansible.builtin.command:
+    cmd: bench version
+    chdir: "{{ frappe_bench_path }}"
+  become_user: "{{ frappe_user }}"
+  register: bench_ver_post_removal
+  changed_when: false
+  when: telephony_app_dir.stat.exists
+
+- name: "Telephony | Fail if still present after removal"
+  ansible.builtin.fail:
+    msg: "'telephony' still appears in bench version after uninstall. Manual intervention required."
+  when:
+    - telephony_app_dir.stat.exists
+    - "'telephony' in bench_ver_post_removal.stdout"
+
+- name: "Telephony | Removal confirmed"
+  ansible.builtin.debug:
+    msg: "telephony successfully removed. bench version no longer lists it."
+  when: telephony_app_dir.stat.exists

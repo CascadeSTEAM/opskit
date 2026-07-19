@@ -1,0 +1,52 @@
+---
+# Orchestration: Phase 0 runs outside the rescue block (pre-snapshot, safe to abort).
+# Phases 1-5 run inside block/rescue — any failure triggers snapshot rollback.
+
+- name: "Phase 0 | Pre-flight validation"
+  ansible.builtin.include_tasks: preflight.yml
+  tags: [preflight, phase0]
+
+- name: "Phase 0 | Remove telephony app"
+  ansible.builtin.include_tasks: telephony_remove.yml
+  tags: [telephony, phase0]
+
+- name: "Phases 1-5 | Upgrade with automatic rollback on failure"
+  block:
+
+    - name: "Phase 1 | Maintenance mode + MariaDB dump + Proxmox snapshot"
+      ansible.builtin.include_tasks: snapshot.yml
+      tags: [snapshot, phase1]
+
+    - name: "Phase 2 | Node.js {{ node_target_version }} upgrade"
+      ansible.builtin.include_tasks: node_upgrade.yml
+      tags: [nodejs, phase2]
+
+    - name: "Phase 3 | App branch switch + bench update"
+      ansible.builtin.include_tasks: upgrade.yml
+      tags: [upgrade, phase3]
+
+    - name: "Phase 4 | Database migration"
+      ansible.builtin.include_tasks: migrate.yml
+      tags: [migrate, phase4]
+
+    - name: "Phase 5 | Post-upgrade verification"
+      ansible.builtin.include_tasks: verify.yml
+      tags: [verify, phase5]
+
+  rescue:
+    - name: "ROLLBACK | Upgrade failed — initiating snapshot restore"
+      ansible.builtin.debug:
+        msg:
+          - "An error occurred during the upgrade sequence."
+          - "Rolling back CT{{ pve_ctid }} to snapshot '{{ pve_snapshot_name }}' on {{ pve_host }}."
+
+    - name: "ROLLBACK | Restore Proxmox snapshot"
+      ansible.builtin.include_tasks: rollback.yml
+      tags: [rollback]
+
+    - name: "ROLLBACK | Re-raise failure so playbook exits non-zero"
+      ansible.builtin.fail:
+        msg: >-
+          Upgrade to {{ frappe_target_branch }} FAILED and was rolled back to
+          snapshot '{{ pve_snapshot_name }}'. Both sites should be back on v15.
+          Investigate the failure above before retrying.

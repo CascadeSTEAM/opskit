@@ -1,0 +1,42 @@
+---
+- name: Create temp directory for validation
+  ansible.builtin.tempfile:
+    state: directory
+    suffix: caddy
+  register: caddy_tmpdir
+  check_mode: false
+
+- name: Template Caddyfile for validation
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: "{{ caddy_tmpdir.path }}/Caddyfile"
+    mode: "0644"
+  register: caddy_templated
+  check_mode: false
+
+- name: Validate Caddy config
+  ansible.builtin.command:
+    cmd: caddy validate --config "{{ caddy_tmpdir.path }}/Caddyfile" --adapter caddyfile
+  register: caddy_validate
+  changed_when: false
+  failed_when: caddy_validate.rc != 0
+
+- name: Copy validated Caddyfile to destination
+  ansible.builtin.copy:
+    src: "{{ caddy_tmpdir.path }}/Caddyfile"
+    dest: "{{ caddy_config_path }}"
+    mode: "0644"
+    remote_src: true
+  register: caddy_deploy
+
+- name: Reload Caddy
+  ansible.builtin.command:
+    cmd: caddy reload --config "{{ caddy_config_path }}" --address localhost:2019
+  when: caddy_deploy.changed
+  notify: caddy_reloaded
+
+- name: Clean up temp directory
+  ansible.builtin.file:
+    path: "{{ caddy_tmpdir.path }}"
+    state: absent
+  check_mode: false

@@ -1,0 +1,4 @@
+---
+- name: caddy_reloaded
+  ansible.builtin.debug:
+    msg: "Caddy reloaded — config change applied"

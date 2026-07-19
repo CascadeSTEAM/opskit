@@ -1,0 +1,22 @@
+[Unit]
+Description=Olla LLM Proxy
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+ExecStartPre=/usr/bin/docker pull {{ olla_image }}
+ExecStart=/usr/bin/docker run --rm --name {{ olla_container_name }} \
+  -p {{ olla_port }}:{{ olla_port }} \
+  -v /opt/olla/olla.yaml:/app/config.yaml:ro \
+  -v /var/log/olla.log:/app/logs/olla.log \
+  {{ olla_image }}
+ExecStop=/usr/bin/docker stop {{ olla_container_name }}
+Restart=unless-stopped
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

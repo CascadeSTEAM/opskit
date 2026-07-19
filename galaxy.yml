@@ -1,0 +1,15 @@
+---
+namespace: opskit
+name: ansible
+version: 0.1.0
+readme: README.md
+authors:
+  - NetYeti
+description: opskit Ansible collection — curated catalogue of generic sysadmin roles and playbooks
+license:
+  - MIT
+tags:
+  - opskit
+  - sysadmin
+  - infrastructure
+repository: https://github.com/CascadeSTEAM/opskit

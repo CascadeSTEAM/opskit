@@ -1,0 +1,13 @@
+---
+semaphore_version: "2.17.0"
+semaphore_install_dir: /opt/semaphore
+semaphore_db_dialect: postgres
+semaphore_db_host: localhost
+semaphore_db_port: 5432
+semaphore_db_name: semaphore
+semaphore_db_user: semaphore
+semaphore_admin_user: admin
+semaphore_admin_email: admin@example.local
+semaphore_listen_port: 3000
+semaphore_playbook_path: /opt/semaphore/playbooks
+semaphore_config_path: /opt/semaphore/config.json

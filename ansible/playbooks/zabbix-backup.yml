@@ -1,0 +1,59 @@
+---
+- name: Backup Zabbix PostgreSQL database
+  hosts: zabbix
+  gather_facts: no
+  vars:
+    backup_dir: "/root/zabbix-backups"
+    db_name: "zabbix"
+    db_user: "zabbix"
+    retention_days: 14
+
+  tasks:
+    - name: Ensure backup directory exists
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Create timestamped backup
+      shell: |
+        set -o pipefail
+        pg_dump {{ db_name }} | gzip > {{ backup_dir }}/zabbix-db-$(date +%Y%m%d-%H%M%S).sql.gz
+      args:
+        executable: /bin/bash
+        creates: "{{ backup_dir }}/zabbix-db-*.sql.gz"
+      become_user: postgres
+      register: backup_result
+      changed_when: backup_result.rc == 0
+
+    - name: Find the latest backup
+      find:
+        paths: "{{ backup_dir }}"
+        patterns: "zabbix-db-*.sql.gz"
+        age: "-1m"
+      register: latest_backup
+
+    - name: Verify latest backup
+      command: "gunzip -t {{ latest_backup.files[0].path }}"
+      changed_when: false
+      when: latest_backup.files | length > 0
+
+    - name: Report backup
+      debug:
+        msg: "Backup: {{ latest_backup.files[0].path | basename }} ({{ (latest_backup.files[0].size / 1024 / 1024) | round(1) }} MB)"
+      when: latest_backup.files | length > 0
+
+    - name: Prune backups older than {{ retention_days }} days
+      find:
+        paths: "{{ backup_dir }}"
+        patterns: "zabbix-db-*.sql.gz"
+        age: "{{ retention_days }}d"
+      register: stale_backups
+
+    - name: Remove stale backups
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ stale_backups.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"

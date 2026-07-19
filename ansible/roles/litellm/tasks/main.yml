@@ -1,0 +1,87 @@
+---
+# LiteLLM Ansible role tasks
+# Deploys LiteLLM cloud API gateway via Docker
+
+- name: "Install required packages"
+  ansible.builtin.apt:
+    name:
+      - docker.io
+    state: present
+    update_cache: yes
+  become: yes
+
+- name: "Ensure docker service is running"
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: yes
+  become: yes
+
+- name: "Create LiteLLM directories"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - /opt/litellm
+  become: yes
+
+- name: "Deploy LiteLLM configuration"
+  ansible.builtin.template:
+    src: litellm_config.yaml.j2
+    dest: /opt/litellm/litellm_config.yaml
+    mode: '0644'
+  become: yes
+  notify: "restart litellm"
+
+- name: "Deploy LiteLLM environment file"
+  ansible.builtin.template:
+    src: litellm.env.j2
+    dest: /opt/litellm/.env
+    mode: '0600'
+  become: yes
+  notify: "restart litellm"
+
+- name: "Deploy LiteLLM systemd service"
+  ansible.builtin.template:
+    src: litellm.service.j2
+    dest: /etc/systemd/system/litellm.service
+    mode: '0644'
+  become: yes
+  notify: "restart litellm"
+
+- name: "Pull LiteLLM Docker image"
+  ansible.builtin.shell: docker pull {{ litellm_image }}
+  become: yes
+  register: pull_result
+  changed_when: "'Downloaded newer image' in pull_result.stdout"
+
+- name: "Enable and start LiteLLM service"
+  ansible.builtin.systemd:
+    name: litellm
+    state: started
+    enabled: yes
+    daemon_reload: yes
+  become: yes
+
+- name: "Wait for LiteLLM to start"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ litellm_port }}/health/liveness?key={{ litellm_master_key }}"
+    return_content: yes
+  register: litellm_health
+  until: litellm_health.status == 200
+  retries: 10
+  delay: 3
+
+- name: "Verify LiteLLM models endpoint"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ litellm_port }}/v1/models"
+    headers:
+      Authorization: "Bearer {{ litellm_master_key }}"
+    return_content: yes
+  register: litellm_models
+  failed_when: false
+
+- name: "Show LiteLLM status"
+  ansible.builtin.debug:
+    msg: "LiteLLM models: {{ litellm_models.content | default('Unable to fetch models') }}"

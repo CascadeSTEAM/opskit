@@ -1,0 +1,85 @@
+---
+# Rollback — Restore CT{{ pve_ctid }} to snapshot {{ pve_snapshot_name }}.
+# Called from the rescue block in main.yml on any upgrade failure.
+# Sequence: maintenance mode (best-effort) → stop CT → rollback → start CT → verify.
+# NOTE: pct rollback consumes the snapshot — it no longer exists afterwards.
+
+- name: "Rollback | Best-effort: re-enable maintenance mode before stopping CT"
+  ansible.builtin.command:
+    cmd: "bench --site {{ item }} set-maintenance-mode on"
+    chdir: "{{ frappe_bench_path }}"
+  become_user: "{{ frappe_user }}"
+  loop: "{{ frappe_sites }}"
+  ignore_errors: yes
+
+- name: "Rollback | Stop CT{{ pve_ctid }} (timeout 60s)"
+  ansible.builtin.shell: >-
+    ssh -i ~/.ssh/id_ed25519
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+    -p 666 root@vpn.cascadesteam.org
+    "pct stop {{ pve_ctid }}"
+  delegate_to: localhost
+  become: no
+
+- name: "Rollback | Restore snapshot '{{ pve_snapshot_name }}' on CT{{ pve_ctid }}"
+  ansible.builtin.shell: >-
+    ssh -i ~/.ssh/id_ed25519
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+    -p 666 root@vpn.cascadesteam.org
+    "pct rollback {{ pve_ctid }} {{ pve_snapshot_name }}"
+  delegate_to: localhost
+  become: no
+
+- name: "Rollback | Start CT{{ pve_ctid }}"
+  ansible.builtin.shell: >-
+    ssh -i ~/.ssh/id_ed25519
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+    -p 666 root@vpn.cascadesteam.org
+    "pct start {{ pve_ctid }}"
+  delegate_to: localhost
+  become: no
+
+- name: "Rollback | Wait for CT SSH to come back (up to 120s)"
+  ansible.builtin.wait_for:
+    host: "{{ ansible_host }}"
+    port: 22
+    delay: 20
+    timeout: 120
+  delegate_to: localhost
+  become: no
+
+- name: "Rollback | Disable maintenance mode (snapshot was taken with it on)"
+  ansible.builtin.command:
+    cmd: "bench --site {{ item }} set-maintenance-mode off"
+    chdir: "{{ frappe_bench_path }}"
+  become_user: "{{ frappe_user }}"
+  loop: "{{ frappe_sites }}"
+  ignore_errors: yes
+
+- name: "Rollback | Verify sites respond after rollback"
+  ansible.builtin.command:
+    cmd: >-
+      curl -sf --max-time {{ http_check_timeout }}
+      -H "Host: {{ item }}"
+      http://localhost/api/method/frappe.ping
+  loop: "{{ frappe_sites }}"
+  register: rollback_site_health
+  changed_when: false
+  retries: 6
+  delay: 20
+  until: rollback_site_health.rc == 0
+
+- name: "Rollback | ROLLBACK COMPLETE"
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - "ROLLBACK COMPLETE — CT{{ pve_ctid }} restored to '{{ pve_snapshot_name }}'"
+      - ""
+      - "Both sites are back on the pre-upgrade state (v15)."
+      - "Note: the snapshot has been consumed and no longer exists."
+      - ""
+      - "REQUIRED ACTIONS:"
+      - "  1. Investigate the failure in the Ansible output above."
+      - "  2. Add findings to CS-0024 and {{ client1_coordination_ticket | default('CLIENT1 ticket') }}."
+      - "  3. Do NOT retry without root-cause analysis."
+      - "================================================================"

@@ -1,0 +1,103 @@
+---
+# Phase 0a — Pre-flight validation
+# All checks must pass before any changes are made.
+
+- name: "Preflight | CLIENT1 coordination ticket status"
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'CLIENT1 coordination ticket: ' + client1_coordination_ticket
+         if (client1_coordination_ticket is defined and client1_coordination_ticket | length > 0)
+         else 'WARNING: No CLIENT1 coordination ticket set. Proceeding anyway (single-operator / no active CLIENT1 users).' }}
+
+- name: "Preflight | Check Python version"
+  ansible.builtin.command: python3 --version
+  register: python_ver_raw
+  changed_when: false
+
+- name: "Preflight | Parse Python version string"
+  ansible.builtin.set_fact:
+    detected_python_version: "{{ python_ver_raw.stdout | regex_replace('Python (\\S+)', '\\1') }}"
+
+- name: "Preflight | Fail if Python < {{ python_min_version }}"
+  ansible.builtin.fail:
+    msg: >-
+      Python {{ detected_python_version }} detected but >= {{ python_min_version }} is required.
+      Python upgrade requires separate planning — abort and remediate separately.
+  when: detected_python_version is version(python_min_version, '<')
+
+- name: "Preflight | Python {{ detected_python_version }} OK"
+  ansible.builtin.debug:
+    msg: "Python {{ detected_python_version }} meets minimum {{ python_min_version }}"
+
+- name: "Preflight | Check disk space on /"
+  ansible.builtin.shell: df -BG / | awk 'NR==2 {gsub("G","",$4); print $4}'
+  register: disk_free_raw
+  changed_when: false
+
+- name: "Preflight | Fail if < {{ min_disk_free_gb }} GB free"
+  ansible.builtin.fail:
+    msg: "Only {{ disk_free_raw.stdout | trim }} GB free on /. Minimum {{ min_disk_free_gb }} GB required."
+  when: disk_free_raw.stdout | trim | int < min_disk_free_gb
+
+- name: "Preflight | Disk space OK: {{ disk_free_raw.stdout | trim }} GB free"
+  ansible.builtin.debug:
+    msg: "Disk: {{ disk_free_raw.stdout | trim }} GB free (minimum {{ min_disk_free_gb }} GB)"
+
+- name: "Preflight | Get current bench versions"
+  ansible.builtin.command:
+    cmd: bench version
+    chdir: "{{ frappe_bench_path }}"
+  become_user: "{{ frappe_user }}"
+  register: bench_current_versions
+  changed_when: false
+
+- name: "Preflight | Current bench versions"
+  ansible.builtin.debug:
+    msg: "{{ bench_current_versions.stdout_lines }}"
+
+- name: "Preflight | Find recent bench backups (< {{ backup_max_age_hours }}h)"
+  ansible.builtin.find:
+    paths: "{{ frappe_bench_path }}/sites"
+    patterns: "*.sql.gz"
+    recurse: yes
+    age: "-{{ backup_max_age_hours }}h"
+    file_type: file
+  register: recent_backups
+
+- name: "Preflight | Fail if no recent backup found"
+  ansible.builtin.fail:
+    msg: >-
+      No bench backup found younger than {{ backup_max_age_hours }} hours.
+      Run: bench --site <site> backup  for each site, then retry.
+  when: recent_backups.files | length == 0
+
+- name: "Preflight | Recent backup confirmed ({{ recent_backups.files | length }} file(s))"
+  ansible.builtin.debug:
+    msg: "Most recent: {{ (recent_backups.files | sort(attribute='mtime') | last).path }}"
+
+- name: "Preflight | HTTP health check — both sites must respond on container"
+  ansible.builtin.command:
+    cmd: >-
+      curl -sf --max-time {{ http_check_timeout }}
+      -H "Host: {{ item }}"
+      http://localhost/api/method/frappe.ping
+  loop: "{{ frappe_sites }}"
+  register: site_health_check
+  changed_when: false
+
+- name: "Preflight | Site health results"
+  ansible.builtin.debug:
+    msg: "{{ item.item }} → {{ item.stdout | default('no output') }}"
+  loop: "{{ site_health_check.results }}"
+
+- name: "Preflight | All checks passed — proceeding to upgrade"
+  ansible.builtin.debug:
+    msg:
+      - "============================================"
+      - "Pre-flight validation PASSED"
+      - "  Python:  {{ detected_python_version }}"
+      - "  Disk:    {{ disk_free_raw.stdout | trim }} GB free"
+      - "  Backups: {{ recent_backups.files | length }} recent file(s)"
+      - "  Sites:   all HTTP 200"
+      - "  CLIENT1 ticket: {{ client1_coordination_ticket }}"
+      - "============================================"

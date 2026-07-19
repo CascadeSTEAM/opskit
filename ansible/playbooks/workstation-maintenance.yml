@@ -1,0 +1,62 @@
+---
+# workstation-maintenance.yml — OS/app maintenance for "THIS system".
+#
+# Worked example of the IaC rule extension (2026-07-14): the local
+# workstation is infrastructure too, so its maintenance is a playbook —
+# not ad-hoc apt/shell in a terminal.
+#
+# Usage (report-only by default):
+#   bash scripts/ap.sh playbooks/workstation-maintenance.yml
+#   # actually apply upgrades:
+#   bash scripts/ap.sh playbooks/workstation-maintenance.yml -e do_upgrade=true
+#
+# Targets the workstations group (ansible_connection: local). The hostname
+# assert below is MANDATORY for every workstations play: connection=local
+# means "whatever machine runs ansible", so without it gemini's cron or a
+# different workstation would silently maintain itself under this host's name.
+
+- name: Workstation OS maintenance (report by default, upgrade with -e do_upgrade=true)
+  hosts: workstations
+  gather_facts: yes
+  become: yes
+  vars:
+    do_upgrade: false
+
+  tasks:
+    - name: Refuse to run on the wrong machine (mandatory for connection=local)
+      ansible.builtin.assert:
+        that: ansible_hostname == inventory_hostname
+        fail_msg: >-
+          This machine is {{ ansible_hostname }}, not {{ inventory_hostname }} —
+          refusing to run a workstation play meant for another host.
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: List upgradable packages
+      ansible.builtin.command: apt list --upgradable
+      register: upgradable
+      changed_when: false
+
+    - name: Report pending upgrades
+      ansible.builtin.debug:
+        msg: >-
+          {{ (upgradable.stdout_lines | length - 1) if upgradable.stdout_lines | length > 0 else 0 }}
+          package(s) upgradable on {{ inventory_hostname }}.
+          Run with -e do_upgrade=true to apply.
+
+    - name: Apply upgrades (only with -e do_upgrade=true)
+      ansible.builtin.apt:
+        upgrade: safe
+      when: do_upgrade | bool
+
+    - name: Check reboot requirement
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+
+    - name: Report reboot status
+      ansible.builtin.debug:
+        msg: "{{ 'REBOOT REQUIRED' if reboot_required.stat.exists else 'No reboot needed' }}"

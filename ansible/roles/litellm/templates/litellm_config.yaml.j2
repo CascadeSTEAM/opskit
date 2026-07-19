@@ -1,0 +1,17 @@
+# LiteLLM configuration template (YAML format for LiteLLM)
+# Docs: https://docs.litellm.ai/docs/proxy/configs
+
+model_list:
+{% for model in litellm_models %}
+  - model_name: {{ model.name }}
+    litellm_params:
+      model: {{ model.litellm_model }}
+      api_key: os.environ/{{ model.api_key_env }}
+{% endfor %}
+
+litellm_settings:
+  drop_params: {{ litellm_drop_params | lower }}
+  detailed_debug: {{ litellm_detailed_debug | lower }}
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
