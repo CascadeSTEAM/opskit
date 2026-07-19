@@ -1,0 +1,17 @@
+# gitleaks configuration for opskit
+# Docs: https://github.com/gitleaks/gitleaks#configuration
+
+title = "opskit gitleaks config"
+
+[allowlist]
+  description = "Allowlist for opskit"
+  paths = [
+    '''environments/example/.*''',
+    '''CHANGELOG.md''',
+  ]
+
+[[rules]]
+  id = "generic-api-key"
+  description = "Catch generic API key patterns"
+  regex = '''(?i)(?:secret|token|key|password|auth)(?:\s*[=:]\s*)(?:"[^"]{16,}"|'[^']{16,}')'''
+  tags = ["secret", "api-key"]
