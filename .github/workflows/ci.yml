@@ -57,7 +57,7 @@ jobs:
 
       - name: pytest
         run: |
-          pip install ".[test]"
+          pip install jsonschema pyyaml pytest
           pytest tests/ -v
 
   schema-check:
@@ -71,5 +71,5 @@ jobs:
 
       - name: schema validation
         run: |
-          pip install ".[test]"
+          pip install jsonschema pyyaml pytest
           pytest tests/test_schemas.py -v
