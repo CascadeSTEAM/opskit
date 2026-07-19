@@ -30,6 +30,7 @@ venv/
 # IDE / editor
 .idea/
 .vscode/
+.obsidian/
 *.swp
 *.swo
 *~
