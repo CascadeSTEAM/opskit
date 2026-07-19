@@ -1,0 +1,64 @@
+---
+device:
+  hostname: ""
+  fqdn: ""
+  type: ""           # server | lxc | container | switch | router | ap | ups | workstation
+  lifecycle_status: planned  # planned | active | deprecated | decommissioned
+  lifecycle_notes: ""        # why this state; what replaces it if deprecated
+  commissioned_date: ""      # YYYY-MM-DD — set when lifecycle_status → active
+  decommission_target: ""    # YYYY-MM-DD — set when lifecycle_status = deprecated
+  status: unknown            # scanner-managed: active | down | unreachable (do not edit manually)
+  networks: []               # list of network names this device belongs to
+
+  location: ""               # site name (e.g., bms-makerspace, yeticraft)
+  description: ""
+
+  networking:
+    interfaces:
+      - name: ""
+        type: physical         # physical | vlan | bond | loopback
+        ipv4: ""               # CIDR notation: x.x.x.x/y
+        gateway: ""
+        dns: []
+        dhcp: static           # static | dhcp
+        status: unknown        # scanner-managed
+
+  access:
+    methods:
+      - type: ssh
+        user: root
+        auth: ssh_key
+        cred_ref: ""           # "Bitwarden: <item-name>"
+        key_ref: "~/.ssh/id_ed25519"
+        port: 22
+
+  runs_services: []
+  # - name: ""
+  #   status: active
+  #   port:
+  #   protocol: http
+  #   endpoint: ""
+
+  system:
+    os: ""
+    virtualization: ""         # bare-metal | lxc | kvm | docker | none
+
+  dependencies:
+    depends_on: []             # list of hostnames this device depends on
+
+  config_backup:
+    method: ansible            # ansible | manual | none
+    schedule: on-change        # on-change | daily | weekly | none
+
+  monitoring:
+    reachable: null            # scanner-managed
+    ping_response: null        # scanner-managed
+    ssh_reachable: null        # scanner-managed
+
+  metadata:
+    created: ""                # YYYY-MM-DD
+    created_by: ""             # username@hostname
+    updated: ""                # scanner-managed after first scan
+    updated_by: ""             # scanner-managed
+    source: manual             # manual | scanner
+    maturity: L1               # L1=placeholder | L2=basic | L3=complete
