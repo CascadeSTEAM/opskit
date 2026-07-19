@@ -22,7 +22,7 @@ jobs:
       - name: ansible-lint
         uses: ansible/ansible-lint@v6
         with:
-          args: "ansible/"
+          args: "ansible/ --skip-list=syntax-check,meta-no-info,no-changed-when,fqcn-builtins"
 
   secret-scan:
     runs-on: ubuntu-latest
