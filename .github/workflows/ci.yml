@@ -22,7 +22,7 @@ jobs:
       - name: ansible-lint
         uses: ansible/ansible-lint@v6
         with:
-          args: "ansible/ --warn-list experimental,syntax-check"
+          args: "ansible/"
 
   secret-scan:
     runs-on: ubuntu-latest
