@@ -1,0 +1,15 @@
+---
+# zabbix-server defaults
+zabbix_version: "7.2"
+db_name: "zabbix"
+db_user: "zabbix"
+# No default on purpose: deploying a guessable DB password is worse than failing.
+# Supply via vault (vault_zabbix_db_password) or -e.
+db_password: "{{ vault_zabbix_db_password }}"
+db_host: "localhost"
+php_timezone: "America/Los_Angeles"
+
+# URLs for Zabbix repo packages
+# For Ubuntu 24.04: https://repo.zabbix.com/zabbix/7.2/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest_7.2+ubuntu24.04_all.deb
+# For Debian 12: https://repo.zabbix.com/zabbix/7.2/release/debian/pool/main/z/zabbix-release/zabbix-release_latest_7.2+debian12_all.deb
+zabbix_repo_url: "https://repo.zabbix.com/zabbix/{{ zabbix_version }}/release/{{ ansible_distribution | lower }}/pool/main/z/zabbix-release/zabbix-release_latest_{{ zabbix_version }}+{{ ansible_distribution | lower }}{{ ansible_distribution_major_version }}_all.deb"

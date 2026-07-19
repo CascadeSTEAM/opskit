@@ -1,0 +1,203 @@
+---
+# configure-dns-zones.yml
+# Manages Technitium DNS zones and records for BMS AI Cluster.
+#
+# Runs all API calls via localhost (requires SSH tunnel).
+# Pre-establish tunnel:
+#   ssh -L 15380:localhost:5380 -N -f dns
+#
+# Usage:
+#   ansible-playbook ansible/playbooks/configure-dns-zones.yml \
+#     -e dns_admin_password=admin
+#
+# Idempotent: safe to re-run. Creates zones/records only if missing.
+
+- name: Configure Technitium DNS zones and records
+  hosts: dns_server
+  gather_facts: no
+  vars:
+    dns_api_base: "http://localhost:15380/api"
+    dns_admin_username: "admin"
+
+    # Zones and records to ensure exist
+    dns_zones:
+      - name: "bms.local"
+        type: "Primary"
+        records:
+          - type: "A"
+            name: "grafana"
+            value: "10.99.0.100"
+            ttl: 3600
+          - type: "A"
+            name: "prometheus"
+            value: "10.99.0.101"
+            ttl: 3600
+          - type: "A"
+            name: "mktxp"
+            value: "10.99.0.5"
+            ttl: 3600
+      - name: "bellinghammakerspace.org"
+        type: "Primary"
+        records:
+          # BMS-0106: LXC containers on pve2 provisioned without DNS records
+          - type: "A"
+            name: "volunteer-portal"
+            value: "10.99.0.50"
+            ttl: 3600
+            ptr: true
+          - type: "A"
+            name: "pilot"
+            value: "10.99.37.1"
+            ttl: 3600
+            ptr: true
+
+  tasks:
+    # ------------------------------------------------------------------
+    # Step 1: Verify SSH tunnel is active (from localhost)
+    # ------------------------------------------------------------------
+    - name: Verify SSH tunnel is active
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "http://localhost:15380/api/user/login"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          user: "healthcheck"
+          pass: "healthcheck"
+          includeToken: false
+        status_code: [200, 401, 400]
+      register: tunnel_check
+      ignore_errors: true
+      failed_when: tunnel_check.status == -1
+
+    # ------------------------------------------------------------------
+    # Step 2: Login (via localhost tunnel)
+    # ------------------------------------------------------------------
+    - name: Login to Technitium DNS API
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "{{ dns_api_base }}/user/login"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          user: "{{ dns_admin_username }}"
+          pass: "{{ dns_admin_password }}"
+          includeToken: true
+      register: login_response
+      changed_when: false
+      failed_when: login_response.json.status != "ok"
+      no_log: true
+
+    - name: Extract session token
+      delegate_to: localhost
+      ansible.builtin.set_fact:
+        dns_session_token: "{{ login_response.json.token }}"
+      no_log: true
+
+    # ------------------------------------------------------------------
+    # Step 3: List / create zones
+    # ------------------------------------------------------------------
+    - name: List existing zones
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "{{ dns_api_base }}/zones/list"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ dns_session_token }}"
+      register: zones_list_response
+
+    - name: Extract existing zone names
+      delegate_to: localhost
+      ansible.builtin.set_fact:
+        existing_zones: >-
+          {{ zones_list_response.json.response.zones
+          | default([]) | map(attribute='name') | list }}
+
+    - name: Create zones that do not exist
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "{{ dns_api_base }}/zones/create"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          zone: "{{ item.name }}"
+          type: "{{ item.type }}"
+          token: "{{ dns_session_token }}"
+        headers:
+          Authorization: "Bearer {{ dns_session_token }}"
+        status_code: [200]
+      register: zone_create_results
+      loop: "{{ dns_zones }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.type }})"
+      when: item.name not in existing_zones
+
+    # ------------------------------------------------------------------
+    # Step 4: Add records
+    # ------------------------------------------------------------------
+    - name: Add records to zones
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "{{ dns_api_base }}/zones/records/add"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          zone: "{{ item[0].name }}"
+          domain: "{{ item[1].name }}.{{ item[0].name }}"
+          type: "{{ item[1].type }}"
+          value: "{{ item[1].value }}"
+          # Technitium expects type-specific params; ipAddress covers A/AAAA
+          ipAddress: "{{ item[1].value }}"
+          # ptr: true also creates the PTR record in the matching reverse zone
+          ptr: "{{ item[1].ptr | default(false) }}"
+          createPtrZone: false
+          ttl: "{{ item[1].ttl | default(3600) }}"
+          token: "{{ dns_session_token }}"
+        headers:
+          Authorization: "Bearer {{ dns_session_token }}"
+        status_code: [200]
+      register: record_add_results
+      failed_when: record_add_results.json.status != "ok"
+                    and "record already exists" not in (record_add_results.json.errorMessage | default(""))
+      loop: "{{ dns_zones | subelements('records') }}"
+      loop_control:
+        label: "{{ item[1].name }}.{{ item[0].name }}"
+
+    # ------------------------------------------------------------------
+    # Step 5: Verify resolution via the DNS server itself
+    # ------------------------------------------------------------------
+    - name: Verify DNS resolution
+      ansible.builtin.shell:
+        cmd: |
+          {% for zone in dns_zones %}
+          {% for record in zone.records %}
+          echo "{{ record.name }}.{{ zone.name }} -> $(dig +short @{{ ansible_host }} {{ record.name }}.{{ zone.name }} 2>/dev/null || echo 'FAILED')"
+          {% endfor %}
+          {% endfor %}
+      register: dns_verify
+      changed_when: false
+      failed_when: "'FAILED' in dns_verify.stdout"
+
+    - name: Display DNS verification
+      ansible.builtin.debug:
+        var: dns_verify.stdout_lines
+
+    # ------------------------------------------------------------------
+    # Step 6: Change admin password (if dns_admin_new_password is set)
+    # ------------------------------------------------------------------
+    - name: Change admin password
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "{{ dns_api_base }}/user/changePassword"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          pass: "{{ dns_admin_password }}"
+          newPass: "{{ dns_admin_new_password }}"
+          token: "{{ dns_session_token }}"
+        headers:
+          Authorization: "Bearer {{ dns_session_token }}"
+      register: password_change
+      no_log: true
+      when: dns_admin_new_password is defined and dns_admin_new_password | length > 0
+      failed_when: password_change.json.status != "ok"

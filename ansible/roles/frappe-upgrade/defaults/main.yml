@@ -1,0 +1,29 @@
+---
+# Version targets — all overridable at run time with -e var=value
+
+frappe_target_branch: version-16
+erpnext_target_branch: version-16
+helpdesk_target_ref: v1.26.1      # specific tag, verified Frappe v15+v16 compatible
+node_target_version: "20"         # Node.js LTS major version
+python_min_version: "3.11"        # pre-flight blocks and aborts if not met
+
+# Proxmox — which node holds the container
+pve_host: cspve2                  # Proxmox host inventory name (delegate_to target)
+pve_ctid: 106                     # LXC container ID on pve_host
+pve_snapshot_name: pre-v16-upgrade
+
+# Sites in this bench.
+# NOTE: support.cascadesteam.org moved off CT106 to CT111 (CS-0029, 2026-06-20)
+# and CT111 now runs the Docker-Compose architecture — do NOT upgrade it via
+# this bench-based role. CT106 now serves the BMS helpdesk only.
+frappe_sites:
+  - helpdesk.bellinghammakerspace.org
+
+# Pre-flight thresholds
+min_disk_free_gb: 10
+backup_max_age_hours: 24
+http_check_timeout: 30
+
+# BMS coordination ticket — optional. Pass -e bms_coordination_ticket=BMS-XXXX when
+# BMS users are active and need notification. Logged as a warning if omitted.
+bms_coordination_ticket: ""

@@ -1,0 +1,161 @@
+---
+# zabbix-server — Install and configure Zabbix server with PostgreSQL backend
+# Intended for Ubuntu 24.04 LTS LXC (as deployed on YetiCraft)
+# For other distros, customize the repo URL in defaults.
+
+- name: Install prerequisites
+  apt:
+    name:
+      - wget
+      - gnupg2
+      - lsb-release
+      - postgresql
+      - python3-psycopg2
+      - sudo
+      - php-pgsql
+    state: present
+    update_cache: yes
+
+- name: Download Zabbix repository package
+  get_url:
+    url: "{{ zabbix_repo_url }}"
+    dest: /tmp/zabbix-release.deb
+
+- name: Install Zabbix repository
+  apt:
+    deb: /tmp/zabbix-release.deb
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+
+- name: Install Zabbix server, frontend, agent
+  apt:
+    name:
+      - zabbix-server-pgsql
+      - zabbix-frontend-php
+      - zabbix-apache-conf
+      - zabbix-sql-scripts
+      - zabbix-agent
+    state: present
+
+- name: Ensure PostgreSQL is running
+  systemd:
+    name: postgresql
+    state: started
+    enabled: yes
+
+- name: Create Zabbix database user
+  become_user: postgres
+  postgresql_user:
+    name: "{{ db_user }}"
+    password: "{{ db_password }}"
+    role_attr_flags: CREATEDB
+  when: db_host == 'localhost'
+
+- name: Create Zabbix database
+  become_user: postgres
+  postgresql_db:
+    name: "{{ db_name }}"
+    owner: "{{ db_user }}"
+  when: db_host == 'localhost'
+
+- name: Import Zabbix database schema
+  become_user: postgres
+  shell: |
+    zcat /usr/share/zabbix-sql-scripts/postgresql/server.sql.gz | psql {{ db_name }}
+  args:
+    creates: /tmp/.zabbix_schema_imported
+  when: db_host == 'localhost'
+
+- name: Mark schema imported
+  file:
+    path: /tmp/.zabbix_schema_imported
+    state: touch
+  when: db_host == 'localhost'
+
+- name: Grant schema permissions to zabbix user
+  become_user: postgres
+  postgresql_privs:
+    db: "{{ db_name }}"
+    roles: "{{ db_user }}"
+    objs: ALL_IN_SCHEMA
+    schema: public
+    privs: ALL
+    type: table
+  when: db_host == 'localhost'
+
+- name: Set DB password in Zabbix config
+  lineinfile:
+    path: /etc/zabbix/zabbix_server.conf
+    regexp: "^#? DBPassword="
+    line: "DBPassword={{ db_password }}"
+
+- name: Deploy Zabbix frontend configuration
+  template:
+    src: zabbix.conf.php.j2
+    dest: /etc/zabbix/web/zabbix.conf.php
+    owner: www-data
+    group: www-data
+    mode: '0644'
+
+- name: Configure PHP timezone
+  lineinfile:
+    path: "{{ item }}"
+    regexp: "^;?date.timezone ="
+    line: "date.timezone = {{ php_timezone }}"
+  loop:
+    - /etc/php/8.2/apache2/php.ini
+    - /etc/php/8.3/apache2/php.ini
+  ignore_errors: yes
+
+- name: Increase PHP post_max_size for Zabbix
+  lineinfile:
+    path: "{{ item }}"
+    regexp: "^post_max_size = 8M"
+    line: "post_max_size = 16M"
+  loop:
+    - /etc/php/8.2/apache2/php.ini
+    - /etc/php/8.3/apache2/php.ini
+  ignore_errors: yes
+
+- name: Increase PHP max_execution_time
+  lineinfile:
+    path: "{{ item }}"
+    regexp: "^max_execution_time = 30"
+    line: "max_execution_time = 300"
+  loop:
+    - /etc/php/8.2/apache2/php.ini
+    - /etc/php/8.3/apache2/php.ini
+  ignore_errors: yes
+
+- name: Increase PHP max_input_time
+  lineinfile:
+    path: "{{ item }}"
+    regexp: "^max_input_time = 60"
+    line: "max_input_time = 300"
+  loop:
+    - /etc/php/8.2/apache2/php.ini
+    - /etc/php/8.3/apache2/php.ini
+  ignore_errors: yes
+
+- name: Start and enable Zabbix services
+  systemd:
+    name: "{{ item }}"
+    state: restarted
+    enabled: yes
+    daemon_reload: yes
+  loop:
+    - zabbix-server
+    - zabbix-agent
+    - apache2
+
+- name: Verify Zabbix server is running
+  command: systemctl is-active zabbix-server
+  register: zabbix_status
+  changed_when: false
+  failed_when: zabbix_status.rc != 0
+
+- name: Display Zabbix server status
+  debug:
+    msg: "Zabbix server status: {{ zabbix_status.stdout }}"

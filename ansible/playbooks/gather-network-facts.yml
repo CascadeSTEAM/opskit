@@ -1,0 +1,96 @@
+---
+- name: Gather system and network facts from AI cluster nodes
+  # Scoped to BMS SSH-able hosts: network_devices uses ansible_connection=local
+  # (tasks would run on the control node), and the merged inventory now loads
+  # all three environments under `all`. Override with -e target_hosts=...
+  hosts: "{{ target_hosts | default('bms:!network_devices') }}"
+  gather_facts: yes
+  tasks:
+    # ------------------------------------------------------------------
+    # System info
+    # ------------------------------------------------------------------
+    - name: Collect system OS and hardware facts
+      ansible.builtin.set_fact:
+        host_discovered_info:
+          os_family: "{{ ansible_os_family }}"
+          distribution: "{{ ansible_distribution }}"
+          distribution_version: "{{ ansible_distribution_version }}"
+          distribution_release: "{{ ansible_distribution_release }}"
+          kernel: "{{ ansible_kernel }}"
+          architecture: "{{ ansible_architecture }}"
+          virtualization_type: "{{ ansible_virtualization_type }}"
+          processor_count: "{{ ansible_processor_count | default(0) }}"
+          processor_cores: "{{ ansible_processor_cores | default(0) }}"
+          memtotal_mb: "{{ ansible_memtotal_mb | default(0) }}"
+          swaptotal_mb: "{{ ansible_swaptotal_mb | default(0) }}"
+          product_name: "{{ ansible_product_name | default('') }}"
+          product_version: "{{ ansible_product_version | default('') }}"
+          last_gathered: "{{ ansible_date_time.iso8601 }}"
+
+    # ------------------------------------------------------------------
+    # Network info
+    # ------------------------------------------------------------------
+    - name: Get DNS configuration
+      ansible.builtin.shell: cat /etc/resolv.conf
+      register: dns_config
+      changed_when: false
+
+    - name: Get default gateway
+      ansible.builtin.shell: ip route | grep default
+      register: gateway_config
+      changed_when: false
+
+    - name: Get interface status
+      ansible.builtin.shell: ip link show | grep -E '^[0-9]+:'
+      register: interface_status
+      changed_when: false
+
+    - name: Assemble network facts
+      ansible.builtin.set_fact:
+        host_network_info:
+          default_ip: "{{ ansible_default_ipv4.address | default('') }}"
+          default_interface: "{{ ansible_default_ipv4.interface | default('') }}"
+          default_gateway: "{{ ansible_default_ipv4.gateway | default('') }}"
+          dns_config: "{{ dns_config.stdout | default('') }}"
+          routes: "{{ gateway_config.stdout | default('') }}"
+          interfaces: "{{ interface_status.stdout | default('') }}"
+
+    # ------------------------------------------------------------------
+    # Cache to host_vars
+    # ------------------------------------------------------------------
+    - name: Ensure host_vars directory exists
+      delegate_to: localhost
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/../inventory/host_vars/{{ inventory_hostname }}"
+        state: directory
+
+    - name: Cache discovered info to host_vars
+      delegate_to: localhost
+      ansible.builtin.copy:
+        content: |
+          ---
+          # Auto-discovered facts for {{ inventory_hostname }}
+          # Last gathered: {{ ansible_date_time.iso8601 }}
+          discovered:
+            os: {
+              family: "{{ ansible_os_family }}",
+              distro: "{{ ansible_distribution }}",
+              version: "{{ ansible_distribution_version }}",
+              release: "{{ ansible_distribution_release }}"
+            }
+            hardware: {
+              kernel: "{{ ansible_kernel }}",
+              arch: "{{ ansible_architecture }}",
+              virt_type: "{{ ansible_virtualization_type }}",
+              cpu_count: {{ ansible_processor_count | default(0) }},
+              cpu_cores: {{ ansible_processor_cores | default(0) }},
+              ram_mb: {{ ansible_memtotal_mb | default(0) }},
+              swap_mb: {{ ansible_swaptotal_mb | default(0) }},
+              product: "{{ ansible_product_name | default('') }}"
+            }
+            network: {
+              default_ip: "{{ ansible_default_ipv4.address | default('') }}",
+              default_gw: "{{ ansible_default_ipv4.gateway | default('') }}",
+              default_iface: "{{ ansible_default_ipv4.interface | default('') }}"
+            }
+        dest: "{{ playbook_dir }}/../inventory/host_vars/{{ inventory_hostname }}/discovered.yml"

@@ -1,0 +1,67 @@
+---
+# Phase 2 — Node.js 18 → 20
+# Installs Node.js 20 via NodeSource repo. Rebuilds bench assets afterwards.
+# Runs as a dedicated phase so it can be verified before touching app branches.
+
+- name: "Node.js | Detect current version"
+  ansible.builtin.command: node --version
+  register: node_version_current
+  changed_when: false
+  failed_when: false
+
+- name: "Node.js | Current version: {{ node_version_current.stdout | default('not installed') }}"
+  ansible.builtin.debug:
+    msg: "Current Node.js: {{ node_version_current.stdout | default('not installed') }}"
+
+- name: "Node.js | Skip install — already on v{{ node_target_version }}"
+  ansible.builtin.debug:
+    msg: "Node.js {{ node_target_version }}.x already installed. Skipping NodeSource install."
+  when: node_version_current.stdout is defined and node_version_current.stdout is match('v' + node_target_version + '\\..*')
+
+- name: "Node.js | Download NodeSource v{{ node_target_version }} setup script"
+  ansible.builtin.get_url:
+    url: "https://deb.nodesource.com/setup_{{ node_target_version }}.x"
+    dest: /tmp/nodesource_setup.sh
+    mode: "0755"
+    timeout: 60
+  when: node_version_current.stdout is not defined or node_version_current.stdout is not match('v' + node_target_version + '\\..*')
+
+- name: "Node.js | Run NodeSource setup (adds apt repo + GPG key)"
+  ansible.builtin.command: bash /tmp/nodesource_setup.sh
+  when: node_version_current.stdout is not defined or node_version_current.stdout is not match('v' + node_target_version + '\\..*')
+
+- name: "Node.js | Install nodejs {{ node_target_version }}"
+  ansible.builtin.apt:
+    name: nodejs
+    state: latest
+    update_cache: yes
+  when: node_version_current.stdout is not defined or node_version_current.stdout is not match('v' + node_target_version + '\\..*')
+
+- name: "Node.js | Clean up setup script"
+  ansible.builtin.file:
+    path: /tmp/nodesource_setup.sh
+    state: absent
+
+- name: "Node.js | Verify installed version"
+  ansible.builtin.command: node --version
+  register: node_version_installed
+  changed_when: false
+
+- name: "Node.js | Fail if not on v{{ node_target_version }}.x"
+  ansible.builtin.fail:
+    msg: >-
+      Node.js install verification failed.
+      Expected v{{ node_target_version }}.x but got {{ node_version_installed.stdout }}.
+  when: node_version_installed.stdout is not match('v' + node_target_version + '\\..*')
+
+- name: "Node.js | v{{ node_version_installed.stdout }} confirmed — rebuilding bench assets"
+  ansible.builtin.debug:
+    msg: "Node.js {{ node_version_installed.stdout }} installed. Rebuilding bench assets."
+
+- name: "Node.js | bench build --production (may take several minutes)"
+  ansible.builtin.command:
+    cmd: bench build --production
+    chdir: "{{ frappe_bench_path }}"
+  become_user: "{{ frappe_user }}"
+  async: 900
+  poll: 30

@@ -1,0 +1,51 @@
+---
+# Olla role variables
+olla_image: "ghcr.io/thushan/olla:latest"
+olla_container_name: "olla"
+olla_port: 40114
+olla_log_path: "/var/log/olla.log"
+
+# Ollama cluster nodes (from inventory)
+# Priority: higher = preferred first
+olla_nodes:
+  - name: "cluster-llm"
+    url: "http://10.99.0.201:11434"
+    priority: 100
+    check_interval: 15s
+    check_timeout: 5s
+  - name: "lab1"
+    url: "http://10.99.0.211:11434"
+    priority: 75
+    check_interval: 15s
+    check_timeout: 5s
+  - name: "lab2"
+    url: "http://10.99.0.212:11434"
+    priority: 75
+    check_interval: 15s
+    check_timeout: 5s
+  - name: "lab4"
+    url: "http://10.99.0.214:11434"
+    priority: 75
+    check_interval: 15s
+    check_timeout: 5s
+  - name: "nuk1"
+    url: "http://10.99.0.215:11434"
+    priority: 50
+    check_interval: 20s
+    check_timeout: 10s
+
+# LiteLLM cloud gateway (deployed in Phase 2)
+litellm_url: "http://localhost:4000"
+litellm_priority: 50
+litellm_check_interval: 30s
+litellm_check_timeout: 10s
+
+# Olla configuration
+olla_engine: "sherpa"  # or "olla" for circuit breakers
+olla_load_balancer: "least-connections"
+olla_request_logging: true
+olla_write_timeout: "600s"
+olla_response_timeout: "600s"
+olla_connection_timeout: "30s"
+olla_model_discovery_interval: "5m"
+olla_log_level: "info"

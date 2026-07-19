@@ -1,0 +1,78 @@
+---
+# Olla Ansible role tasks
+# Deploys Olla LLM proxy via Docker
+
+- name: "Install required packages"
+  ansible.builtin.apt:
+    name:
+      - docker.io
+    state: present
+    update_cache: yes
+  become: yes
+
+- name: "Ensure docker service is running"
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: yes
+  become: yes
+
+- name: "Create Olla directories"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - /opt/olla
+    - /var/log
+  become: yes
+
+- name: "Deploy Olla configuration"
+  ansible.builtin.template:
+    src: olla.yaml.j2
+    dest: /opt/olla/olla.yaml
+    mode: '0644'
+  become: yes
+  notify: "restart olla"
+
+- name: "Deploy Olla systemd service"
+  ansible.builtin.template:
+    src: olla.service.j2
+    dest: /etc/systemd/system/olla.service
+    mode: '0644'
+  become: yes
+  notify: "restart olla"
+
+- name: "Pull Olla Docker image"
+  ansible.builtin.shell: docker pull {{ olla_image }}
+  become: yes
+  register: pull_result
+  changed_when: "'Downloaded newer image' in pull_result.stdout"
+
+- name: "Enable and start Olla service"
+  ansible.builtin.systemd:
+    name: olla
+    state: started
+    enabled: yes
+    daemon_reload: yes
+  become: yes
+
+- name: "Wait for Olla to start"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ olla_port }}/internal/health"
+    return_content: yes
+  register: olla_health
+  until: olla_health.status == 200
+  retries: 10
+  delay: 3
+
+- name: "Verify Olla endpoints status"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ olla_port }}/internal/status/endpoints"
+    return_content: yes
+  register: olla_status
+  failed_when: false
+
+- name: "Show Olla status"
+  ansible.builtin.debug:
+    msg: "Olla status: {{ olla_status.content | default('Unable to fetch status') }}"

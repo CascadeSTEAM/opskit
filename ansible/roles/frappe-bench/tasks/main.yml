@@ -1,0 +1,59 @@
+---
+# tasks file for frappe-bench role
+
+- name: Create frappe user
+  ansible.builtin.user:
+    name: "{{ frappe_user }}"
+    shell: /bin/bash
+    groups: sudo
+    append: yes
+    create_home: yes
+
+- name: Ensure /etc/sudoers.d exists
+  ansible.builtin.file:
+    path: /etc/sudoers.d
+    state: directory
+    mode: '0750'
+
+- name: Allow frappe user to use sudo without password
+  ansible.builtin.copy:
+    content: "{{ frappe_user }} ALL=(ALL) NOPASSWD:ALL"
+    dest: "/etc/sudoers.d/{{ frappe_user }}"
+    mode: '0440'
+    validate: /usr/sbin/visudo -cf %s
+
+- name: Install frappe-bench CLI
+  ansible.builtin.pip:
+    name: frappe-bench
+    executable: pip3
+    extra_args: --break-system-packages
+
+- name: Check if bench is initialized
+  ansible.builtin.stat:
+    path: "{{ frappe_bench_path }}/.gen"
+  register: bench_stat
+
+- name: Initialize frappe-bench
+  ansible.builtin.command:
+    cmd: "bench init {{ frappe_bench_name }} --frappe-branch {{ frappe_branch }}"
+    chdir: "{{ frappe_user_home }}"
+  become: yes
+  become_user: "{{ frappe_user }}"
+  when: not bench_stat.stat.exists
+
+- name: Enable DNS multi-tenancy
+  ansible.builtin.command:
+    cmd: "bench config dns_multitenant on"
+    chdir: "{{ frappe_bench_path }}"
+  become: yes
+  become_user: "{{ frappe_user }}"
+
+- name: Disable developer mode and live reload
+  ansible.builtin.command:
+    cmd: "bench set-config -g {{ item.key }} {{ item.value }}"
+    chdir: "{{ frappe_bench_path }}"
+  loop:
+    - { key: "developer_mode", value: "0" }
+    - { key: "live_reload", value: "0" }
+  become: yes
+  become_user: "{{ frappe_user }}"

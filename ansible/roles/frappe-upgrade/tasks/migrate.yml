@@ -1,0 +1,32 @@
+---
+# Phase 4 — Database migration
+# Runs bench migrate and cache clear for each site.
+# Sites remain in maintenance mode throughout. Failure triggers rollback.
+
+- name: "Migrate | Run bench migrate for {{ item }}"
+  ansible.builtin.command:
+    cmd: "bench --site {{ item }} migrate"
+    chdir: "{{ frappe_bench_path }}"
+  become_user: "{{ frappe_user }}"
+  loop: "{{ frappe_sites }}"
+  async: 1800
+  poll: 30
+
+- name: "Migrate | Clear cache for {{ item }}"
+  ansible.builtin.command:
+    cmd: "bench --site {{ item }} clear-cache"
+    chdir: "{{ frappe_bench_path }}"
+  become_user: "{{ frappe_user }}"
+  loop: "{{ frappe_sites }}"
+
+- name: "Migrate | Clear website cache for {{ item }}"
+  ansible.builtin.command:
+    cmd: "bench --site {{ item }} clear-website-cache"
+    chdir: "{{ frappe_bench_path }}"
+  become_user: "{{ frappe_user }}"
+  loop: "{{ frappe_sites }}"
+  failed_when: false
+
+- name: "Migrate | Database migration complete for all sites"
+  ansible.builtin.debug:
+    msg: "Migration complete for: {{ frappe_sites | join(', ') }}"

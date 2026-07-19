@@ -1,0 +1,22 @@
+# Example environment inventory — conforms to opskit inventory conventions (§7-5)
+all:
+  children:
+    example:
+      children:
+        routers:
+          hosts:
+            ex-gw-01:
+        switches:
+          hosts:
+            ex-sw-01:
+        servers:
+          children:
+            infrastructure:
+              hosts:
+                ex-srv-01:
+            application:
+              hosts:
+                ex-srv-02:
+        access_points:
+          hosts:
+            ex-ap-01:

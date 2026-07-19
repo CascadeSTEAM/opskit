@@ -1,0 +1,45 @@
+---
+- name: Deploy Caddy reverse proxy configuration
+  hosts: cs-caddy
+  gather_facts: yes
+  become: yes
+
+  roles:
+    - role: caddy
+      vars:
+        caddy_global_email: support@cascadesteam.org
+        caddy_internal_subnets:
+          - 10.99.10.0/24
+          - 10.99.20.0/24
+          - 10.0.0.0/24
+          - 207.224.235.194
+        caddy_routes:
+          # CS ERPNext v16 (CT 111, cs-erpnext, 10.99.10.25)
+          - domain: support.cascadesteam.org
+            target: 10.99.10.25:8080
+            internal: false
+          # BMS Frappe Helpdesk v15 (CT 106, cs-helpdesk, 10.99.10.20)
+          - domain: helpdesk.bellinghammakerspace.org
+            target: 10.99.10.20:80
+            internal: false
+          - domain: bms.bellinghammakerspace.org
+            target: 10.99.10.20:80
+            internal: false
+          - domain: zabbix.cascadesteam.org
+            target: 10.99.10.21:80
+            internal: true
+            extra: |
+              redir / /zabbix/
+          - domain: dns.cascadesteam.org
+            target: 10.99.10.10:5380
+            internal: true
+          - domain: traffic.cascadesteam.org
+            target: ""
+            internal: true
+            handler: file_server
+          - domain: netflow.cascadesteam.org
+            target: 10.99.10.35:3000
+            internal: true
+          - domain: grafana.cascadesteam.org
+            target: 10.99.10.22:3000
+            internal: true

@@ -1,0 +1,107 @@
+---
+# restart-lifecycle-service.yml — Redeploy and restart the lifecycle-processor service
+#
+# Copies the updated lifecycle-processor.py and service unit to the target host,
+# reloads the systemd user daemon, and restarts the service.
+#
+# Run from this repo root:
+#   ansible-playbook \
+#     ansible/playbooks/restart-lifecycle-service.yml \
+#     -e ansible_user=<user> -e target_host=phoenix
+#
+# Or to restart only (no file copy):
+#   ansible-playbook ... -e restart_only=true
+
+- name: Redeploy lifecycle-processor service
+  hosts: "{{ target_host | default('localhost') }}"
+  connection: "{{ 'local' if (target_host | default('localhost')) == 'localhost' else 'ssh' }}"
+  gather_facts: yes
+
+  vars:
+    repo_root: "{{ ansible_env.HOME }}/Projects/bms-ai-cluster"
+    venv_python: "{{ repo_root }}/.venv/bin/python3"
+    service_name: lifecycle-processor
+    systemd_user_dir: "{{ ansible_env.HOME }}/.config/systemd/user"
+    restart_only: false
+
+  tasks:
+    - name: Check repo root exists
+      ansible.builtin.stat:
+        path: "{{ repo_root }}"
+      register: repo_stat
+      failed_when: not repo_stat.stat.exists
+
+    - name: Verify Python venv exists
+      ansible.builtin.stat:
+        path: "{{ venv_python }}"
+      register: venv_stat
+      failed_when: not venv_stat.stat.exists
+
+    - name: Install/update Python dependencies
+      ansible.builtin.pip:
+        requirements: "{{ repo_root }}/requirements.txt"
+        virtualenv: "{{ repo_root }}/.venv"
+        virtualenv_command: python3 -m venv
+      when: not restart_only
+
+    - name: Smoke test lifecycle-processor
+      ansible.builtin.command:
+        cmd: "{{ venv_python }} {{ repo_root }}/scripts/lifecycle-processor.py --dry-run"
+        chdir: "{{ repo_root }}"
+      register: smoke_test
+      failed_when: smoke_test.rc not in [0, 1]
+      changed_when: false
+      when: not restart_only
+
+    - name: Ensure systemd user directory exists
+      ansible.builtin.file:
+        path: "{{ systemd_user_dir }}"
+        state: directory
+        mode: '0755'
+      when: not restart_only
+
+    - name: Install service unit file
+      ansible.builtin.template:
+        src: "{{ repo_root }}/scripts/lifecycle-processor.service"
+        dest: "{{ systemd_user_dir }}/{{ service_name }}.service"
+        mode: '0644'
+      vars:
+        # Inline the substitutions that install-lifecycle-service.sh does via sed
+        __REPO_ROOT__: "{{ repo_root }}"
+        __PYTHON__: "{{ venv_python }}"
+      when: not restart_only
+      register: service_file
+
+    - name: Reload systemd user daemon
+      ansible.builtin.systemd:
+        daemon_reload: yes
+        scope: user
+      when: not restart_only and service_file.changed
+
+    - name: Restart lifecycle-processor service
+      ansible.builtin.systemd:
+        name: "{{ service_name }}"
+        state: restarted
+        scope: user
+        enabled: yes
+
+    - name: Wait for service to stabilize
+      ansible.builtin.pause:
+        seconds: 3
+
+    - name: Check service is active
+      ansible.builtin.command:
+        cmd: systemctl --user is-active {{ service_name }}
+      register: svc_status
+      changed_when: false
+      failed_when: svc_status.stdout.strip() != 'active'
+
+    - name: Show recent service logs
+      ansible.builtin.command:
+        cmd: journalctl --user -u {{ service_name }} -n 20 --no-pager
+      register: svc_logs
+      changed_when: false
+
+    - name: Print service logs
+      ansible.builtin.debug:
+        msg: "{{ svc_logs.stdout_lines }}"

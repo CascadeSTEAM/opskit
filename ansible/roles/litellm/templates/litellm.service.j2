@@ -1,0 +1,24 @@
+[Unit]
+Description=LiteLLM Cloud API Gateway
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/docker pull {{ litellm_image }}
+ExecStart=/usr/bin/docker run --rm --name {{ litellm_container_name }} \
+  -p {{ litellm_port }}:4000 \
+  -v /opt/litellm/litellm_config.yaml:/app/config.yaml:ro \
+  -e ANTHROPIC_API_KEY \
+  -e GEMINI_API_KEY \
+  -e OPENAI_API_KEY \
+  -e LITELLM_MASTER_KEY \
+  {{ litellm_image }} --config /app/config.yaml --port 4000
+ExecStop=/usr/bin/docker stop {{ litellm_container_name }}
+Restart=unless-stopped
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,6 @@
+---
+# handlers file for frappe-site
+- name: reload supervisor
+  ansible.builtin.command:
+    cmd: supervisorctl reload
+  become: yes

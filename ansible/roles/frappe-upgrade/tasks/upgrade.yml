@@ -1,0 +1,62 @@
+---
+# Phase 3 — App branch switch + bench update
+# Switches Frappe and ERPNext to the target branch, pins Helpdesk to the
+# verified tag, then runs bench update to pull, patch, build, and install
+# updated requirements.
+
+- name: "Upgrade | Install build deps required by Frappe v16 Python packages"
+  ansible.builtin.apt:
+    name:
+      - pkg-config
+      - libmariadb-dev
+    state: present
+    update_cache: no
+
+- name: "Upgrade | Switch Frappe and ERPNext to {{ frappe_target_branch }}"
+  ansible.builtin.command:
+    cmd: "bench switch-to-branch {{ frappe_target_branch }} frappe erpnext --upgrade"
+    chdir: "{{ frappe_bench_path }}"
+  become_user: "{{ frappe_user }}"
+
+- name: "Upgrade | Fetch Helpdesk tags from origin"
+  ansible.builtin.command:
+    cmd: "git -C {{ frappe_apps_path }}/helpdesk fetch --tags origin"
+  become_user: "{{ frappe_user }}"
+
+- name: "Upgrade | Checkout Helpdesk {{ helpdesk_target_ref }}"
+  ansible.builtin.command:
+    cmd: "git -C {{ frappe_apps_path }}/helpdesk checkout {{ helpdesk_target_ref }}"
+  become_user: "{{ frappe_user }}"
+
+- name: "Upgrade | Install updated Helpdesk Python requirements"
+  ansible.builtin.command:
+    cmd: "{{ frappe_bench_path }}/env/bin/pip install -e {{ frappe_apps_path }}/helpdesk"
+  become_user: "{{ frappe_user }}"
+
+- name: "Upgrade | bench update --pull --patch --build --requirements (may take 10-20 min)"
+  ansible.builtin.command:
+    cmd: bench update --pull --patch --build --requirements
+    chdir: "{{ frappe_bench_path }}"
+  become_user: "{{ frappe_user }}"
+  async: 2400
+  poll: 30
+
+- name: "Upgrade | Confirm Frappe reports {{ frappe_target_branch }}"
+  ansible.builtin.command:
+    cmd: bench version
+    chdir: "{{ frappe_bench_path }}"
+  become_user: "{{ frappe_user }}"
+  register: bench_ver_post_upgrade
+  changed_when: false
+
+- name: "Upgrade | Post-switch bench versions"
+  ansible.builtin.debug:
+    msg: "{{ bench_ver_post_upgrade.stdout_lines }}"
+
+- name: "Upgrade | Fail if Frappe is not on v16"
+  ansible.builtin.fail:
+    msg: >-
+      bench version does not show Frappe 16.x after branch switch.
+      Output: {{ bench_ver_post_upgrade.stdout }}
+      Check that the switch-to-branch command succeeded.
+  when: bench_ver_post_upgrade.stdout is not search('frappe 16\\.')

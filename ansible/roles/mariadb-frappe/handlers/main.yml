@@ -1,0 +1,7 @@
+---
+# handlers file for mariadb-frappe
+- name: restart mariadb
+  ansible.builtin.systemd:
+    name: mariadb
+    state: restarted
+  become: yes

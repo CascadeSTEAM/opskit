@@ -1,0 +1,85 @@
+---
+# Phase 1 — Maintenance mode + MariaDB dump + Proxmox snapshot.
+# This marks the point of no return. Any failure after this phase
+# will trigger the rescue block and restore from the snapshot created here.
+# DATA-LOSS NOTE: Any data written after maintenance mode is enabled will be
+# lost if rollback is triggered. Users must be notified before this runs.
+
+- name: "Snapshot | Enable maintenance mode on all sites"
+  ansible.builtin.command:
+    cmd: "bench --site {{ item }} set-maintenance-mode on"
+    chdir: "{{ frappe_bench_path }}"
+  become_user: "{{ frappe_user }}"
+  loop: "{{ frappe_sites }}"
+
+- name: "Snapshot | Take full MariaDB dump to {{ frappe_db_dump_path }}"
+  ansible.builtin.shell:
+    cmd: "mysqldump -u root --all-databases > {{ frappe_db_dump_path }}"
+  environment:
+    MYSQL_PWD: "{{ db_root_password }}"
+  no_log: true
+
+- name: "Snapshot | Verify dump was created and is non-empty"
+  ansible.builtin.stat:
+    path: "{{ frappe_db_dump_path }}"
+  register: dump_file_stat
+
+- name: "Snapshot | Fail if dump missing or empty"
+  ansible.builtin.fail:
+    msg: "MariaDB dump at {{ frappe_db_dump_path }} is missing or empty. Aborting before snapshot."
+  when: not dump_file_stat.stat.exists or dump_file_stat.stat.size == 0
+
+- name: "Snapshot | Dump size: {{ (dump_file_stat.stat.size / 1024 / 1024) | round(1) }} MB"
+  ansible.builtin.debug:
+    msg: "{{ frappe_db_dump_path }} — {{ (dump_file_stat.stat.size / 1024 / 1024) | round(1) }} MB"
+
+- name: "Snapshot | Check if snapshot already exists"
+  ansible.builtin.shell: >-
+    ssh -i ~/.ssh/id_ed25519
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+    -p 666 root@vpn.cascadesteam.org
+    "pct listsnapshot {{ pve_ctid }}"
+  delegate_to: localhost
+  become: no
+  register: snapshot_pre_check
+  changed_when: false
+
+- name: "Snapshot | Create Proxmox snapshot '{{ pve_snapshot_name }}' on CT{{ pve_ctid }}"
+  ansible.builtin.shell: >-
+    ssh -i ~/.ssh/id_ed25519
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+    -p 666 root@vpn.cascadesteam.org
+    "pct snapshot {{ pve_ctid }} '{{ pve_snapshot_name }}'"
+  delegate_to: localhost
+  become: no
+  when: pve_snapshot_name not in snapshot_pre_check.stdout
+
+- name: "Snapshot | Snapshot already exists — skipping creation"
+  ansible.builtin.debug:
+    msg: "Snapshot '{{ pve_snapshot_name }}' already exists on CT{{ pve_ctid }} — skipping."
+  when: pve_snapshot_name in snapshot_pre_check.stdout
+
+- name: "Snapshot | Verify snapshot exists in pct listsnapshot"
+  ansible.builtin.shell: >-
+    ssh -i ~/.ssh/id_ed25519
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+    -p 666 root@vpn.cascadesteam.org
+    "pct listsnapshot {{ pve_ctid }}"
+  delegate_to: localhost
+  become: no
+  register: snapshot_list_output
+  changed_when: false
+
+- name: "Snapshot | Fail if snapshot not found in list"
+  ansible.builtin.fail:
+    msg: >-
+      Proxmox snapshot '{{ pve_snapshot_name }}' not confirmed in pct listsnapshot output.
+      Output was: {{ snapshot_list_output.stdout }}
+  when: pve_snapshot_name not in snapshot_list_output.stdout
+
+- name: "Snapshot | Snapshot confirmed — data-loss window open"
+  ansible.builtin.debug:
+    msg:
+      - "Snapshot '{{ pve_snapshot_name }}' created on CT{{ pve_ctid }} @ {{ pve_host }}"
+      - "Maintenance mode is active on all sites."
+      - "Any rollback from this point will lose data written after this message."

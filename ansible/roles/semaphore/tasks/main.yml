@@ -1,0 +1,76 @@
+---
+- name: Create semaphore directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ semaphore_install_dir }}"
+    - "{{ semaphore_playbook_path }}"
+
+- name: Download semaphore binary
+  ansible.builtin.get_url:
+    url: "https://github.com/semaphoreui/semaphore/releases/download/v{{ semaphore_version }}/semaphore_{{ semaphore_version }}_linux_amd64.deb"
+    dest: "/tmp/semaphore.deb"
+    mode: "0644"
+
+- name: Install semaphore
+  ansible.builtin.apt:
+    deb: /tmp/semaphore.deb
+  notify: restart semaphore
+
+- name: Configure semaphore
+  ansible.builtin.template:
+    src: config.json.j2
+    dest: "{{ semaphore_config_path }}"
+    mode: "0640"
+  notify: restart semaphore
+
+- name: Initialize semaphore database
+  ansible.builtin.command:
+    cmd: >
+      semaphore setup
+      --config {{ semaphore_config_path }}
+      --db-host {{ semaphore_db_host }}
+      --db-port {{ semaphore_db_port }}
+      --db-name {{ semaphore_db_name }}
+      --db-user {{ semaphore_db_user }}
+      --db-pass {{ semaphore_db_password }}
+      --admin-login {{ semaphore_admin_user }}
+      --admin-email {{ semaphore_admin_email }}
+      --admin-password {{ semaphore_admin_password }}
+      --admin-name {{ semaphore_admin_user }}
+    creates: "{{ semaphore_config_path }}.initialized"
+  register: _setup
+  changed_when: _setup.rc == 0
+
+- name: Mark semaphore initialized
+  ansible.builtin.file:
+    path: "{{ semaphore_config_path }}.initialized"
+    state: touch
+  when: _setup.changed
+
+- name: Install semaphore systemd service
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Semaphore UI
+      After=network.target
+
+      [Service]
+      Type=simple
+      User=root
+      ExecStart=/usr/bin/semaphore server --config {{ semaphore_config_path }}
+      Restart=on-failure
+
+      [Install]
+      WantedBy=multi-user.target
+    dest: /etc/systemd/system/semaphore.service
+    mode: "0644"
+  notify: restart semaphore
+
+- name: Enable and start semaphore
+  ansible.builtin.systemd:
+    name: semaphore
+    enabled: true
+    state: started

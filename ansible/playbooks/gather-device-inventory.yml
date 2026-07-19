@@ -1,0 +1,338 @@
+---
+# gather-device-inventory.yml — Unified device inventory discovery
+#
+# Single playbook for ALL discovery: system facts, hardware audit, BMC
+# interrogation, and component inventory. Caches structured results to
+# host_vars/<host>/hardware-inventory.yml for downstream sync scripts.
+#
+# Also dumps router-layer info (ARP, DHCP leases) when run against the
+# network infrastructure host.
+#
+# Usage:
+#   ansible-playbook ansible/playbooks/gather-device-inventory.yml \
+#     --limit proxmox_nodes
+#
+#   # All hosts (slower):
+#   ansible-playbook ansible/playbooks/gather-device-inventory.yml \
+#     (inventory auto-loaded from ansible.cfg: ./inventory)
+#
+# Tags:
+#   system     — OS facts, kernel, uptime (fast)
+#   hardware   — dmidecode, lshw, CPU, RAM, storage (medium)
+#   bmc        — ipmitool lan/fru/mc info (medium)
+#   network    — interfaces, MACs, routing (fast)
+#   component  — lspci, lsblk, detailed inventory (slowest)
+#   router     — MikroTik ARP/DHCP dump (requires router access)
+#
+# _provenance block is appended to every host's output automatically.
+
+- name: Gather device inventory — all targeted hosts
+  # Scoped to BMS SSH-able hosts: network_devices uses ansible_connection=local
+  # (tasks would run on the control node), and the merged inventory now loads
+  # all three environments under `all`. Override with -e target_hosts=...
+  hosts: "{{ target_hosts | default('bms:!network_devices') }}"
+  gather_facts: yes
+  vars:
+    scan_timestamp: "{{ ansible_date_time.iso8601 | default('unknown') }}"
+    _provenance:
+      playbook: gather-device-inventory.yml
+      gathered: "{{ scan_timestamp }}"
+      from_host: "{{ ansible_hostname | default(inventory_hostname) }}"
+      tags_used: "{{ ansible_run_tags | default(['all']) }}"
+      commands: []
+      corroborations: []
+
+  tasks:
+    # ==================================================================
+    # Layer 2 — Ansible system facts (always gathered by setup module)
+    # ==================================================================
+
+    - name: Assemble system facts
+      tags: system
+      ansible.builtin.set_fact:
+        _sys_facts:
+          os_family: "{{ ansible_os_family | default('') }}"
+          distribution: "{{ ansible_distribution | default('') }}"
+          distribution_version: "{{ ansible_distribution_version | default('') }}"
+          kernel: "{{ ansible_kernel | default('') }}"
+          architecture: "{{ ansible_architecture | default('') }}"
+          virtualization_type: "{{ ansible_virtualization_type | default('') }}"
+          processor_count: "{{ ansible_processor_count | default(0) }}"
+          processor_cores: "{{ ansible_processor_cores | default(0) }}"
+          memtotal_mb: "{{ ansible_memtotal_mb | default(0) }}"
+          swaptotal_mb: "{{ ansible_swaptotal_mb | default(0) }}"
+          product_name: "{{ ansible_product_name | default('') }}"
+          product_version: "{{ ansible_product_version | default('') }}"
+          uptime_seconds: "{{ ansible_uptime_seconds | default(0) }}"
+
+    # ==================================================================
+    # Layer 3 — Hardware identity (dmidecode)
+    # ==================================================================
+
+    - name: Get dmidecode system info
+      tags: hardware
+      ansible.builtin.command: dmidecode -t system
+      register: _dmidecode_system
+      changed_when: false
+      failed_when: false
+
+    - name: Get dmidecode baseboard info
+      tags: hardware
+      ansible.builtin.command: dmidecode -t baseboard
+      register: _dmidecode_baseboard
+      changed_when: false
+      failed_when: false
+
+    - name: Get dmidecode chassis info
+      tags: hardware
+      ansible.builtin.command: dmidecode -t chassis
+      register: _dmidecode_chassis
+      changed_when: false
+      failed_when: false
+
+    - name: Get dmidecode processor info
+      tags: hardware
+      ansible.builtin.command: dmidecode -t processor
+      register: _dmidecode_processor
+      changed_when: false
+      failed_when: false
+
+    - name: Get dmidecode memory info
+      tags: hardware
+      ansible.builtin.command: dmidecode -t memory
+      register: _dmidecode_memory
+      changed_when: false
+      failed_when: false
+
+    - name: Parse dmidecode output
+      tags: hardware
+      vars:
+        _raw: "{{ _dmidecode_system.stdout_lines | default([]) }}"
+      ansible.builtin.set_fact:
+        _hardware_identity:
+          manufacturer: "{{ _raw | select('search', 'Manufacturer:') | first | default('') | regex_replace('.*Manufacturer:\\s+', '') | trim }}"
+          product_name: "{{ _raw | select('search', 'Product Name:') | first | default('') | regex_replace('.*Product Name:\\s+', '') | trim }}"
+          serial: "{{ _raw | select('search', 'Serial Number:') | first | default('') | regex_replace('.*Serial Number:\\s+', '') | trim }}"
+          uuid: "{{ _raw | select('search', 'UUID:') | first | default('') | regex_replace('.*UUID:\\s+', '') | trim }}"
+          sku: "{{ _raw | select('search', 'SKU Number:') | first | default('') | regex_replace('.*SKU Number:\\s+', '') | trim }}"
+          chassis_type: "{{ _dmidecode_chassis.stdout_lines | default([]) | select('search', 'Type:') | first | default('') | regex_replace('.*Type:\\s+', '') | trim }}"
+          board_name: "{{ _dmidecode_baseboard.stdout_lines | default([]) | select('search', 'Product Name:') | first | default('') | regex_replace('.*Product Name:\\s+', '') | trim }}"
+          board_version: "{{ _dmidecode_baseboard.stdout_lines | default([]) | select('search', 'Version:') | first | default('') | regex_replace('.*Version:\\s+', '') | trim }}"
+      when: _dmidecode_system is defined
+
+    - name: Parse processor summary
+      tags: hardware
+      ansible.builtin.set_fact:
+        _processor_summary: "{{ _dmidecode_processor.stdout_lines | default([]) | select('search', 'Version:|Core Count:|Thread Count:|Max Speed:|Current Speed:') | list }}"
+
+    - name: Parse memory summary
+      tags: hardware
+      ansible.builtin.set_fact:
+        _memory_summary: "{{ _dmidecode_memory.stdout_lines | default([]) | select('search', 'Size:|Type:|Speed:|Manufacturer:|Part Number:') | list }}"
+
+    # ==================================================================
+    # Layer 4 — BMC interrogation (ipmitool)
+    # ==================================================================
+
+    - name: Check ipmitool availability
+      tags: bmc
+      ansible.builtin.command: which ipmitool
+      register: _ipmitool_available
+      changed_when: false
+      failed_when: false
+
+    - name: Get BMC LAN info
+      tags: bmc
+      ansible.builtin.command: ipmitool lan print
+      register: _ipmitool_lan
+      changed_when: false
+      failed_when: false
+      when: _ipmitool_available.rc == 0
+
+    - name: Get BMC FRU data
+      tags: bmc
+      ansible.builtin.command: ipmitool fru print
+      register: _ipmitool_fru
+      changed_when: false
+      failed_when: false
+      when: _ipmitool_available.rc == 0
+
+    - name: Get BMC MC info
+      tags: bmc
+      ansible.builtin.command: ipmitool mc info
+      register: _ipmitool_mc
+      changed_when: false
+      failed_when: false
+      when: _ipmitool_available.rc == 0
+
+    - name: Assemble BMC facts
+      tags: bmc
+      vars:
+        _lan_lines: "{{ _ipmitool_lan.stdout_lines | default([]) }}"
+        _fru_lines: "{{ _ipmitool_fru.stdout_lines | default([]) }}"
+        _mc_lines: "{{ _ipmitool_mc.stdout_lines | default([]) }}"
+      ansible.builtin.set_fact:
+        _bmc_facts:
+          available: "{{ _ipmitool_available.rc == 0 if _ipmitool_available is defined else false }}"
+          ip: "{{ _lan_lines | select('search', 'IP Address\\s*:') | first | default('') | regex_replace('.*IP Address\\s*:\\s+', '') | trim }}"
+          mac: "{{ _lan_lines | select('search', 'MAC Address\\s*:') | first | default('') | regex_replace('.*MAC Address\\s*:\\s+', '') | trim | upper }}"
+          gateway: "{{ _lan_lines | select('search', 'Default Gateway IP\\s*:') | first | default('') | regex_replace('.*Default Gateway IP\\s*:\\s+', '') | trim }}"
+          subnet_mask: "{{ _lan_lines | select('search', 'Subnet Mask\\s*:') | first | default('') | regex_replace('.*Subnet Mask\\s*:\\s+', '') | trim }}"
+          vlan: "{{ _lan_lines | select('search', '802.1q VLAN ID\\s*:') | first | default('') | regex_replace('.*802.1q VLAN ID\\s*:\\s+', '') | trim }}"
+          firmware: "{{ _mc_lines | select('search', 'Firmware Revision') | first | default('') | regex_replace('.*Firmware Revision\\s*:\\s+', '') | trim }}"
+          manufacturer: "{{ _mc_lines | select('search', 'Manufacturer Name') | first | default('') | regex_replace('.*Manufacturer Name\\s*:\\s+', '') | trim }}"
+          device_id: "{{ _mc_lines | select('search', 'Device ID') | first | default('') | regex_replace('.*Device ID\\s*:\\s+', '') | trim }}"
+          fru_chassis_serial: "{{ _fru_lines | select('search', 'Chassis Serial') | first | default('') | regex_replace('.*Chassis Serial\\s*:\\s+', '') | trim }}"
+          fru_board_serial: "{{ _fru_lines | select('search', 'Board Serial') | first | default('') | regex_replace('.*Board Serial\\s*:\\s+', '') | trim }}"
+          fru_board_part: "{{ _fru_lines | select('search', 'Board Part Number') | first | default('') | regex_replace('.*Board Part Number\\s*:\\s+', '') | trim }}"
+          fru_product_manufacturer: "{{ _fru_lines | select('search', 'Product Manufacturer') | first | default('') | regex_replace('.*Product Manufacturer\\s*:\\s+', '') | trim }}"
+          fru_product_serial: "{{ _fru_lines | select('search', 'Product Serial') | first | default('') | regex_replace('.*Product Serial\\s*:\\s+', '') | trim }}"
+          _raw_lan: "{{ _ipmitool_lan.stdout | default('') }}"
+          _raw_fru: "{{ _ipmitool_fru.stdout | default('') }}"
+          _raw_mc: "{{ _ipmitool_mc.stdout | default('') }}"
+
+    # ==================================================================
+    # Layer 5 — Component inventory
+    # ==================================================================
+
+    - name: Get block device inventory
+      tags: component
+      ansible.builtin.command: lsblk -d -o name,model,serial,size,rota,type
+      register: _lsblk
+      changed_when: false
+      failed_when: false
+
+    - name: Get PCI device list (network, storage, raid)
+      tags: component
+      # shell (not command): uses a pipe and redirection
+      ansible.builtin.shell: >
+        lspci -nn 2>/dev/null | grep -iE 'network|ethernet|storage|raid|sas|hba|serial|usb|bridge'
+      register: _lspci
+      changed_when: false
+      failed_when: false
+
+    - name: Get full PCI tree
+      tags: component
+      ansible.builtin.command: lspci -nn
+      register: _lspci_full
+      changed_when: false
+      failed_when: false
+
+    - name: Get network interfaces with MACs
+      tags: network
+      ansible.builtin.command: ip -o link show
+      register: _ip_link
+      changed_when: false
+      failed_when: false
+
+    - name: Get IP addresses
+      tags: network
+      ansible.builtin.command: ip -o addr show
+      register: _ip_addr
+      changed_when: false
+      failed_when: false
+
+    - name: Get routing table
+      tags: network
+      ansible.builtin.command: ip route show
+      register: _ip_route
+      changed_when: false
+      failed_when: false
+
+    - name: Get DNS config
+      tags: network
+      ansible.builtin.command: cat /etc/resolv.conf
+      register: _resolv_conf
+      changed_when: false
+      failed_when: false
+
+    # ==================================================================
+    # Assemble full inventory result
+    # ==================================================================
+
+    - name: Build complete hardware inventory fact
+      tags: always
+      ansible.builtin.set_fact:
+        _inventory_result:
+          _provenance:
+            playbook: gather-device-inventory.yml
+            gathered: "{{ scan_timestamp }}"
+            from_host: "{{ inventory_hostname }}"
+            commands:
+              - dmidecode
+              - ipmitool
+              - lsblk
+              - lspci
+              - ip
+            corroborations: []
+          identity:
+            hostname: "{{ inventory_hostname }}"
+            fqdn: "{{ ansible_fqdn | default('') }}"
+            manufacturer: "{{ _hardware_identity.manufacturer | default('') }}"
+            model: "{{ _hardware_identity.product_name | default('') }}"
+            serial: "{{ _hardware_identity.serial | default('') }}"
+            uuid: "{{ _hardware_identity.uuid | default('') }}"
+            sku: "{{ _hardware_identity.sku | default('') }}"
+            board_name: "{{ _hardware_identity.board_name | default('') }}"
+            board_version: "{{ _hardware_identity.board_version | default('') }}"
+            chassis_type: "{{ _hardware_identity.chassis_type | default('') }}"
+          system:
+            os_family: "{{ _sys_facts.os_family | default('') }}"
+            distribution: "{{ _sys_facts.distribution | default('') }}"
+            distribution_version: "{{ _sys_facts.distribution_version | default('') }}"
+            kernel: "{{ _sys_facts.kernel | default('') }}"
+            arch: "{{ _sys_facts.architecture | default('') }}"
+            virt_type: "{{ _sys_facts.virtualization_type | default('') }}"
+            uptime_seconds: "{{ _sys_facts.uptime_seconds | default(0) }}"
+          resources:
+            processor_count: "{{ _sys_facts.processor_count | default(0) }}"
+            processor_cores: "{{ _sys_facts.processor_cores | default(0) }}"
+            memtotal_mb: "{{ _sys_facts.memtotal_mb | default(0) }}"
+            swaptotal_mb: "{{ _sys_facts.swaptotal_mb | default(0) }}"
+            processors: "{{ _processor_summary | default([]) }}"
+            memory: "{{ _memory_summary | default([]) }}"
+            storage: "{{ _lsblk.stdout_lines | default([]) }}"
+            pci_devices: "{{ _lspci.stdout_lines | default([]) }}"
+          bmc: "{{ _bmc_facts | default({'available': false}) }}"
+          networking:
+            default_ip: "{{ ansible_default_ipv4.address | default('') }}"
+            default_gateway: "{{ ansible_default_ipv4.gateway | default('') }}"
+            default_interface: "{{ ansible_default_ipv4.interface | default('') }}"
+            dns_config: "{{ _resolv_conf.stdout | default('') }}"
+            routes: "{{ _ip_route.stdout_lines | default([]) }}"
+            interfaces_raw: "{{ _ip_link.stdout_lines | default([]) }}"
+            addresses_raw: "{{ _ip_addr.stdout_lines | default([]) }}"
+
+    # ==================================================================
+    # Cache to host_vars/<host>/hardware-inventory.yml
+    # ==================================================================
+
+    - name: Ensure host_vars directory exists
+      tags: always
+      delegate_to: localhost
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/../inventory/host_vars/{{ inventory_hostname }}"
+        state: directory
+
+    - name: Write hardware inventory YAML
+      tags: always
+      delegate_to: localhost
+      ansible.builtin.copy:
+        content: |
+          ---
+          # Hardware inventory for {{ inventory_hostname }}
+          # Auto-gathered by gather-device-inventory.yml
+          # {{ scan_timestamp }}
+          {{ _inventory_result | to_nice_yaml(indent=2, width=120) }}
+        dest: "{{ playbook_dir }}/../inventory/host_vars/{{ inventory_hostname }}/hardware-inventory.yml"
+
+    - name: Report summary
+      tags: always
+      ansible.builtin.debug:
+        msg: >
+          [{{ inventory_hostname }}]
+          {{ _hardware_identity.manufacturer | default('?') }}
+          {{ _hardware_identity.product_name | default('?') }}
+          serial={{ _hardware_identity.serial | default('?') }}
+          BMC={{ _bmc_facts.ip | default('none') }}
+          MAC={{ _bmc_facts.mac | default('none') }}

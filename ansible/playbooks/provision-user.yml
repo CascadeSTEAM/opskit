@@ -1,0 +1,74 @@
+---
+# provision-user.yml — Create a local user account on a target host
+#
+# Written for BMS-0107 (vpmanager on volunteer-portal). Reusable for any host
+# in the environment inventories.
+#
+# The password is read from the USER_PASSWORD environment variable so it never
+# appears on the command line or in logs. Optionally grants passwordless sudo
+# via a validated /etc/sudoers.d/ drop-in.
+#
+# Run from the ansible/ directory (picks up ansible.cfg + vault-pass):
+#   USER_PASSWORD=$(bw get password "<item>") ansible-playbook \
+#     playbooks/provision-user.yml \
+#     -e target_host=volunteer-portal -e new_user=vpmanager \
+#     -e sudo_nopasswd=true
+
+- name: Provision local user account
+  hosts: "{{ target_host }}"
+  gather_facts: no
+
+  vars:
+    sudo_nopasswd: false
+    user_shell: /bin/bash
+    user_password: "{{ lookup('env', 'USER_PASSWORD') }}"
+
+  tasks:
+    - name: Require parameters
+      ansible.builtin.assert:
+        that:
+          - new_user is defined
+          - user_password | length >= 16
+        fail_msg: >-
+          Pass -e new_user=<name> and export USER_PASSWORD (min 16 chars,
+          retrieve from Bitwarden — never type it inline).
+
+    - name: Create user
+      ansible.builtin.user:
+        name: "{{ new_user }}"
+        password: "{{ user_password | password_hash('sha512') }}"
+        shell: "{{ user_shell }}"
+        create_home: yes
+        state: present
+      no_log: true
+
+    # apt (not generic package): all hosts in these inventories are
+    # Debian-family, and fresh containers ship stale package indexes
+    - name: Ensure sudo is installed
+      ansible.builtin.apt:
+        name: sudo
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600
+      when: sudo_nopasswd | bool
+
+    - name: Grant passwordless sudo
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/{{ new_user }}"
+        content: "{{ new_user }} ALL=(ALL) NOPASSWD:ALL\n"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: "visudo -cf %s"
+      when: sudo_nopasswd | bool
+
+    - name: Verify sudo works without password
+      ansible.builtin.command: "su - {{ new_user }} -c 'sudo -n true'"
+      changed_when: false
+      when: sudo_nopasswd | bool
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          User {{ new_user }} present on {{ target_host }}
+          (NOPASSWD sudo: {{ sudo_nopasswd }})
