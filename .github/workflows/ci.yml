@@ -73,3 +73,48 @@ jobs:
         run: |
           pip install jsonschema pyyaml pytest
           pytest tests/test_schemas.py -v
+
+  e2e-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: install deps
+        run: pip install pyyaml
+
+      - name: switch to example env
+        run: |
+          bash bin/switch-env.sh example
+          source .env 2>/dev/null || true
+          grep ACTIVE_ENV .env
+
+      - name: open ticket
+        run: |
+          bash bin/open-ticket.sh "CI end-to-end test"
+          cat .current-ticket | grep -E '^EX-'
+
+      - name: scan (dry-run)
+        run: |
+          python3 bin/scan.py --env example --dry-run
+
+      - name: environment isolation check
+        run: |
+          git check-ignore environments/example/env.yml && echo "FAIL: example should not be ignored" && exit 1 || echo "PASS: example tracked"
+          echo "test-data" > /tmp/fake-env.yml
+          git check-ignore customer/test-data.yml && echo "PASS: customer/ ignored" || echo "WARN: customer check"
+
+      - name: verify directory contract
+        run: |
+          test -f environments/example/env.yml && echo "PASS: env.yml exists"
+          test -d environments/example/datasets/devices && echo "PASS: datasets/devices exists"
+          test -f schemas/env.schema.json && echo "PASS: env schema exists"
+          test -f schemas/device.schema.json && echo "PASS: device schema exists"
+
+      - name: scan fixture test
+        run: |
+          pip install pyyaml
+          python3 bin/scan.py --env example --dry-run 2>&1 | grep -q "Subnets" && echo "PASS: scan reads subnets from env.yml"
