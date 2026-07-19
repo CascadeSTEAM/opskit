@@ -28,13 +28,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: grep-based secret scan (no-license)
+        run: |
+          PATTERNS=(
+            'password\s*=\s*"[^"]{8,}"'
+            'api[_-]?key\s*=\s*"[^"]{8,}"'
+            '-----BEGIN (RSA|EC|DSA|OPENSSH) PRIVATE KEY-----'
+            'ghp_[A-Za-z0-9]{36}'
+          )
+          EXIT=0
+          for p in "${PATTERNS[@]}"; do
+            if grep -rnE "$p" --include='*.yml' --include='*.yaml' --include='*.py' --include='*.sh' --include='*.md' .; then
+              echo "ERROR: Secret pattern matched"
+              EXIT=1
+            fi
+          done
+          exit $EXIT
 
   test:
     runs-on: ubuntu-latest
