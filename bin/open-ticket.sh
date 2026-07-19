@@ -123,7 +123,8 @@ except Exception as e:
 PYEOF
 )
 
-if [ $? -ne 0 ] || [ -z "${TICKET_ID:-}" ]; then
+TICKET_EXIT=$?
+if [ "$TICKET_EXIT" -ne 0 ] || [ -z "${TICKET_ID:-}" ]; then
     echo -e "${RED}Ticket creation failed.${NC}"
     echo "Falling back to local tracking."
     TICKET_ID="${PREFIX}-LOCAL-$(date +%Y%m%d%H%M)"

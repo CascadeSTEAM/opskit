@@ -104,7 +104,7 @@ def scan_env(env_name: str, fixture_xml: str | None = None, dry_run: bool = Fals
     dataset_writer.write_devices(hosts, ds_dir, env_name)
 
     # Enrich (relationships, uplinks)
-    enricher.enrich(ds_dir, env_name)
+    enricher.enrich_dataset(ds_dir)
 
     print(f"  Done — datasets written to {ds_dir}")
 
