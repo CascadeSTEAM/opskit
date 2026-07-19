@@ -1,0 +1,60 @@
+#!/bin/bash
+# opskit commit-msg hook — validate ticket reference from env.yml
+# Reads environments/$ACTIVE_ENV/env.yml for the expected ticket prefix.
+set -euo pipefail
+
+COMMIT_MSG_FILE="$1"
+COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+
+# Detect ACTIVE_ENV from .env (site repo context)
+ACTIVE_ENV=""
+if [ -f ".env" ]; then
+    ACTIVE_ENV=$(grep "^ACTIVE_ENV=" .env 2>/dev/null | cut -d= -f2 | tr -d '"')
+fi
+
+# Only enforce if we can resolve an environment and it has a ticket prefix
+if [ -z "$ACTIVE_ENV" ]; then
+    exit 0
+fi
+
+ENV_YML="environments/$ACTIVE_ENV/env.yml"
+if [ ! -f "$ENV_YML" ]; then
+    exit 0
+fi
+
+PREFIX=$(python3 -c "
+import yaml
+d = yaml.safe_load(open('$ENV_YML'))
+print(d.get('ticket', {}).get('prefix', ''))
+" 2>/dev/null)
+
+if [ -z "$PREFIX" ]; then
+    exit 0
+fi
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM)
+
+# Check if any staged file is infrastructure work (ansible/, inventory/, environments/ excluding example/)
+HAS_INFRA=0
+for f in $STAGED; do
+    case "$f" in
+        ansible/*|inventory/*|environments/*/datasets/*|environments/*/ansible/*)
+            case "$f" in
+                environments/example/*) ;;
+                *) HAS_INFRA=1; break ;;
+            esac
+            ;;
+    esac
+done
+
+if [ $HAS_INFRA -eq 0 ]; then
+    exit 0
+fi
+
+if ! echo "$COMMIT_MSG" | grep -qiE "^${PREFIX}-[0-9]+:"; then
+    echo "ERROR: Infrastructure changes require a ${PREFIX}-XXXX ticket reference."
+    echo "  Add '${PREFIX}-XXXX: ...' to your commit message."
+    exit 1
+fi
+
+exit 0
