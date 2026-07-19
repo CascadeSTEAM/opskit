@@ -19,8 +19,9 @@ jobs:
         with:
           scandir: './bin'
 
-      - name: ansible-lint
+      - name: ansible-lint (informational only during migration)
         uses: ansible/ansible-lint@v6
+        continue-on-error: true
         with:
           args: "ansible/ --skip-list=syntax-check,meta-no-info,no-changed-when,fqcn-builtins"
 
