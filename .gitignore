@@ -53,3 +53,5 @@ vault-pass*
 
 # gitleaks report (generated in CI)
 gitleaks-report.json
+.venv/
+.pytest_cache/

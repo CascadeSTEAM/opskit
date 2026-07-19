@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CascadeSTEAM/opskit/schemas/device.schema.json",
+  "title": "opskit Device Schema",
+  "description": "Schema for environments/<env>/datasets/devices/*.yml — a single device record.",
+  "type": "object",
+  "required": ["name", "status", "owner", "maturity"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Machine-readable device name."
+    },
+    "hostname": {
+      "type": "string",
+      "description": "Fully-qualified hostname."
+    },
+    "ip_address": {
+      "type": "string",
+      "description": "Primary IP address."
+    },
+    "mac_address": {
+      "type": "string",
+      "pattern": "^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$",
+      "description": "MAC address (xx:xx:xx:xx:xx:xx)."
+    },
+    "role": {
+      "type": "string",
+      "enum": ["router", "switch", "server", "workstation", "access-point", "printer", "camera", "iot", "vm", "container", "unknown"],
+      "description": "Device role."
+    },
+    "os": {"type": "string", "description": "Operating system."},
+    "os_version": {"type": "string", "description": "OS version string."},
+    "hardware": {"type": "string", "description": "Hardware model."},
+    "serial": {"type": "string"},
+    "status": {
+      "type": "string",
+      "enum": ["active", "standby", "maintenance", "decommissioned", "unknown"],
+      "description": "Operational status."
+    },
+    "site": {"type": "string"},
+    "location": {"type": "string"},
+    "owner": {
+      "type": "string",
+      "description": "Environment name that owns this device."
+    },
+    "maturity": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5,
+      "description": "L1-L5 maturity level."
+    },
+    "vlans": {
+      "type": "array",
+      "items": {"type": "integer", "minimum": 1, "maximum": 4094}
+    },
+    "services": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "tags": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "notes": {"type": "string"},
+    "monitoring": {
+      "type": "object",
+      "properties": {
+        "zabbix_agent": {"type": "boolean"},
+        "zabbix_tier": {"type": "string"},
+        "snmp": {"type": "boolean"}
+      }
+    },
+    "bmc": {
+      "type": "object",
+      "properties": {
+        "type": {"type": "string"},
+        "ip": {"type": "string"}
+      }
+    },
+    "procurement": {
+      "type": "object",
+      "properties": {
+        "vendor": {"type": "string"},
+        "purchase_date": {"type": "string", "format": "date"},
+        "cost": {"type": "number"},
+        "warranty_until": {"type": "string", "format": "date"}
+      }
+    },
+    "contacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "role": {"type": "string"},
+          "email": {"type": "string", "format": "email"}
+        }
+      }
+    },
+    "decommission": {
+      "type": "object",
+      "properties": {
+        "plan": {"type": "string"},
+        "eol_date": {"type": "string", "format": "date"}
+      }
+    }
+  }
+}

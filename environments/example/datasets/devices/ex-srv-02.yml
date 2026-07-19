@@ -1,0 +1,26 @@
+# Device: ex-srv-02
+# Maturity: L4 — L3 + detailed services, monitoring stack, BMC info
+name: ex-srv-02
+hostname: srv02.example.local
+ip_address: 198.51.100.11
+mac_address: "00:11:22:33:44:04"
+role: server
+os: Debian
+os_version: "12"
+hardware: Dell PowerEdge R650
+serial: EX-R650-0001
+status: active
+site: main
+location: Rack 1, U14
+owner: example
+maturity: 4
+services: [docker, web, api, postgresql, redis]
+monitoring:
+  zabbix_agent: true
+  zabbix_tier: application
+  snmp: false
+bmc:
+  type: iDRAC9
+  ip: 192.0.2.100
+tags: [server, application]
+notes: Generated from NetBox. Application server hosting Docker workloads. iDRAC on management subnet.

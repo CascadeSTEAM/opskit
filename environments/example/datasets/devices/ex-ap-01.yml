@@ -1,0 +1,36 @@
+# Device: ex-ap-01
+# Maturity: L5 — full lifecycle: L4 + procurement, warranty, contacts, decommission plan
+name: ex-ap-01
+hostname: ap01.example.local
+ip_address: 203.0.113.100
+mac_address: "00:11:22:33:44:05"
+role: access-point
+os: OpenWrt
+os_version: "23.05"
+hardware: MikroTik cAP ac
+serial: EX-CAP-0001
+status: active
+site: main
+location: Office, ceiling mount
+owner: example
+maturity: 5
+vlans: [20, 30]
+services: [wifi]
+monitoring:
+  zabbix_agent: false
+  zabbix_tier: network
+  snmp: true
+procurement:
+  vendor: Example IT Supply
+  purchase_date: "2025-01-15"
+  cost: 79.00
+  warranty_until: "2027-01-15"
+contacts:
+  - name: Example Network Admin
+    role: operator
+    email: admin@example.local
+decommission:
+  plan: Replace with WiFi 7 model by 2027
+  eol_date: "2027-06-01"
+tags: [wifi, access-point]
+notes: Generated from NetBox. Ceiling-mounted access point serving office clients on VLANs 20-30.

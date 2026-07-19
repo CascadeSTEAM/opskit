@@ -1,0 +1,19 @@
+# Device: ex-srv-01
+# Maturity: L3 — L2 + services, serial, location
+name: ex-srv-01
+hostname: srv01.example.local
+ip_address: 198.51.100.10
+mac_address: "00:11:22:33:44:03"
+role: server
+os: Ubuntu
+os_version: "24.04"
+hardware: Dell PowerEdge R640
+serial: EX-R640-0001
+status: active
+site: main
+location: Rack 1, U12
+owner: example
+maturity: 3
+services: [dns, dhcp, monitoring]
+tags: [server, infrastructure]
+notes: Generated from NetBox. Primary infrastructure server running Technitium DNS, DHCP, and Zabbix agent.
