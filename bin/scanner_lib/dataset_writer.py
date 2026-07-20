@@ -348,3 +348,31 @@ def update_services(hosts: list[dict], services_path: Path) -> None:
 
     if new_services:
         print(f"  Services: {len(new_services)} new ({', '.join(s['name'] for s in new_services)})")
+
+
+def write_devices(hosts: list[dict], ds_path: Path, dataset_name: str) -> None:
+    """Write all discovered hosts to YAML device files, update IPAM + services."""
+    devices_dir = ds_path / 'devices'
+    devices_dir.mkdir(parents=True, exist_ok=True)
+
+    hosts = filter_excluded_hosts(hosts, ds_path)
+    live = [h for h in hosts if h.get('status') == 'up']
+
+    written = 0
+    for host in live:
+        device = _device_from_scan(host, dataset_name, 'nmap')
+        fname = write_device_file(device, devices_dir)
+        if fname:
+            written += 1
+
+    print(f"  Scanner: wrote/updated {written} device files")
+
+    # IPAM
+    ipam_path = ds_path / 'ipam.yml'
+    if ipam_path.exists():
+        update_ipam(live, ipam_path, dataset_name)
+
+    # Services
+    services_path = ds_path / 'services.yml'
+    if services_path.exists():
+        update_services(live, services_path)

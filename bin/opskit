@@ -1,0 +1,542 @@
+#!/usr/bin/env python3
+"""
+opskit — unified CLI for network operations.
+
+  opskit init my-env --subnets 10.0.0.0/24        scaffold a new environment
+  opskit env my-env                                switch to environment
+  opskit scan                                      full scan pipeline
+  opskit status                                    inventory summary
+  opskit setup-completion bash                     install tab completion
+
+Every command reads from environments/<env>/env.yml.  No hardcoded hostnames.
+"""
+
+from __future__ import annotations
+import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Optional
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+sys.path.insert(0, str(REPO_ROOT))
+
+import yaml
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# utilities
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _active_env() -> str:
+    env_file = REPO_ROOT / '.env'
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if line.startswith("ACTIVE_ENV="):
+                return line.split("=", 1)[1].strip().strip('"')
+    return ""
+
+
+def _env_path(name: str) -> Path:
+    return REPO_ROOT / 'environments' / name
+
+
+def _env_yml(name: str) -> Path:
+    return _env_path(name) / 'env.yml'
+
+
+def _load_env(name: str) -> dict:
+    yml = _env_yml(name)
+    if not yml.exists():
+        raise FileNotFoundError(f"Environment '{name}' not found at {yml}")
+    return yaml.safe_load(yml.read_text())
+
+
+def _resolve_env(name: str | None) -> str:
+    name = name or _active_env()
+    if not name:
+        print("ERROR: No environment.  Run: opskit env <name>", file=sys.stderr)
+        sys.exit(1)
+    if not _env_yml(name).exists():
+        print(f"ERROR: Environment '{name}' not found.", file=sys.stderr)
+        print(f"  Run: opskit init {name} --subnets <cidr,...>", file=sys.stderr)
+        sys.exit(1)
+    return name
+
+
+def _list_envs() -> list[str]:
+    ed = REPO_ROOT / 'environments'
+    if not ed.exists():
+        return []
+    return sorted(d.name for d in ed.iterdir() if d.is_dir() and (d / 'env.yml').exists())
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# init
+# ═══════════════════════════════════════════════════════════════════════════════
+
+ENV_YML_TEMPLATE = """\
+# {name} environment — https://github.com/CascadeSTEAM/opskit
+# Edit this file to declare subnets, credentials, connectivity probes, etc.
+
+name: {name}
+display_name: {display_name}
+
+ticket:
+  prefix: {ticket_prefix}
+  helpdesk: none
+
+domains:
+  primary: {name}.local
+
+subnets:
+  primary: {primary_subnet}
+
+connectivity:
+  probes:
+    - host: {first_gateway}
+      description: default gateway
+
+vault:
+  backend: none
+  collection: {name}
+
+source_of_truth:
+  type: git-yaml
+
+execution:
+  type: cli
+
+ansible:
+  ssh_user: root
+
+referenced_devices: []
+cross_env_credentials: []
+"""
+
+INVENTORY_TEMPLATE = """\
+# Ansible inventory for {name}
+# Groups inherited from opskit roles: workstations, network_devices, proxmox_nodes, etc.
+
+all:
+  children:
+    {name}:
+      hosts:
+"""
+
+NETWORK_YML_TEMPLATE = """\
+# {name} network configuration
+network:
+  name: {name}
+  cidr: {primary_subnet}
+  exclude_cidrs: []
+"""
+
+
+def cmd_init(args):
+    name = args.name
+    dest = _env_path(name)
+
+    if dest.exists():
+        print(f"ERROR: environments/{name}/ already exists.", file=sys.stderr)
+        sys.exit(1)
+
+    subnets_raw = args.subnets or "192.168.1.0/24"
+    subnets = [s.strip() for s in subnets_raw.split(",")]
+    primary = subnets[0]
+    first_ip = primary.rsplit(".", 1)[0] + ".1"
+
+    # directories
+    for d in [
+        dest / "ansible",
+        dest / "datasets" / "devices",
+        dest / "playbooks",
+    ]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    # env.yml
+    env_yml = ENV_YML_TEMPLATE.format(
+        name=name,
+        display_name=args.display_name or name.title(),
+        ticket_prefix=args.ticket_prefix or name[:4].upper(),
+        primary_subnet=primary,
+        first_gateway=first_ip,
+    )
+    (dest / "env.yml").write_text(env_yml)
+
+    # ansible inventory
+    (dest / "ansible" / "inventory.yml").write_text(
+        INVENTORY_TEMPLATE.format(name=name)
+    )
+
+    # network.yml
+    (dest / "datasets" / "network.yml").write_text(
+        NETWORK_YML_TEMPLATE.format(name=name, primary_subnet=primary)
+    )
+
+    print(f"  Created environments/{name}/")
+    print(f"    env.yml             — environment config (edit subnets, probes, etc.)")
+    print(f"    ansible/inventory.yml — Ansible host inventory")
+    print(f"    datasets/devices/    — device YAMLs go here")
+    print(f"    datasets/network.yml — network CIDR config")
+    print(f"    playbooks/           — env-specific Ansible playbooks")
+    print()
+    print(f"  Next: opskit env {name}      # switch to this environment")
+    print(f"        opskit scan             # discover devices on the network")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# scan  (full pipeline)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def cmd_scan(args):
+    from bin.scanner_lib import nmap_runner, parser, dataset_writer, scaffold, enricher
+    from bin.device_registry import DeviceRegistry
+
+    env = _resolve_env(args.env)
+    config = _load_env(env)
+    subnets = list(config.get('subnets', {}).values())
+
+    if not subnets:
+        print(f"  No subnets in environments/{env}/env.yml")
+        return
+
+    ds_dir = _env_path(env) / 'datasets'
+    print(f"  Environment: {config.get('display_name', env)} ({env})")
+    print(f"  Subnets: {', '.join(subnets)}")
+
+    # ── Phase 1: Discover ─────────────────────────────────────────────────────
+
+    if args.fixture:
+        print(f"  Mode: fixture ({args.fixture})")
+        import xml.etree.ElementTree as ET
+        fixture_mac = ET.parse(args.fixture)
+        hosts = parser.parse_portscan(args.fixture)
+    elif args.enrich_only or args.uplinks_only:
+        hosts = []
+        print("  Skipping nmap scan (--enrich-only / --uplinks-only)")
+    else:
+        print("  Mode: live nmap scan")
+        if args.dry_run:
+            print("  [DRY RUN] Would scan: " + " ".join(subnets))
+            return
+        discovery_xml = nmap_runner.run_discovery(subnets)
+        if not discovery_xml:
+            print("  ERROR: nmap discovery failed")
+            return
+        hosts = parser.parse_discovery(discovery_xml)
+        if hosts and not args.discover_only:
+            portscan_xml = nmap_runner.run_portscan(
+                [h['ip'] for h in hosts if h['status'] == 'up']
+            )
+            if portscan_xml:
+                hosts = parser.parse_portscan(portscan_xml, hosts)
+
+    print(f"  Phase 1 — discovered {len(hosts)} hosts")
+
+    if args.discover_only:
+        for h in sorted(hosts, key=lambda x: x.get('ip', '')):
+            print(f"    {h.get('ip','?'):15s}  {h.get('mac','?'):17s}  {h.get('hostname','?')}")
+        return
+
+    # ── Phase 2: Write YAMLs ───────────────────────────────────────────────────
+
+    devices_dir = ds_dir / 'devices'
+    devices_dir.mkdir(parents=True, exist_ok=True)
+    dataset_writer.write_devices(hosts, ds_dir, env)
+    yml_count = len(list(devices_dir.glob('*.yml')))
+    print(f"  Phase 2 — wrote {yml_count} device YAMLs to {devices_dir}")
+
+    # ── Phase 3: Enrich ────────────────────────────────────────────────────────
+
+    if not args.skip_enrich:
+        enricher.enrich_dataset(ds_dir)
+        print(f"  Phase 3 — enriched: dedup, parent-child, infrastructure links")
+
+    # ── Phase 4: Resolve uplinks ───────────────────────────────────────────────
+
+    if not args.skip_uplinks:
+        router = config.get('topology', {}).get('router') or 'router'
+        reg = DeviceRegistry(router_hostname=router)
+
+        for yf in sorted(devices_dir.glob('*.yml')):
+            try:
+                data = yaml.safe_load(yf.read_text()) or {}
+                dev = data.get('device', data)
+                macs = dev.get('mac_address') or ''
+                if isinstance(macs, list):
+                    macs = macs[0] if macs else ''
+                record = {
+                    'mac': macs,
+                    'ip': dev.get('ip_address') or '',
+                    'hostname': dev.get('hostname') or dev.get('name') or yf.stem,
+                    'type': dev.get('role') or 'unknown',
+                    'role': dev.get('role') or 'unknown',
+                    'os': dev.get('os') or '',
+                    'status': dev.get('status') or 'unknown',
+                }
+                reg.register(record, 'nmap')
+            except Exception:
+                pass
+
+        reg.merge_identities()
+
+        # Bridge table + LLDP (if router reachable via SSH)
+        if not args.no_router:
+            _resolve_topology_from_router(reg, config, env)
+
+        reg.resolve_uplinks()
+        problems = reg.validate()
+        reg.audit()
+
+        if problems:
+            print(f"\n  • {len(problems)} topology problems (see above)")
+
+        # Write uplinks back to YAML
+        y_upd, y_skip = reg.write_uplinks_to_yaml(devices_dir)
+        if y_upd:
+            print(f"  Phase 4 — uplink_host written to {y_upd} YAMLs ({y_skip} skipped)")
+
+    print(f"\n  Done.  devices: {devices_dir}")
+
+
+def _resolve_topology_from_router(reg, config: dict, env: str):
+    """Attempt to pull bridge table + LLDP from the env's router."""
+    attempt = config.get('topology', {}).get('router_ssh')
+    if not attempt:
+        return
+    try:
+        bridge_raw = subprocess.check_output(
+            ['ssh', '-o', 'ConnectTimeout=5', attempt,
+             '/interface bridge host print terse without-paging'],
+            text=True, stderr=subprocess.DEVNULL, timeout=10,
+        )
+        lldp_raw = subprocess.check_output(
+            ['ssh', '-o', 'ConnectTimeout=5', attempt,
+             '/ip neighbor print terse without-paging'],
+            text=True, stderr=subprocess.DEVNULL, timeout=10,
+        )
+        bridge_table, lldp_neighbors = _parse_bridge_lldp(bridge_raw, lldp_raw)
+        reg.set_topology(bridge_table, lldp_neighbors)
+        print(f"  Phase 4 — topology resolved from router via SSH")
+    except Exception as e:
+        print(f"  Phase 4 — router unreachable ({e}), skipping topology resolution")
+
+
+def _parse_bridge_lldp(bridge_raw: str, lldp_raw: str):
+    import re
+    bridge_table = {}
+    for line in bridge_raw.splitlines():
+        m = re.search(r'mac-address=([^ ]+)', line)
+        intf = re.search(r'interface=([^ ]+)', line)
+        if m and intf:
+            bridge_table[m.group(1)] = intf.group(1)
+
+    lldp_neighbors = {}
+    for line in lldp_raw.splitlines():
+        intf = re.search(r'interface-name=([^ ]+)', line)
+        sysn = re.search(r'system-name=([^ ]+)', line)
+        if intf and sysn:
+            lldp_neighbors[intf.group(1)] = sysn.group(1)
+
+    return bridge_table, lldp_neighbors
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# status
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def cmd_status(args):
+    env = _resolve_env(args.env)
+    config = _load_env(env)
+    devices_dir = _env_path(env) / 'datasets' / 'devices'
+
+    print(f"  Environment: {config.get('display_name', env)} ({env})")
+    print(f"  Subnets: {', '.join(config.get('subnets', {}).values())}")
+
+    if devices_dir.exists():
+        ymls = list(devices_dir.glob('*.yml'))
+        print(f"  Devices: {len(ymls)} YAML files")
+
+        roles: dict[str, int] = {}
+        for yf in ymls:
+            try:
+                data = yaml.safe_load(yf.read_text()) or {}
+                dev = data.get('device', data)
+                role = dev.get('role') or dev.get('type') or 'unknown'
+                roles[role] = roles.get(role, 0) + 1
+            except Exception:
+                roles['error'] = roles.get('error', 0) + 1
+
+        for role, count in sorted(roles.items()):
+            print(f"    {role:20s} {count}")
+    else:
+        print(f"  Devices: none — run 'opskit scan' first")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# env
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def cmd_env(args):
+    if args.name:
+        result = subprocess.run(
+            ['bash', str(SCRIPT_DIR / 'switch-env.sh'), args.name],
+            cwd=str(REPO_ROOT),
+        )
+        sys.exit(result.returncode)
+    else:
+        current = _active_env()
+        if current:
+            config = _load_env(current)
+            print(f"  Active: {config.get('display_name', current)} ({current})")
+            print(f"  Subnets: {', '.join(config.get('subnets', {}).values())}")
+        else:
+            print("  No active environment.")
+        envs = _list_envs()
+        if envs:
+            print(f"\n  Available environments ({len(envs)}):")
+            for e in envs:
+                try:
+                    cfg = _load_env(e)
+                    print(f"    {e:20s}  {cfg.get('display_name', '')}")
+                except Exception:
+                    print(f"    {e:20s}")
+
+        if not current:
+            print("\n  Run: opskit env <name>  to switch")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# setup-completion
+# ═══════════════════════════════════════════════════════════════════════════════
+
+COMPLETION_SCRIPT = """\
+# opskit completion — installed by 'opskit setup-completion'
+_opskit_completion() {{
+    local cur prev words cword
+    _init_completion || return
+    COMPREPLY=()
+
+    case "${{words[1]}}" in
+        init|env)
+            COMPREPLY=( $(compgen -W "" -- "$cur") )
+            ;;
+        scan|status)
+            COMPREPLY=( $(compgen -W "--env --dry-run --discover-only --enrich-only --uplinks-only --skip-enrich --skip-uplinks --no-router --fixture" -- "$cur") )
+            ;;
+        setup-completion)
+            COMPREPLY=( $(compgen -W "bash zsh" -- "$cur") )
+            ;;
+        *)
+            COMPREPLY=( $(compgen -W "init scan status env setup-completion" -- "$cur") )
+            ;;
+    esac
+}}
+complete -F _opskit_completion opskit
+"""
+
+COMPLETION_ZSH = """\
+#compdef opskit
+_opskit() {{
+    local -a commands
+    commands=(init:'scaffold new environment' scan:'full network scan' status:'inventory summary' env:'switch environment' setup-completion:'install tab completion')
+    _describe 'command' commands
+    _arguments '--env[environment name]:env:'
+}}
+compdef _opskit opskit
+"""
+
+
+def cmd_completion(args):
+    shell = args.shell or 'bash'
+    if shell == 'bash':
+        dest = Path.home() / '.bash_completion.d' / 'opskit'
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(COMPLETION_SCRIPT)
+        print(f"  Installed bash completion to {dest}")
+        print(f"  Add to ~/.bashrc:  source {dest}")
+    elif shell == 'zsh':
+        dest = Path.home() / '.zsh' / 'completions' / '_opskit'
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(COMPLETION_ZSH)
+        print(f"  Installed zsh completion to {dest}")
+        print(f"  Ensure ~/.zsh/completions/ is in your fpath")
+    else:
+        print(f"  Unknown shell: {shell}", file=sys.stderr)
+        sys.exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# main
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def main():
+    p = argparse.ArgumentParser(
+        description="opskit — network operations toolkit",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+examples:
+  opskit init homelab --subnets 192.168.1.0/24
+  opskit env homelab
+  opskit scan
+  opskit scan --dry-run
+  opskit scan --discover-only
+  opskit status
+  opskit setup-completion bash
+        """,
+    )
+    sub = p.add_subparsers(dest='command')
+
+    # init
+    pi = sub.add_parser('init', help='scaffold a new environment')
+    pi.add_argument('name', help='environment name (slug)')
+    pi.add_argument('--display-name', help='human-readable name')
+    pi.add_argument('--subnets', help='comma-separated CIDR ranges (e.g. "10.0.0.0/24,192.168.1.0/24")')
+    pi.add_argument('--ticket-prefix', help='helpdesk ticket prefix (e.g. "CLIENT1")')
+
+    # scan
+    ps = sub.add_parser('scan', help='full network scan pipeline')
+    ps.add_argument('--env', help='environment name (default: ACTIVE_ENV)')
+    ps.add_argument('--dry-run', action='store_true', help='show what would be scanned')
+    ps.add_argument('--discover-only', action='store_true', help='nmap discovery only, no YAML write')
+    ps.add_argument('--enrich-only', action='store_true', help='re-run enrichment on existing data')
+    ps.add_argument('--uplinks-only', action='store_true', help='only resolve uplink topology')
+    ps.add_argument('--skip-enrich', action='store_true', help='skip dedup/normalization phase')
+    ps.add_argument('--skip-uplinks', action='store_true', help='skip topology resolution')
+    ps.add_argument('--no-router', action='store_true', help='skip router SSH for bridge/LLDP')
+    ps.add_argument('--fixture', help='nmap XML fixture path (CI/test)')
+
+    # status
+    pt = sub.add_parser('status', help='inventory summary')
+    pt.add_argument('--env', help='environment name (default: ACTIVE_ENV)')
+
+    # env
+    pe = sub.add_parser('env', help='show or switch active environment')
+    pe.add_argument('name', nargs='?', help='environment name to switch to')
+
+    # setup-completion
+    pc = sub.add_parser('setup-completion', help='install tab completion')
+    pc.add_argument('shell', nargs='?', default='bash', choices=['bash', 'zsh'],
+                    help='shell (bash or zsh)')
+
+    args = p.parse_args()
+
+    if args.command == 'init':
+        cmd_init(args)
+    elif args.command == 'scan':
+        cmd_scan(args)
+    elif args.command == 'status':
+        cmd_status(args)
+    elif args.command == 'env':
+        cmd_env(args)
+    elif args.command == 'setup-completion':
+        cmd_completion(args)
+    else:
+        p.print_help()
+
+
+if __name__ == '__main__':
+    main()
