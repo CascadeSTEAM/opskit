@@ -98,6 +98,26 @@ Set by the project owner; they apply to every session, not per-task.
      **MCP tool**.
    State lives in `.local/` (gitignored, shared across worktrees).
 
+## Git & GitHub Workflow (Hard Rules)
+
+Set by the project owner (2026-07-20). These apply to every session, no exceptions.
+
+1. **Sync before anything.** Every session starts with `git fetch --all --prune && git pull`
+   on the current branch before any other work — avoid conflicts and stale state.
+2. **Linked branch per issue.** Work on a GitHub issue NEVER happens directly on `main`.
+   Create a linked branch first: `gh issue develop <n> --checkout`. This keeps `main`
+   conflict-free and ties the branch to the issue.
+3. **Full test gate before completing an issue.** Before an issue is marked ready, run
+   full testing of the entire application — the whole pytest suite (`.venv/bin/python -m
+   pytest tests/`), `bash -n`/shellcheck on touched scripts, and a functional check of the
+   changed behavior — to ensure no regression or new errors were introduced. A failing
+   test is fixed, not skipped or deferred; pre-existing unrelated failures get their own
+   issue and are named in the PR.
+4. **PR conventions.** Once the test cycle is green, open a PR that:
+   - references the issue with `Closes #<n>` so merging closes it
+   - requests a reviewer **other than the author** (default: `CascadeSTEAM/technology-support`)
+   - assigns the author as PR manager (`--assignee @me`)
+
 ## Lifecycle Rules
 `issues/` → `proposals/` → `proposals/approved/` → `plans/` → `plans/completed/` (→ `docs/`)
 
