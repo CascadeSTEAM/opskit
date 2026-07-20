@@ -1,0 +1,6 @@
+---
+# Netbox role handlers
+- name: restart netbox
+  ansible.builtin.command:
+    cmd: docker compose -f /opt/opskit-docker/docker-compose.yml restart netbox netbox-worker
+  changed_when: true

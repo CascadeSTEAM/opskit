@@ -1,1 +1,9 @@
 ---
+# Netbox role defaults
+netbox_version: "latest"
+netbox_compose_dir: /opt/opskit-docker
+netbox_ui_port: 8080
+netbox_db_name: netbox
+netbox_db_user: opskit
+netbox_admin_user: admin
+netbox_admin_email: admin@client1.local

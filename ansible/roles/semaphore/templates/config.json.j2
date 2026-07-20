@@ -1,1 +1,27 @@
-{{ semaphore_config | to_nice_json }}
+{
+  "port": "{{ semaphore_listen_port | default('3000') }}",
+  "mysql": null,
+  "bolt": null,
+  "postgres": {
+    "host": "{{ semaphore_db_host | default('postgres') }}",
+    "port": "{{ semaphore_db_port | default('5432') }}",
+    "user": "{{ semaphore_db_user | default('opskit') }}",
+    "password": "{{ semaphore_db_password }}",
+    "name": "{{ semaphore_db_name | default('semaphore') }}",
+    "options": null
+  },
+  "dialect": "postgres",
+  "max_parallel_tasks": 10,
+  "tmp_path": "/tmp/semaphore",
+  "cookie_hash": "{{ semaphore_encryption_key | default('CHANGE_ME') }}",
+  "cookie_encryption": "{{ semaphore_encryption_key | default('CHANGE_ME') }}",
+  "access_key_encryption": "{{ semaphore_encryption_key | default('CHANGE_ME') }}",
+  "email_alert": false,
+  "telegram_alert": false,
+  "ldap_enable": false,
+  "oidc_enable": false,
+  "oidc_providers": null,
+  "max_task_duration_seconds": 86400,
+  "concurrency_mode": "project",
+  "use_remote_runner": false
+}
