@@ -226,8 +226,6 @@ def cmd_scan(args):
 
     if args.fixture:
         print(f"  Mode: fixture ({args.fixture})")
-        import xml.etree.ElementTree as ET
-        fixture_mac = ET.parse(args.fixture)
         hosts = parser.parse_portscan(args.fixture)
     elif args.enrich_only or args.uplinks_only:
         hosts = []
@@ -237,17 +235,25 @@ def cmd_scan(args):
         if args.dry_run:
             print("  [DRY RUN] Would scan: " + " ".join(subnets))
             return
-        discovery_xml = nmap_runner.run_discovery(subnets)
-        if not discovery_xml:
-            print("  ERROR: nmap discovery failed")
+
+        # Run discovery on each subnet
+        discovery_hosts = []
+        for subnet in subnets:
+            xml_path = nmap_runner.discover(subnet)
+            if xml_path:
+                discovery_hosts.extend(parser.parse_discovery(xml_path))
+
+        if not discovery_hosts:
+            print("  ERROR: nmap discovery found no hosts")
             return
-        hosts = parser.parse_discovery(discovery_xml)
-        if hosts and not args.discover_only:
-            portscan_xml = nmap_runner.run_portscan(
-                [h['ip'] for h in hosts if h['status'] == 'up']
-            )
-            if portscan_xml:
-                hosts = parser.parse_portscan(portscan_xml, hosts)
+
+        hosts = discovery_hosts
+        if not args.discover_only:
+            live_ips = [h['ip'] for h in hosts if h.get('status') == 'up']
+            if live_ips:
+                portscan_xml = nmap_runner.portscan(live_ips)
+                if portscan_xml:
+                    hosts = parser.parse_portscan(portscan_xml, hosts)
 
     print(f"  Phase 1 — discovered {len(hosts)} hosts")
 

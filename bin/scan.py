@@ -84,13 +84,21 @@ def scan_env(env_name: str, fixture_xml: str | None = None, dry_run: bool = Fals
         if dry_run:
             print("  [DRY RUN] Would run: nmap -sn " + " ".join(subnets))
             return
-        discovery_xml = nmap_runner.run_discovery(subnets)
-        if not discovery_xml:
-            print("  ERROR: nmap discovery failed")
+
+        discovery_hosts = []
+        for subnet in subnets:
+            xml_path = nmap_runner.discover(subnet)
+            if xml_path:
+                discovery_hosts.extend(parser.parse_discovery(xml_path))
+
+        if not discovery_hosts:
+            print("  ERROR: nmap discovery found no hosts")
             return
-        hosts = parser.parse_discovery(discovery_xml)
-        if hosts:
-            portscan_xml = nmap_runner.run_portscan([h['ip'] for h in hosts if h['status'] == 'up'])
+
+        hosts = discovery_hosts
+        live_ips = [h['ip'] for h in hosts if h.get('status') == 'up']
+        if live_ips:
+            portscan_xml = nmap_runner.portscan(live_ips)
             if portscan_xml:
                 hosts = parser.parse_portscan(portscan_xml, hosts)
 
