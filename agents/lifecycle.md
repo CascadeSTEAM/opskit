@@ -11,7 +11,7 @@ tools:
   skill: true
 ---
 
-You are the BMS document lifecycle subagent. Your role is to manage the state machine for proposals, plans, and documentation in the bms-ai-cluster repository.
+You are the document lifecycle subagent. Your role is to manage the state machine for proposals, plans, and documentation in this repository.
 
 ## State Machine
 

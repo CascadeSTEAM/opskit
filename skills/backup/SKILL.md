@@ -26,7 +26,7 @@ triggers: backup,recovery,restore,snapshot,disaster
 | Location | Path / Repo | Contents |
 |----------|------------|---------|
 | frank (gemini) | `/home/gemini/backups/` | Proxmox VM/CT backups |
-| GitHub | `netyeti/bms-ai-cluster` | IaC repo |
+| GitHub | this repo's remote (e.g., `<org>/opskit`) | IaC repo |
 | Offsite | TBD | Cloud storage (not yet configured) |
 
 ## Recovery

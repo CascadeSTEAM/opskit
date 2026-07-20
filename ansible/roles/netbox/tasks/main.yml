@@ -3,7 +3,7 @@
 
 - name: Check if netbox container is running
   ansible.builtin.command:
-    cmd: docker ps --filter name=bms-netbox --format "{{ '{{.Status}}' }}"
+    cmd: docker ps --filter name={{ netbox_container_name | default('netbox') }} --format "{{ '{{.Status}}' }}"
   register: netbox_status
   changed_when: false
   ignore_errors: yes

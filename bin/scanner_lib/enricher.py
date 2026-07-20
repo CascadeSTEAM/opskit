@@ -95,7 +95,7 @@ def _load_all_devices(devices_dir: Path) -> dict[str, dict]:
 
 _STUB_NAME = re.compile(r'^host-\d+-\d+-\d+-\d+$')
 
-# BMC pairing heuristic prefixes — BMS site convention (see Phase 7 note)
+# BMC pairing heuristic prefixes — site-specific convention (adjust per environment; see Phase 7 note)
 _BMC_MGMT_PREFIX = '10.99.5.'
 _BMC_MAIN_PREFIX = '10.99.0.'
 
@@ -670,7 +670,7 @@ def enrich_dataset(ds_path: Path) -> dict:
             summary['swarm_links'] += len(peers)
 
     # Phase 7: BMC → physical host linking.
-    # SITE-SPECIFIC HEURISTIC (BMS): assumes mgmt subnet _BMC_MGMT_PREFIX and
+    # SITE-SPECIFIC HEURISTIC (adjust per environment): assumes mgmt subnet _BMC_MGMT_PREFIX and
     # a same-last-octet host on _BMC_MAIN_PREFIX. Octet pairing is a guess —
     # links are marked inferred. TODO: move the prefixes to per-dataset meta
     # (network.yml) instead of module constants.

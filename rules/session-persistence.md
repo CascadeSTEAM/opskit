@@ -5,5 +5,5 @@ description: Named session pattern — session name stored in .opencode/session-
 
 # Session Persistence
 
-Session name is **BMS-AI-CLUSTER**, stored in `.opencode/session-name`.
+The session name is stored in `.opencode/session-name`.
 Resume via `.opencode/resume.sh` (reads name, resumes or starts fresh).

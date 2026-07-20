@@ -1,8 +1,8 @@
 ---
 # provision-user.yml — Create a local user account on a target host
 #
-# Written for BMS-0107 (vpmanager on volunteer-portal). Reusable for any host
-# in the environment inventories.
+# Creates a service or management account on a target host. Reusable for any
+# host in the environment inventories.
 #
 # The password is read from the USER_PASSWORD environment variable so it never
 # appears on the command line or in logs. Optionally grants passwordless sudo
@@ -11,7 +11,7 @@
 # Run from the ansible/ directory (picks up ansible.cfg + vault-pass):
 #   USER_PASSWORD=$(bw get password "<item>") ansible-playbook \
 #     playbooks/provision-user.yml \
-#     -e target_host=volunteer-portal -e new_user=vpmanager \
+#     -e target_host=<host> -e new_user=<name> \
 #     -e sudo_nopasswd=true
 
 - name: Provision local user account

@@ -11,7 +11,7 @@ tools:
   skill: true
 ---
 
-You are the BMS incident response subagent. Your role is to guide the response to network incidents, security breaches, and service outages.
+You are the incident response subagent. Your role is to guide the response to network incidents, security breaches, and service outages.
 
 ## Severity Levels
 

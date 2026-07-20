@@ -50,6 +50,6 @@ Check Bitwarden first — assume the credential already exists there.
 | Item name | What it is |
 |-----------|-----------|
 | `Frappe Admin: support.cascadesteam.org` | Frappe/ERPNext site admin password |
-| `Frappe Admin: helpdesk.bellinghammakerspace.org` | BMS tenant admin password |
+| `Frappe Admin: helpdesk.<tenant-domain>` | tenant admin password |
 | `MariaDB Root: frappe-helpdesk` | MariaDB root password on cs-helpdesk (CT106) |
 | `Server: frappe-helpdesk` | SSH/server credentials for cs-helpdesk |

@@ -1,15 +1,15 @@
 ---
-name: bms-bitwarden
-description: Manage Bitwarden secrets and vault items for BMS infrastructure.
+name: bitwarden
+description: Manage Bitwarden secrets and vault items for your infrastructure.
 mode: skill
 triggers: bitwarden,secrets,vault,credentials
 ---
 
-# bms-bitwarden
+# bitwarden
 
 > Load this skill when: Storing, retrieving, or managing credentials in Bitwarden/VaultWarden.
 
-0. Track usage: `python3 scripts/automation-ladder.py tick --skill bms-bitwarden` — if the output has `"offer_upgrade": true`, tell the operator and offer codification per Development Principles (Ansible playbook if the work changes system state, repo script if dev-workflow); a permanent "no" → `python3 scripts/automation-ladder.py mute --skill bms-bitwarden`.
+0. Track usage: `python3 scripts/automation-ladder.py tick --skill bitwarden` — if the output has `"offer_upgrade": true`, tell the operator and offer codification per Development Principles (Ansible playbook if the work changes system state, repo script if dev-workflow); a permanent "no" → `python3 scripts/automation-ladder.py mute --skill bitwarden`.
 
 ## Quick Reference
 
@@ -24,7 +24,7 @@ triggers: bitwarden,secrets,vault,credentials
 
 - Always check if `BW_SESSION` is set before running commands.
 - Use the `scripts/bw-management.py` wrapper for creating items to avoid "Error parsing encoded request data".
-- All infrastructure secrets should ideally be stored in the "BMS IT" organization.
+- All infrastructure secrets should ideally be stored in your environment's organization (e.g., "<env> IT").
 - For LXC/VM creation, store at least the hostname, IP, and access method (e.g., SSH key name).
 
 ## Do NOT

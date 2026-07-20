@@ -1,16 +1,16 @@
 ---
 # set-lxc-swap.yml — Set the swap allocation (MB) on a Proxmox LXC container
 #
-# Written for BMS-0105: pilot (CT 118 on pve2) had swap=5128192 (~5 TiB),
-# a typo for 8192. Reusable for any CT swap correction.
+# Motivating case: a container template bug produced an absurd swap value
+# (~5 TiB instead of the intended 8 GiB). Reusable for any CT swap correction.
 #
 # Refuses to change anything unless the container's current swap value matches
 # expected_swap_mb — so a re-run (or a wrong vmid) is a no-op, not a surprise.
 #
 # Run from this repo root:
-#   ansible-playbook -i ansible/inventory/bms.yml \
+#   ansible-playbook -i environments/$ACTIVE_ENV/ansible/inventory.yml \
 #     ansible/playbooks/set-lxc-swap.yml \
-#     -e target_host=pve2 -e vmid=118 \
+#     -e target_host=<proxmox-node> -e vmid=<id> \
 #     -e expected_swap_mb=5128192 -e new_swap_mb=8192
 
 - name: Set LXC container swap allocation

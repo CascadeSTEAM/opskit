@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bitwarden Management Utility — used by bms-bitwarden skill.
+Bitwarden Management Utility — used by the bitwarden skill.
 Handles creation and encoding of Bitwarden items to avoid protocol errors.
 """
 import json

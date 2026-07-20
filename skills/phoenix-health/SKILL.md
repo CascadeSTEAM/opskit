@@ -12,7 +12,7 @@ Run the health audit and interpret results. This replaces ~20 individual diagnos
 ## Step 1 — Run the script
 
 ```bash
-bash /home/netyeti/Projects/bms-ai-cluster/scripts/check-phoenix-health.sh --json
+bash scripts/check-phoenix-health.sh --json
 ```
 
 ## Step 2 — Report findings

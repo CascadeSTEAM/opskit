@@ -18,7 +18,8 @@
   gather_facts: yes
 
   vars:
-    repo_root: "{{ ansible_env.HOME }}/Projects/bms-ai-cluster"
+    # Override with -e opskit_repo_root=/path/to/checkout if the repo lives elsewhere
+    repo_root: "{{ opskit_repo_root | default(ansible_env.HOME + '/Projects/opskit') }}"
     venv_python: "{{ repo_root }}/.venv/bin/python3"
     service_name: lifecycle-processor
     systemd_user_dir: "{{ ansible_env.HOME }}/.config/systemd/user"

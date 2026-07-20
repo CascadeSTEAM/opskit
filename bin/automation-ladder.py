@@ -53,7 +53,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # This repo's skill format (see .opencode/skills/*/SKILL.md and the
 # skill-quality standard: 4 frontmatter fields, ~50 lines max, no
-# multi-page procedures — use @bms-skill-builder for authoring help).
+# multi-page procedures — use @skill-builder for authoring help).
 SKILL_TEMPLATE = """\
 ---
 name: {name}

@@ -10,7 +10,7 @@ device:
   status: unknown            # scanner-managed: active | down | unreachable (do not edit manually)
   networks: []               # list of network names this device belongs to
 
-  location: ""               # site name (e.g., bms-makerspace, yeticraft)
+  location: ""               # site name (e.g., main-office, homelab)
   description: ""
 
   networking:

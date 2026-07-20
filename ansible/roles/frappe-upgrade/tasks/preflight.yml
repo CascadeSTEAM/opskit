@@ -2,12 +2,12 @@
 # Phase 0a — Pre-flight validation
 # All checks must pass before any changes are made.
 
-- name: "Preflight | BMS coordination ticket status"
+- name: "Preflight | Client coordination ticket status"
   ansible.builtin.debug:
     msg: >-
-      {{ 'BMS coordination ticket: ' + bms_coordination_ticket
-         if (bms_coordination_ticket is defined and bms_coordination_ticket | length > 0)
-         else 'WARNING: No BMS coordination ticket set. Proceeding anyway (single-operator / no active BMS users).' }}
+      {{ 'Client coordination ticket: ' + client_coordination_ticket
+         if (client_coordination_ticket is defined and client_coordination_ticket | length > 0)
+         else 'WARNING: No client coordination ticket set. Proceeding anyway (single-operator / no active client users).' }}
 
 - name: "Preflight | Check Python version"
   ansible.builtin.command: python3 --version
@@ -99,5 +99,5 @@
       - "  Disk:    {{ disk_free_raw.stdout | trim }} GB free"
       - "  Backups: {{ recent_backups.files | length }} recent file(s)"
       - "  Sites:   all HTTP 200"
-      - "  BMS ticket: {{ bms_coordination_ticket }}"
+      - "  Client ticket: {{ client_coordination_ticket }}"
       - "============================================"

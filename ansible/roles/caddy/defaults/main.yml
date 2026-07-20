@@ -8,18 +8,21 @@ caddy_internal_subnets:
   - 10.99.10.0/24
   - 10.99.20.0/24
   - 10.0.0.0/24
-  - 207.224.235.194
+  # Real WAN/office addresses belong in environments/<env>/ group_vars,
+  # never in committed defaults (docs/client-data-policy.md).
+  - 203.0.113.194
 
 caddy_routes:
+  # Org/env-specific vhosts get their real upstream from env group_vars;
+  # the committed default target is a documentation-range placeholder.
   - domain: support.cascadesteam.org
-    target: 10.99.10.20:80
+    target: 192.0.2.25:8080
     internal: false
-  - domain: helpdesk.bellinghammakerspace.org
-    target: 10.99.10.20:80
-    internal: false
-  - domain: bms.bellinghammakerspace.org
-    target: 10.99.10.20:80
-    internal: false
+  # Client/env-specific vhosts do NOT belong here — real values go in
+  # environments/<env>/ group_vars (override caddy_routes there). Example:
+  # - domain: helpdesk.example.org
+  #   target: 192.0.2.10:80
+  #   internal: false
   - domain: zabbix.cascadesteam.org
     target: 10.99.10.21:80
     internal: true

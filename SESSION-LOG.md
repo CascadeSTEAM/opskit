@@ -1,28 +1,24 @@
 # SESSION-LOG
 
-## 2026-07-19 — BMS Semaphore + Netbox Docker Deployment
+Strategic index of work sessions on the opskit tool itself: key decisions,
+architectural choices, open threads. Detailed operational notes live in
+`docs/session-notes/`.
+
+**Client-data policy:** sessions operating a *client environment* are logged in
+that environment's gitignored layer — `environments/<env>/session-notes/` —
+never here. This file and `docs/session-notes/` are published; they may only
+describe tool development, phrased client-agnostically. See
+`docs/client-data-policy.md`.
+
+---
+
+## 2026-07-20 — Client-data isolation policy
 
 **Key decisions:**
-- Deployed Semaphore UI and Netbox as Docker containers on the local opskit workstation (not remote LXCs), per operator preference to "target the docker container like a normal machine"
-- Shared PostgreSQL instance between both services to reduce resource footprint
-- Netbox placed on port 8081 (8080 occupied by quartz-preview)
-- Pinned Semaphore image to v2.10.18 (latest tag unreliable)
-
-**Architectural choices:**
-- Docker bridge network `bms-mgmt` (172.20.0.0/24) for service isolation
-- Secrets stored in `environments/bms/playbooks/docker/.env` (gitignored, chmod 600)
-- Ansible playbook (`deploy-management-stack.yml`) wraps docker compose with health checks
-- Both roles (`netbox`, `semaphore`) updated for Docker-based deployment
-
-**Open threads:**
-- [ ] pve3 device YAML missing (#2) — needs `opskit scan`
-- [ ] Duplicate bms/BMS/ directories (#4) — needs sync and cleanup
-- [ ] open-ticket.sh HELPDESK_TENANT fix (#6)
-- [ ] Connect `bin/semaphore-sync.py` to the running Semaphore instance
-- [ ] Configure Netbox as BMS source_of_truth (switch env.yml from git-yaml to netbox)
-- [ ] Store generated secrets in Bitwarden vault (collection: bms) instead of local .env
-- [ ] Add Caddy reverse proxy entries for public access to Semaphore and Netbox
-- [ ] Lifecycle: transition proposals → approved → plans → completed
-
-**Commit:** 232a20a (BMS-0106)
-**GitHub issues:** #1-#7
+- The public repo, its issues, PRs, and commit messages must contain zero
+  client-identifying information; client work is tracked in the client's
+  helpdesk and the gitignored environment layer
+- Commit messages reference tickets as `TKT-<num>`; the client-identifying
+  helpdesk prefix stays local (`.current-ticket`) and in the helpdesk
+- Pre-commit/commit-msg hooks actively block client tokens and RFC1918
+  addresses in anything staged for publication

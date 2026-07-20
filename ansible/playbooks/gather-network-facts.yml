@@ -1,9 +1,9 @@
 ---
 - name: Gather system and network facts from AI cluster nodes
-  # Scoped to BMS SSH-able hosts: network_devices uses ansible_connection=local
-  # (tasks would run on the control node), and the merged inventory now loads
-  # all three environments under `all`. Override with -e target_hosts=...
-  hosts: "{{ target_hosts | default('bms:!network_devices') }}"
+  # Scoped to the environment's SSH-able hosts: network_devices uses
+  # ansible_connection=local (tasks would run on the control node).
+  # Override with -e target_hosts=...
+  hosts: "{{ target_hosts | default('all:!network_devices') }}"
   gather_facts: yes
   tasks:
     # ------------------------------------------------------------------
