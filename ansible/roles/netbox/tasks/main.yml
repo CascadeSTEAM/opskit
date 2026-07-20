@@ -1,1 +1,28 @@
 ---
+# Netbox role — Docker Compose deployment tasks
+
+- name: Check if netbox container is running
+  ansible.builtin.command:
+    cmd: docker ps --filter name=client1-netbox --format "{{ '{{.Status}}' }}"
+  register: netbox_status
+  changed_when: false
+  ignore_errors: yes
+
+- name: Deploy netbox via docker compose
+  ansible.builtin.command:
+    cmd: docker compose -f {{ netbox_compose_dir }}/docker-compose.yml up -d --wait netbox netbox-worker
+  register: compose_up
+  changed_when: "'Creating' in compose_up.stdout or 'Starting' in compose_up.stdout"
+
+- name: Wait for netbox to respond
+  ansible.builtin.uri:
+    url: "http://localhost:{{ netbox_ui_port }}"
+    status_code: [200, 302]
+  retries: 30
+  delay: 5
+  register: netbox_health
+  until: netbox_health is success
+
+- name: Report netbox status
+  ansible.builtin.debug:
+    msg: "Netbox ready at http://localhost:{{ netbox_ui_port }}"
