@@ -239,7 +239,7 @@ def cmd_scan(args):
         # Run discovery on each subnet
         discovery_hosts = []
         for subnet in subnets:
-            xml_path = nmap_runner.discover(subnet)
+            xml_path = nmap_runner.discover(subnet, timeout=args.timeout)
             if xml_path:
                 discovery_hosts.extend(parser.parse_discovery(xml_path))
 
@@ -665,6 +665,7 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
     ps.add_argument('--skip-uplinks', action='store_true', help='skip topology resolution')
     ps.add_argument('--no-router', action='store_true', help='skip router SSH for bridge/LLDP')
     ps.add_argument('--fixture', help='nmap XML fixture path (CI/test)')
+    ps.add_argument('--timeout', type=int, default=0, help='scan timeout in seconds (0=auto, /24→60s, /16→300s)')
 
     # status
     pt = sub.add_parser('status', help='inventory summary')

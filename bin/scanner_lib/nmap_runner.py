@@ -63,19 +63,36 @@ def _run(cmd: list[str], timeout: int = 300) -> tuple[str, str, int]:
 
 def discover(network: str, use_sudo: bool = False,
              exclude: Optional[list[str]] = None,
-             timeout: int = 120) -> Optional[str]:
+             timeout: int = 0) -> Optional[str]:
     """
     Run a ping/ARP sweep to discover live hosts.
 
     Returns path to XML result file, or None on failure.
+
+    timeout=0 means auto-calculate: 60s + 1s per 200 addresses
+    (e.g. /24 → 60s, /16 → 380s, /12 → 3600s).
     """
     if not check_nmap():
         print("  ERROR: nmap not installed")
         return None
 
+    # Auto-calculate timeout from subnet size
+    if timeout == 0:
+        import ipaddress
+        try:
+            net = ipaddress.ip_network(network, strict=False)
+            count = net.num_addresses
+            timeout = max(60, min(3600, 60 + count // 200))
+            if count > 65536:
+                print(f"  ! {network} is {count:,} addresses — this will take a while")
+                print(f"    Consider narrowing subnets or using --timeout")
+        except ValueError:
+            timeout = 120
+
     result_file = _tempfile(suffix='.xml', prefix='nmap-disc-')
     _temp_files.append(result_file)
-    cmd = ['nmap', '-sn', '-oX', result_file, network]
+    cmd = ['nmap', '-sn', '--max-rtt-timeout', '300ms', '--max-retries', '1',
+           '-oX', result_file, network]
     if exclude:
         cmd.extend(['--exclude', ','.join(exclude)])
 
