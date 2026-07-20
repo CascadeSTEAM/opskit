@@ -81,5 +81,5 @@
       - "  3. After 48h observation: delete snapshot '{{ pve_snapshot_name }}'"
       - "     pct delsnapshot {{ pve_ctid }} {{ pve_snapshot_name }}  (on {{ pve_host }})"
       - "  4. Update group_vars/frappe_nodes.yml to {{ frappe_target_branch }}"
-      - "  5. Resolve CS-0024 and {{ client1_coordination_ticket | default('CLIENT1 ticket') }}"
+      - "  5. Resolve CS-0024 and {{ client_coordination_ticket | default('client ticket') }}"
       - "================================================================"

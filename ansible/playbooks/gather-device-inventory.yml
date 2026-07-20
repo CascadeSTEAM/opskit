@@ -27,10 +27,10 @@
 # _provenance block is appended to every host's output automatically.
 
 - name: Gather device inventory — all targeted hosts
-  # Scoped to CLIENT1 SSH-able hosts: network_devices uses ansible_connection=local
-  # (tasks would run on the control node), and the merged inventory now loads
-  # all three environments under `all`. Override with -e target_hosts=...
-  hosts: "{{ target_hosts | default('client1:!network_devices') }}"
+  # Scoped to the environment's SSH-able hosts: network_devices uses
+  # ansible_connection=local (tasks would run on the control node).
+  # Override with -e target_hosts=...
+  hosts: "{{ target_hosts | default('all:!network_devices') }}"
   gather_facts: yes
   vars:
     scan_timestamp: "{{ ansible_date_time.iso8601 | default('unknown') }}"

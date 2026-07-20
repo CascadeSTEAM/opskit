@@ -1,11 +1,11 @@
 ---
-name: client1-<name>
+name: <name>
 description: <one sentence: what domain this covers and what it helps with>
 mode: skill
 triggers: <keyword1>,<keyword2>,<keyword3>
 ---
 
-# client1-<name>
+# <name>
 
 > Load this skill when: <1-2 sentence trigger condition — be specific about what prompts use it>
 

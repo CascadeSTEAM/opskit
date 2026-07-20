@@ -44,7 +44,7 @@ def generate_docs(facts):
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
     lines = []
-    lines.append(f"# CLIENT1 AI Cluster Network Architecture")
+    lines.append(f"# Network Architecture")
     lines.append(f"")
     lines.append(f"**Auto-generated:** {now}  ")
     lines.append(f"**Source:** Ansible facts gathering  ")
@@ -131,7 +131,7 @@ def generate_docs(facts):
     return "\n".join(lines)
 
 def main():
-    print("Generating CLIENT1 network architecture documentation...")
+    print("Generating network architecture documentation...")
     
     # Get facts
     facts = get_all_facts()

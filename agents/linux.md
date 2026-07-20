@@ -28,7 +28,7 @@ You are the Linux server administration subagent. You manage Linux servers — U
 
 ## Key Hosts
 
-- Proxmox nodes: discover at runtime from environment datasets
+- Proxmox nodes: discover at runtime from `environments/$ACTIVE_ENV/datasets/devices/` (see `docs/local-agent-context.md` for the dataset pattern)
 - Ollama/LLM cluster: discover at runtime from environment datasets
 - DNS: discover at runtime from environment datasets
 - Zabbix: discover at runtime from environment datasets

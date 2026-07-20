@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ERPNext MCP Server — Frappe Helpdesk management across CLIENT1 and Cascade STEAM tenants.
+ERPNext MCP Server — Frappe Helpdesk management across configured tenants.
 
 Tools:
   erpnext_list_tickets       List tickets with optional status/priority filters
@@ -14,9 +14,21 @@ Usage:
   python3 scripts/erpnext-mcp-server.py            # stdio MCP server
   python3 scripts/erpnext-mcp-server.py --test      # smoke-test all tools
 
+Tenant configuration:
+  Tenants are loaded from a gitignored mcp/tenants.local.json (next to this
+  script) if present; otherwise a single example tenant is used. The file
+  maps tenant keys to {"site", "description"}:
+
+    {
+      "client1": {
+        "site": "helpdesk.client1.example.org",
+        "description": "Example client helpdesk"
+      }
+    }
+
 Environment (or .env):
+  Each tenant reads ERPNEXT_ADMIN_PASSWORD_<TENANT_KEY_UPPERCASED>, e.g.:
   ERPNEXT_ADMIN_PASSWORD_CLIENT1=<password for helpdesk.client1.example.org>
-  ERPNEXT_ADMIN_PASSWORD_CS=<password for support.cascadesteam.org>
   # ERPNEXT_ADMIN_PASSWORD=<password>   # fallback used for any tenant without its own var
 """
 
@@ -37,16 +49,22 @@ except ImportError:
 
 REPO_ROOT = Path(__file__).parent.parent.resolve()
 
-TENANTS = {
-    "client1": {
-        "site": "helpdesk.client1.example.org",
-        "description": "Client One Helpdesk",
-    },
-    "cs": {
-        "site": "support.cascadesteam.org",
-        "description": "Cascade STEAM Support",
-    },
-}
+_TENANTS_FILE = Path(__file__).parent / "tenants.local.json"
+
+
+def _load_tenants() -> dict:
+    """Load tenant config from gitignored tenants.local.json, else example fallback."""
+    if _TENANTS_FILE.exists():
+        return json.loads(_TENANTS_FILE.read_text())
+    return {
+        "client1": {
+            "site": "helpdesk.client1.example.org",
+            "description": "Example client helpdesk",
+        },
+    }
+
+
+TENANTS = _load_tenants()
 
 mcp = FastMCP("erpnext-helpdesk")
 
@@ -145,7 +163,7 @@ def erpnext_list_tickets(
     List HD Tickets for a tenant.
 
     Args:
-        tenant: Tenant name ('client1' or 'cs').
+        tenant: Tenant name (e.g. 'client1'; see erpnext_list_tenants).
         status: Filter by status (e.g. 'Open', 'Resolved', 'Closed', 'Replied').
         priority: Filter by priority ('Low', 'Medium', 'High', 'Urgent').
         agent_group: Filter by assigned agent group.
@@ -181,7 +199,7 @@ def erpnext_get_ticket(tenant: str, ticket_id: str) -> str:
     Get full details of a single HD Ticket.
 
     Args:
-        tenant: Tenant name ('client1' or 'cs').
+        tenant: Tenant name (e.g. 'client1'; see erpnext_list_tenants).
         ticket_id: Ticket ID (e.g. '0054').
     """
     if tenant not in TENANTS:
@@ -215,7 +233,7 @@ def erpnext_create_ticket(
     Create a new HD Ticket on a tenant.
 
     Args:
-        tenant: Tenant name ('client1' or 'cs').
+        tenant: Tenant name (e.g. 'client1'; see erpnext_list_tenants).
         subject: Ticket subject/title.
         raised_by: Email address of the person raising the ticket.
         description: Ticket description (supports HTML).
@@ -268,7 +286,7 @@ def erpnext_update_ticket(
     Update fields on an existing HD Ticket.
 
     Args:
-        tenant: Tenant name ('client1' or 'cs').
+        tenant: Tenant name (e.g. 'client1'; see erpnext_list_tenants).
         ticket_id: Ticket ID to update.
         status: New status ('Open', 'Replied', 'Resolved', 'Closed').
         priority: New priority ('Low', 'Medium', 'High', 'Urgent').
@@ -322,7 +340,7 @@ def erpnext_add_reply(
     Add a reply or internal comment to a ticket.
 
     Args:
-        tenant: Tenant name ('client1' or 'cs').
+        tenant: Tenant name (e.g. 'client1'; see erpnext_list_tenants).
         ticket_id: Ticket ID to reply to.
         content: Message content (supports HTML, plain text will be wrapped).
         reply_type: 'Reply' for customer-facing reply, 'Comment' for internal note.
@@ -369,7 +387,7 @@ def erpnext_get_communications(
     Get communication history for a ticket.
 
     Args:
-        tenant: Tenant name ('client1' or 'cs').
+        tenant: Tenant name (e.g. 'client1'; see erpnext_list_tenants).
         ticket_id: Ticket ID to get communications for.
         limit: Max communications to return (default 50, max 200).
     """
@@ -421,33 +439,27 @@ def test_tools():
 
     print("=== Testing ERPNext MCP Tools ===\n")
 
+    tenant = next(iter(TENANTS))
+
     print("1. erpnext_list_tenants()")
     print(erpnext_list_tenants())
     print()
 
-    print("2. erpnext_list_tickets(tenant='client1', limit=3)")
-    print(erpnext_list_tickets(tenant="client1", limit=3))
+    print(f"2. erpnext_list_tickets(tenant='{tenant}', limit=3)")
+    print(erpnext_list_tickets(tenant=tenant, limit=3))
     print()
 
-    print("3. erpnext_get_ticket(tenant='client1', ticket_id='0054')")
-    print(erpnext_get_ticket(tenant="client1", ticket_id="0054"))
+    print(f"3. erpnext_get_ticket(tenant='{tenant}', ticket_id='0001')")
+    print(erpnext_get_ticket(tenant=tenant, ticket_id="0001"))
     print()
 
-    print("4. erpnext_list_tickets(tenant='cs', limit=3)")
-    print(erpnext_list_tickets(tenant="cs", limit=3))
+    print(f"4. erpnext_get_communications(tenant='{tenant}', ticket_id='0001')")
+    print(erpnext_get_communications(tenant=tenant, ticket_id="0001"))
     print()
 
-    print("5. erpnext_get_ticket(tenant='cs', ticket_id='0001')")
-    print(erpnext_get_ticket(tenant="cs", ticket_id="0001"))
-    print()
-
-    print("6. erpnext_get_communications(tenant='client1', ticket_id='0054')")
-    print(erpnext_get_communications(tenant="client1", ticket_id="0054"))
-    print()
-
-    print("7. erpnext_create_ticket(tenant='client1', ...)")
+    print(f"5. erpnext_create_ticket(tenant='{tenant}', ...)")
     result = erpnext_create_ticket(
-        tenant="client1",
+        tenant=tenant,
         subject="MCP Test Ticket - please ignore",
         raised_by="test@opencode.ai",
         description="<p>Automated test from ERPNext MCP server.</p>",
@@ -458,12 +470,12 @@ def test_tools():
     data = json.loads(result)
     tid = data.get("ticket", {}).get("name", "")
     if tid:
-        print(f"\n8. erpnext_add_reply(tenant='client1', ticket_id='{tid}', ...)")
-        print(erpnext_add_reply(tenant="client1", ticket_id=tid, content="<p>Test reply from MCP.</p>", reply_type="Comment"))
-        print(f"\n9. erpnext_update_ticket(tenant='client1', ticket_id='{tid}', status='Closed')")
-        print(erpnext_update_ticket(tenant="client1", ticket_id=tid, status="Closed", priority="Low"))
-        print(f"\n10. erpnext_get_communications(tenant='client1', ticket_id='{tid}')")
-        print(erpnext_get_communications(tenant="client1", ticket_id=tid))
+        print(f"\n6. erpnext_add_reply(tenant='{tenant}', ticket_id='{tid}', ...)")
+        print(erpnext_add_reply(tenant=tenant, ticket_id=tid, content="<p>Test reply from MCP.</p>", reply_type="Comment"))
+        print(f"\n7. erpnext_update_ticket(tenant='{tenant}', ticket_id='{tid}', status='Closed')")
+        print(erpnext_update_ticket(tenant=tenant, ticket_id=tid, status="Closed", priority="Low"))
+        print(f"\n8. erpnext_get_communications(tenant='{tenant}', ticket_id='{tid}')")
+        print(erpnext_get_communications(tenant=tenant, ticket_id=tid))
     print()
     print("=== Tests passed ===")
 

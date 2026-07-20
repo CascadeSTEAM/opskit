@@ -8,18 +8,18 @@ Implements Red Hat CoP GPA §3.1.18 and §6.3-6.4.
 All Ansible group_vars use `env_*` prefix, scoped by group membership — no per-environment
 variable name prefixes.
 
-| Old (predecessor-ops-repo) | New (opskit) |
+| Old (per-environment prefixes) | New (opskit) |
 |-----------------------|---------------|
-| `client1_domain`, `cs_domain`, `cascadesteam_domain` | `env_domain` (in each env's group_vars/all.yml) |
+| `acme_domain`, `cs_domain` | `env_domain` (in each env's group_vars/all.yml) |
 | `zabbix_server_ip` | `env_monitoring_server` |
-| `cs_subnet`, `client1_subnet` | `env_subnet` |
+| `cs_subnet`, `acme_subnet` | `env_subnet` |
 | `zabbix_tier` | Host var, not group var (§7-5) |
-| `ssh_user_cs`, `client1_ssh_user` | `env_ssh_user` (from env.yml ansible block) |
+| `ssh_user_cs`, `acme_ssh_user` | `env_ssh_user` (from env.yml ansible block) |
 
 Implementation: `environments/<env>/ansible/group_vars/all.yml` defines `env_domain`,
 `env_subnet`, `env_monitoring_server`, `env_ssh_user` — sourced from `env.yml` at
 sync time (Phase 3 `semaphore-sync` generator). Playbooks reference `{{ env_domain }}`,
-never `{{ cs_domain }}` or `{{ client1_domain }}`.
+never `{{ cs_domain }}` or `{{ acme_domain }}`.
 
 ## §7-5: Inventory-group convention
 

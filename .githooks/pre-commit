@@ -40,6 +40,31 @@ if [ "${ALLOW_PRIVATE_IPS:-0}" != "1" ]; then
     fi
 fi
 
+# Client-token guard — nothing client-identifying may be published.
+# Tokens = local real environment names (environments/* minus example) plus
+# entries in .client-tokens (gitignored; one token per line, # comments ok).
+# Override for a reviewed false positive: ALLOW_CLIENT_TOKENS=1 git commit ...
+if [ "${ALLOW_CLIENT_TOKENS:-0}" != "1" ]; then
+    CLIENT_TOKENS=""
+    if [ -d environments ]; then
+        CLIENT_TOKENS=$(find environments -mindepth 1 -maxdepth 1 -type d ! -name example ! -name '.*' -printf '%f\n')
+    fi
+    if [ -f .client-tokens ]; then
+        CLIENT_TOKENS="$CLIENT_TOKENS
+$(grep -vE '^\s*(#|$)' .client-tokens)"
+    fi
+    for tok in $CLIENT_TOKENS; do
+        tok_hits=$(git diff --cached -U0 --diff-filter=ACM -- ':!environments' | grep -E '^\+' | grep -vE '^\+\+\+' | grep -icE "\b${tok}\b" || true)
+        path_hits=$(echo "$STAGED_FILES" | grep -v '^environments/' | grep -icE "\b${tok}\b|${tok}" || true)
+        if [ "$tok_hits" -gt 0 ] || [ "$path_hits" -gt 0 ]; then
+            echo "ERROR: Staged changes contain the client token '${tok}' (${tok_hits} content line(s), ${path_hits} path(s))."
+            echo "Client-identifying information must never be published — see docs/client-data-policy.md."
+            echo "Reviewed false positive? Re-run with: ALLOW_CLIENT_TOKENS=1 git commit ..."
+            exit 1
+        fi
+    done
+fi
+
 # Environment isolation — only environments/example/ may be committed
 ENV_FILES=$(echo "$STAGED_FILES" | grep '^environments/' | grep -v '^environments/example/' || true)
 if [ -n "$ENV_FILES" ]; then

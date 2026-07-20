@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Lifecycle Processor — Single-script lifecycle management for predecessor-ops-repo.
+Lifecycle Processor — Single-script lifecycle management for opskit.
 
 Detects frontmatter changes in proposals/ and plans/ and transitions them
 through their lifecycle (approved → plan, completed → completed/, etc.).
@@ -360,7 +360,7 @@ def generate_plan_body(proposal_path: Path, plan_fm: dict) -> str:
     else:
         assigned_str = str(assigned)
 
-    system_prompt = f"""You are a planning assistant for the CLIENT1 AI Cluster repository.
+    system_prompt = f"""You are a planning assistant for this infrastructure repository.
 Your task is to generate a complete, well-structured execution plan body from an approved proposal.
 
 The plan must include these sections:

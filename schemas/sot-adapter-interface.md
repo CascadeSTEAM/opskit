@@ -82,7 +82,7 @@ This is called by `opskit sot-sync` and is idempotent.
 
 | Adapter | File | Status |
 |---------|------|--------|
-| `git-yaml` | `bin/adapters/git_yaml.py` | Phase 2 (migrated from predecessor-ops-repo) |
+| `git-yaml` | `bin/adapters/git_yaml.py` | Phase 2 (migrated from the predecessor repo) |
 | `netbox` | `bin/adapters/netbox.py` | Phase 3 (new; uses NetBox REST API) |
 
 ## Configuration

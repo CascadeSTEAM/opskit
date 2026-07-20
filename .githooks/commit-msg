@@ -6,6 +6,26 @@ set -euo pipefail
 COMMIT_MSG_FILE="$1"
 COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
 
+# Client-token guard — commit messages are published; they must never contain
+# client-identifying tokens (see docs/client-data-policy.md).
+if [ "${ALLOW_CLIENT_TOKENS:-0}" != "1" ]; then
+    CLIENT_TOKENS=""
+    if [ -d environments ]; then
+        CLIENT_TOKENS=$(find environments -mindepth 1 -maxdepth 1 -type d ! -name example ! -name '.*' -printf '%f\n')
+    fi
+    if [ -f .client-tokens ]; then
+        CLIENT_TOKENS="$CLIENT_TOKENS
+$(grep -vE '^\s*(#|$)' .client-tokens)"
+    fi
+    for tok in $CLIENT_TOKENS; do
+        if echo "$COMMIT_MSG" | grep -qiE "\b${tok}\b"; then
+            echo "ERROR: Commit message contains the client token '${tok}'."
+            echo "Commit messages are published — reference tickets as TKT-<num> and keep client context in the helpdesk."
+            exit 1
+        fi
+    done
+fi
+
 # Detect ACTIVE_ENV from .env (site repo context)
 ACTIVE_ENV=""
 if [ -f ".env" ]; then
@@ -32,6 +52,13 @@ if [ -z "$PREFIX" ]; then
     exit 0
 fi
 
+# Ticket enforcement applies to client-operation sessions, which always have
+# an open ticket (bin/open-ticket.sh writes .current-ticket). Tool development
+# with no open ticket is exempt — the client-token guard above still applies.
+if [ ! -s .current-ticket ]; then
+    exit 0
+fi
+
 STAGED=$(git diff --cached --name-only --diff-filter=ACM)
 
 # Check if any staged file is infrastructure work (ansible/, inventory/, environments/ excluding example/)
@@ -51,9 +78,13 @@ if [ $HAS_INFRA -eq 0 ]; then
     exit 0
 fi
 
-if ! echo "$COMMIT_MSG" | grep -qiE "^${PREFIX}-[0-9]+:"; then
-    echo "ERROR: Infrastructure changes require a ${PREFIX}-XXXX ticket reference."
-    echo "  Add '${PREFIX}-XXXX: ...' to your commit message."
+# Published commit messages use the neutral TKT-<num> form; the full
+# client-identifying <PREFIX>-<num> ID lives only in .current-ticket and the
+# helpdesk (docs/client-data-policy.md).
+if ! echo "$COMMIT_MSG" | grep -qiE "^TKT-[0-9]+:"; then
+    echo "ERROR: Infrastructure changes require a TKT-XXXX ticket reference."
+    echo "  Add 'TKT-XXXX: ...' (number only — never the client's helpdesk prefix)."
+    echo "  The active ticket's full ID is in .current-ticket."
     exit 1
 fi
 
