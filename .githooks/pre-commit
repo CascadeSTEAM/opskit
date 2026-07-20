@@ -24,6 +24,22 @@ for pattern in "${PATTERNS[@]}"; do
     fi
 done
 
+# Private-IP guard — committed files must use documentation ranges (RFC 5737),
+# never real RFC1918 addresses. See docs/local-agent-context.md.
+# Legitimate exception: ALLOW_PRIVATE_IPS=1 git commit ...
+if [ "${ALLOW_PRIVATE_IPS:-0}" != "1" ]; then
+    RFC1918='\b(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})\b'
+    ip_matches=$(git diff --cached -U0 --diff-filter=ACM | grep -E '^\+' | grep -vE '^\+\+\+' | grep -oE "$RFC1918" | sort -u || true)
+    if [ -n "$ip_matches" ]; then
+        echo "ERROR: Staged changes add private (RFC1918) addresses:"
+        echo "$ip_matches"
+        echo "Committed files must not contain real network data — use RFC 5737"
+        echo "documentation ranges (192.0.2.x / 198.51.100.x / 203.0.113.x) instead."
+        echo "Intentional generic example? Re-run with: ALLOW_PRIVATE_IPS=1 git commit ..."
+        exit 1
+    fi
+fi
+
 # Environment isolation — only environments/example/ may be committed
 ENV_FILES=$(echo "$STAGED_FILES" | grep '^environments/' | grep -v '^environments/example/' || true)
 if [ -n "$ENV_FILES" ]; then
