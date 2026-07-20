@@ -49,6 +49,11 @@ environments/
 
 **Dogfooding safety:** `environments/*/` (except `example/`) is gitignored. Your real network data never touches git.
 
+**Agent context is generated, never committed.** Committed agents/skills/rules stay
+environment-agnostic (documentation-range IPs only — pre-commit enforces this). Real
+fact sheets live in `environments/<env>/context/` (gitignored), generated from
+datasets. See `docs/local-agent-context.md`.
+
 ## Tool Scripts (bin/)
 
 All scripts are data-driven — they read from `environments/$ACTIVE_ENV/env.yml`.
