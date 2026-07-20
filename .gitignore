@@ -56,3 +56,6 @@ vault-pass*
 gitleaks-report.json
 .venv/
 .pytest_cache/
+
+# Claude Code machine-local settings (permission allowlists etc.) — never commit
+.claude/settings.local.json

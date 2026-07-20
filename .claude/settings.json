@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 bin/automation-ladder.py scan 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}
