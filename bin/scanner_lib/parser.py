@@ -4,10 +4,10 @@ Parse nmap XML output into structured device data.
 Output format:
 [
     {
-        'ip': '10.99.0.1',
+        'ip': '192.0.2.1',
         'mac': 'AA:BB:CC:00:00:97',
         'vendor': 'Routerboard.com',
-        'hostname': 'router.client1.local',
+        'hostname': 'router.example.local',
         'status': 'up',
         'ports': [
             {'port': 22, 'protocol': 'tcp', 'service': 'ssh', 'state': 'open'},

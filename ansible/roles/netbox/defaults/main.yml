@@ -6,4 +6,7 @@ netbox_ui_port: 8080
 netbox_db_name: netbox
 netbox_db_user: opskit
 netbox_admin_user: admin
-netbox_admin_email: admin@client1.local
+netbox_admin_email: admin@example.local
+# Docker container name — override in environments/<env>/ group_vars if the
+# environment's compose file uses a prefixed container_name.
+netbox_container_name: netbox

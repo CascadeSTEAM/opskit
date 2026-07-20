@@ -28,5 +28,5 @@ first** (and journal it: `python3 bin/automation-ladder.py log --task <slug>`).
 required same session), and initial Ansible bootstrap.
 
 **Playbook standards:** idempotent, use `ansible-vault` for secrets, hosts in
-`ansible/inventory/client1.yml (or cascadesteam.yml / yeticraft.yml / workstations.yml)`,
+`ansible/inventory/<env>.yml` (one inventory file per environment, plus `workstations.yml`),
 clear name/purpose header.

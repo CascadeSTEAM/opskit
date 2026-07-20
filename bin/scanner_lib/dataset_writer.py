@@ -31,9 +31,10 @@ def load_exclusions(ds_path: Path) -> list:
     """CIDRs under network.exclude_cidrs in the dataset's network.yml.
 
     These are addresses REACHABLE from this network but belonging to a
-    different environment's dataset (e.g. Cascade STEAM's 10.99.10.0/24 is
-    visible across the CLIENT1 WireGuard route and sits inside CLIENT1's 10.99.0.0/16
-    — scanning it from CLIENT1 must not file CS hosts into the CLIENT1 dataset).
+    different environment's dataset (e.g. a peer site's 198.51.100.0/24 is
+    visible across a WireGuard route and sits inside the local site's
+    supernet — scanning it locally must not file the peer site's hosts into
+    the local dataset).
     """
     net_file = ds_path / 'network.yml'
     if not net_file.exists():
@@ -142,9 +143,9 @@ def _device_from_scan(host: dict, dataset_name: str, scan_source: str) -> dict:
             },
             'metadata': {
                 'created': _today(),
-                'created_by': 'client1-scanner',
+                'created_by': 'opskit-scanner',
                 'updated': _today(),
-                'updated_by': 'client1-scanner',
+                'updated_by': 'opskit-scanner',
                 'source': scan_source,
                 'maturity': 'L1',
             },
@@ -196,7 +197,7 @@ def write_device_file(device: dict, devices_dir: Path) -> str:
         # Update metadata
         merged.setdefault('device', {}).setdefault('metadata', {})
         merged['device']['metadata']['updated'] = _today()
-        merged['device']['metadata']['updated_by'] = 'client1-scanner'
+        merged['device']['metadata']['updated_by'] = 'opskit-scanner'
 
         device = merged
     else:

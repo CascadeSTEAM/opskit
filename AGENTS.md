@@ -106,6 +106,18 @@ Set by the project owner; they apply to every session, not per-task.
      **MCP tool**.
    State lives in `.local/` (gitignored, shared across worktrees).
 
+## Client-Data Isolation (Hard Rule)
+
+**Nothing client-identifying is ever published** — not in tracked files, commit
+messages, branch names, GitHub issues, or PR text. Client names, domains,
+hostnames, ticket prefixes, and deployment narratives live in the client's
+helpdesk and the gitignored `environments/<env>/` layer (lifecycle docs in
+`environments/<env>/lifecycle/`, session logs in
+`environments/<env>/session-notes/`). GitHub gets the engineering problem,
+phrased generically; the helpdesk gets the client. Commit messages reference
+tickets as `TKT-<num>` only. Enforced by pre-commit/commit-msg token guards +
+`.client-tokens`. Full policy: `docs/client-data-policy.md`.
+
 ## Git & GitHub Workflow (Hard Rules)
 
 Set by the project owner (2026-07-20). These apply to every session, no exceptions.

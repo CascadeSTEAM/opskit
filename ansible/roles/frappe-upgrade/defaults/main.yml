@@ -15,15 +15,17 @@ pve_snapshot_name: pre-v16-upgrade
 # Sites in this bench.
 # NOTE: support.cascadesteam.org moved off CT106 to CT111 (CS-0029, 2026-06-20)
 # and CT111 now runs the Docker-Compose architecture — do NOT upgrade it via
-# this bench-based role. CT106 now serves the CLIENT1 helpdesk only.
+# this bench-based role. CT106 now serves the client helpdesk only.
+# Real hostnames come from environment vars (environments/<env>/ group_vars) —
+# this default is a placeholder.
 frappe_sites:
-  - helpdesk.client1.example.org
+  - helpdesk.example.org
 
 # Pre-flight thresholds
 min_disk_free_gb: 10
 backup_max_age_hours: 24
 http_check_timeout: 30
 
-# CLIENT1 coordination ticket — optional. Pass -e client1_coordination_ticket=TKT-XXXX when
-# CLIENT1 users are active and need notification. Logged as a warning if omitted.
-client1_coordination_ticket: ""
+# Client coordination ticket — optional. Pass -e client_coordination_ticket=TKT-XXXX
+# when client users are active and need notification. Logged as a warning if omitted.
+client_coordination_ticket: ""

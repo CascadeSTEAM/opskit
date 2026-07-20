@@ -17,7 +17,7 @@ reviewed_by:
 reviewed_date:
 canceled_date:  # Populated when plan is canceled
 cancellation_reason:  # Populated when plan is canceled
-environment: "{{VALUE:environment}}"  # yeticraft | client1 | cascadesteam — auto-switches ACTIVE_ENV on session start
+environment: "{{VALUE:environment}}"  # an environment name from environments/ — auto-switches ACTIVE_ENV on session start
 template_version: "1.0"
 ---
 
