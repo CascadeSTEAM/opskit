@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Technitium DNS MCP Server — Zone, record, and DHCP management across YC, CS, and CLIENT1 servers.
+Technitium DNS MCP Server — Zone, record, and DHCP management across configured servers.
 
 DNS Tools:
   dns_list_servers      List configured servers and their reachability status
@@ -24,11 +24,25 @@ Usage:
   python3 scripts/technitium-mcp-server.py            # stdio MCP server
   python3 scripts/technitium-mcp-server.py --test      # smoke-test all tools
 
+Server configuration:
+  Servers are loaded from a gitignored mcp/tenants-technitium.local.json
+  (next to this script) if present; otherwise a single example server is
+  used. The file maps server names to {"url", "description", "env_pass",
+  "username"}:
+
+    {
+      "client1": {
+        "url": "http://dns.example.local:5380",
+        "description": "Example client DNS+DHCP",
+        "env_pass": "TECHNITIUM_CLIENT1_PASS",
+        "username": "admin"
+      }
+    }
+
 Environment (or .env):
-  TECHNITIUM_YC_PASS=<password>            YetiCraft DNS    (198.18.42.2) — BW: dns-yc (TBD)
-  TECHNITIUM_CS_PRIMARY_PASS=<password>    CS primary DNS   (10.99.10.10) — BW: dns-primary
-  TECHNITIUM_CS_SECONDARY_PASS=<password>  CS secondary DNS (10.99.10.11) — BW: dns-secondary
-  TECHNITIUM_CLIENT1_PASS=<password>           CLIENT1 DNS          (10.99.0.4)  — BW: dns-client1 (TBD)
+  Each server reads the password from the env var named by its "env_pass"
+  key, e.g.:
+  TECHNITIUM_CLIENT1_PASS=<password>
 """
 
 import json
@@ -47,32 +61,24 @@ except ImportError:
 
 REPO_ROOT = Path(__file__).parent.parent.resolve()
 
-SERVERS = {
-    "yeticraft": {
-        "url": "http://198.18.42.2:5380",
-        "description": "YetiCraft DNS+DHCP (authoritative, writable)",
-        "env_pass": "TECHNITIUM_YC_PASS",
-        "username": "admin",
-    },
-    "cs-primary": {
-        "url": "http://10.99.10.10:5380",
-        "description": "Cascade STEAM Primary DNS (authoritative, writable)",
-        "env_pass": "TECHNITIUM_CS_PRIMARY_PASS",
-        "username": "admin",
-    },
-    "cs-secondary": {
-        "url": "http://10.99.10.11:5380",
-        "description": "Cascade STEAM Secondary DNS (read-only zones, resync supported)",
-        "env_pass": "TECHNITIUM_CS_SECONDARY_PASS",
-        "username": "admin",
-    },
-    "client1": {
-        "url": "http://10.99.0.4:5380",
-        "description": "Client One DNS",
-        "env_pass": "TECHNITIUM_CLIENT1_PASS",
-        "username": "admin",
-    },
-}
+_SERVERS_FILE = Path(__file__).parent / "tenants-technitium.local.json"
+
+
+def _load_servers() -> dict:
+    """Load server config from gitignored tenants-technitium.local.json, else example fallback."""
+    if _SERVERS_FILE.exists():
+        return json.loads(_SERVERS_FILE.read_text())
+    return {
+        "client1": {
+            "url": "http://dns.example.local:5380",
+            "description": "Example client DNS+DHCP",
+            "env_pass": "TECHNITIUM_CLIENT1_PASS",
+            "username": "admin",
+        },
+    }
+
+
+SERVERS = _load_servers()
 
 mcp = FastMCP("technitium-dns")
 
@@ -188,7 +194,7 @@ def dns_list_zones(server: str) -> str:
     List all DNS zones on a server.
 
     Args:
-        server: Server name — one of: cs-primary, cs-secondary, client1
+        server: Server name (see dns_list_servers for configured names)
     """
     try:
         client = get_client(server)
@@ -212,9 +218,9 @@ def dns_get_records(server: str, zone: str, subdomain: str = None) -> str:
     Get DNS records for a zone, optionally filtered to a specific subdomain.
 
     Args:
-        server:    Server name — one of: cs-primary, cs-secondary, client1
-        zone:      Zone name (e.g. 'cascadesteam.org')
-        subdomain: Fully-qualified name to filter to (e.g. 'support.cascadesteam.org').
+        server:    Server name (see dns_list_servers for configured names)
+        zone:      Zone name (e.g. 'example.org')
+        subdomain: Fully-qualified name to filter to (e.g. 'support.example.org').
                    If omitted, returns all records in the zone.
     """
     try:
@@ -268,7 +274,7 @@ def dns_compare(hostname: str) -> str:
     This is the first tool to run when a DNS-related site issue is reported.
 
     Args:
-        hostname: FQDN to check (e.g. 'support.cascadesteam.org')
+        hostname: FQDN to check (e.g. 'support.example.org')
     """
     load_env()
     results = {}
@@ -340,9 +346,9 @@ def dns_update_record(
     Secondary zones are read-only — use dns_resync_zone after updating the primary.
 
     Args:
-        server:      Server name (use cs-primary for cascadesteam.org changes)
-        zone:        Zone name (e.g. 'cascadesteam.org')
-        domain:      FQDN of the record (e.g. 'support.cascadesteam.org')
+        server:      Server name (must be the primary server for the zone)
+        zone:        Zone name (e.g. 'example.org')
+        domain:      FQDN of the record (e.g. 'support.example.org')
         record_type: Record type: 'A', 'CNAME', 'TXT', 'MX', etc.
         value:       Record value (IP for A, hostname for CNAME, etc.)
         ttl:         Time-to-live in seconds (default 3600)
@@ -421,9 +427,9 @@ def dns_delete_record(
     Delete a specific DNS record from a primary zone.
 
     Args:
-        server:      Server name (use cs-primary for cascadesteam.org changes)
-        zone:        Zone name (e.g. 'cascadesteam.org')
-        domain:      FQDN of the record (e.g. 'old.cascadesteam.org')
+        server:      Server name (must be the primary server for the zone)
+        zone:        Zone name (e.g. 'example.org')
+        domain:      FQDN of the record (e.g. 'old.example.org')
         record_type: Record type: 'A', 'CNAME', etc.
         value:       Exact current value of the record to delete
     """
@@ -451,8 +457,8 @@ def dns_resync_zone(server: str, zone: str) -> str:
     Run this after updating records on the primary to ensure both servers agree.
 
     Args:
-        server: Secondary server to resync (e.g. 'cs-secondary')
-        zone:   Zone name to resync (e.g. 'cascadesteam.org')
+        server: Secondary server to resync (see dns_list_servers)
+        zone:   Zone name to resync (e.g. 'example.org')
     """
     try:
         client = get_client(server)
@@ -503,7 +509,7 @@ def dhcp_list_scopes(server: str) -> str:
     Use this first to discover scope names before calling other DHCP tools.
 
     Args:
-        server: Server name — one of: yeticraft, cs-primary, client1
+        server: Server name (see dns_list_servers for configured names)
     """
     try:
         client = get_client(server)
@@ -536,7 +542,7 @@ def dhcp_get_scope(server: str, scope_name: str) -> str:
     Look here to diagnose DHCP option issues (e.g. Option 121 staticRoutes, Option 15 domain).
 
     Args:
-        server:     Server name — one of: yeticraft, cs-primary, client1
+        server:     Server name (see dns_list_servers for configured names)
         scope_name: Scope name (from dhcp_list_scopes, e.g. 'Default')
     """
     try:
@@ -579,7 +585,7 @@ def dhcp_list_leases(server: str, scope_name: str) -> str:
     Useful for identifying devices and verifying reservations are working.
 
     Args:
-        server:     Server name — one of: yeticraft, cs-primary, client1
+        server:     Server name (see dns_list_servers for configured names)
         scope_name: Scope name (from dhcp_list_scopes, e.g. 'Default')
     """
     try:
@@ -619,7 +625,7 @@ def dhcp_add_reservation(
     The device will always receive the same IP when it requests a lease.
 
     Args:
-        server:           Server name — one of: yeticraft, cs-primary, client1
+        server:           Server name (see dns_list_servers for configured names)
         scope_name:       Scope name (e.g. 'Default')
         ip_address:       IP to reserve (must be within the scope range)
         hardware_address: Device MAC address (e.g. 'AA:BB:CC:DD:EE:FF')
@@ -653,7 +659,7 @@ def dhcp_remove_reservation(server: str, scope_name: str, ip_address: str) -> st
     Remove a static IP reservation from a DHCP scope.
 
     Args:
-        server:     Server name — one of: yeticraft, cs-primary, client1
+        server:     Server name (see dns_list_servers for configured names)
         scope_name: Scope name (e.g. 'Default')
         ip_address: Reserved IP to remove
     """
@@ -686,7 +692,7 @@ def dhcp_clear_static_routes(server: str, scope_name: str) -> str:
     new lease without the bad routes.
 
     Args:
-        server:     Server name — one of: yeticraft, cs-primary, client1
+        server:     Server name (see dns_list_servers for configured names)
         scope_name: Scope name (e.g. 'Default')
     """
     try:
@@ -736,31 +742,25 @@ def test_tools():
     load_env()
     print("=== Testing Technitium DNS MCP Tools ===\n")
 
+    server = next(iter(SERVERS))
+
     print("1. dns_list_servers()")
     print(dns_list_servers())
     print()
 
-    print("2. dns_list_zones(server='cs-primary')")
-    print(dns_list_zones(server="cs-primary"))
+    print(f"2. dns_list_zones(server='{server}')")
+    print(dns_list_zones(server=server))
     print()
 
-    print("3. dns_get_records(server='cs-primary', zone='cascadesteam.org', subdomain='support.cascadesteam.org')")
-    print(dns_get_records(server="cs-primary", zone="cascadesteam.org", subdomain="support.cascadesteam.org"))
+    print(f"3. dns_get_records(server='{server}', zone='example.org', subdomain='support.example.org')")
+    print(dns_get_records(server=server, zone="example.org", subdomain="support.example.org"))
     print()
 
-    print("4. dns_compare(hostname='support.cascadesteam.org')")
-    print(dns_compare(hostname="support.cascadesteam.org"))
+    print("4. dns_compare(hostname='support.example.org')")
+    print(dns_compare(hostname="support.example.org"))
     print()
 
-    print("5. dns_compare(hostname='zabbix.cascadesteam.org')")
-    print(dns_compare(hostname="zabbix.cascadesteam.org"))
-    print()
-
-    print("6. dns_get_records(server='cs-secondary', zone='cascadesteam.org')")
-    print(dns_get_records(server="cs-secondary", zone="cascadesteam.org"))
-    print()
-
-    print("7. dns_flush_local_cache()")
+    print("5. dns_flush_local_cache()")
     print(dns_flush_local_cache())
     print()
 

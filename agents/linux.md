@@ -28,7 +28,7 @@ You are the Linux server administration subagent. You manage Linux servers — U
 
 ## Key Hosts
 
-- Proxmox nodes: `pve1` (yeticraft), `cspve2` (cascadesteam), `pve2` (client1)
+- Proxmox nodes: discover at runtime from `environments/$ACTIVE_ENV/datasets/devices/` (see `docs/local-agent-context.md` for the dataset pattern)
 - Ollama: `cluster-llm` (primary), `sp1`-`sp6` (spokes)
 - DNS: `cs-primary`, `cs-secondary`, `proxy`
 - Zabbix: `zabbix` (yeticraft)

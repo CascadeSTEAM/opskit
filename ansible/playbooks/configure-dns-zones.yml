@@ -1,6 +1,6 @@
 ---
 # configure-dns-zones.yml
-# Manages Technitium DNS zones and records for CLIENT1 AI Cluster.
+# Manages Technitium DNS zones and records for the active environment's DNS server.
 #
 # Runs all API calls via localhost (requires SSH tunnel).
 # Pre-establish tunnel:
@@ -19,37 +19,27 @@
     dns_api_base: "http://localhost:15380/api"
     dns_admin_username: "admin"
 
-    # Zones and records to ensure exist
-    dns_zones:
-      - name: "client1.local"
+    # Zones and records to ensure exist.
+    # Real zones/records belong in environments/<env>/ group_vars — define
+    # dns_zones there (or pass -e). This placeholder example (RFC 5737
+    # addresses) is used only when dns_zones is not set.
+    dns_zones_default:
+      - name: "example.local"
         type: "Primary"
         records:
           - type: "A"
-            name: "grafana"
-            value: "10.99.0.100"
+            name: "app"
+            value: "192.0.2.10"
             ttl: 3600
+          # LXC containers are often provisioned without DNS records —
+          # add A records here; ptr: true also creates the reverse record.
           - type: "A"
-            name: "prometheus"
-            value: "10.99.0.101"
-            ttl: 3600
-          - type: "A"
-            name: "mktxp"
-            value: "10.99.0.5"
-            ttl: 3600
-      - name: "client1.example.org"
-        type: "Primary"
-        records:
-          # TKT-0106: LXC containers on pve2 provisioned without DNS records
-          - type: "A"
-            name: "volunteer-portal"
-            value: "10.99.0.50"
+            name: "db"
+            value: "192.0.2.20"
             ttl: 3600
             ptr: true
-          - type: "A"
-            name: "pilot"
-            value: "10.99.37.1"
-            ttl: 3600
-            ptr: true
+
+    effective_dns_zones: "{{ dns_zones | default(dns_zones_default) }}"
 
   tasks:
     # ------------------------------------------------------------------
@@ -127,7 +117,7 @@
           Authorization: "Bearer {{ dns_session_token }}"
         status_code: [200]
       register: zone_create_results
-      loop: "{{ dns_zones }}"
+      loop: "{{ effective_dns_zones }}"
       loop_control:
         label: "{{ item.name }} ({{ item.type }})"
       when: item.name not in existing_zones
@@ -159,7 +149,7 @@
       register: record_add_results
       failed_when: record_add_results.json.status != "ok"
                     and "record already exists" not in (record_add_results.json.errorMessage | default(""))
-      loop: "{{ dns_zones | subelements('records') }}"
+      loop: "{{ effective_dns_zones | subelements('records') }}"
       loop_control:
         label: "{{ item[1].name }}.{{ item[0].name }}"
 
@@ -169,7 +159,7 @@
     - name: Verify DNS resolution
       ansible.builtin.shell:
         cmd: |
-          {% for zone in dns_zones %}
+          {% for zone in effective_dns_zones %}
           {% for record in zone.records %}
           echo "{{ record.name }}.{{ zone.name }} -> $(dig +short @{{ ansible_host }} {{ record.name }}.{{ zone.name }} 2>/dev/null || echo 'FAILED')"
           {% endfor %}
