@@ -16,13 +16,13 @@ on targets the `workstations` group (`ansible/inventory/workstations.yml`,
 executes them by accident. `workstation-maintenance.yml` is the worked example.
 
 **Ansible is the codification target of the automation ladder for system-state work.**
-When `scripts/automation-ladder.py` offers to codify a repeated task and that task changes
+When `bin/automation-ladder.py` offers to codify a repeated task and that task changes
 the state of any system (remote or local), the script rung of the ladder IS an Ansible
 playbook/role — plain shell/python scripts are reserved for repo/dev workflow (git,
 tickets, docs, lifecycle). repetition → skill → **ansible playbook** → MCP tool.
 
 **If you find yourself doing something manually a second time, stop — write the playbook
-first** (and journal it: `python3 scripts/automation-ladder.py log --task <slug>`).
+first** (and journal it: `python3 bin/automation-ladder.py log --task <slug>`).
 
 **No exceptions except:** read-only probes (curl/ping/dig), active incident response (playbook
 required same session), and initial Ansible bootstrap.
