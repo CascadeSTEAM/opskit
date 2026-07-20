@@ -20,3 +20,5 @@ numbering consistent. Run `bin/idea.py --help` for full usage.
 
 | Date | Desire (1-5) | Title | Description | Status | GH# |
 |------|--------------|-------|-------------|--------|-----|
+| 2026-07-20 | 3 | opskit init: refuse case-insensitive duplicate env names | init scaffolded an uppercase twin of an existing environment; it should detect case-insensitive collisions and refuse (or offer to adopt the existing env) | new |  |
+| 2026-07-20 | 4 | flag inventory hosts missing device YAMLs | generic check: every host in an environment inventory should have a datasets/devices YAML; scan or a lint command should report gaps | new |  |
