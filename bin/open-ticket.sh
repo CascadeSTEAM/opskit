@@ -92,11 +92,21 @@ echo -e "${CYAN}Creating ticket on $HELPDESK...${NC}"
 echo "  Subject: $SUBJECT"
 echo "  Raised by: $OPERATOR_EMAIL"
 
-TICKET_ID=$(python3 - <<PYEOF
+# Values are passed via environment (not bash interpolation) so the Python
+# code is immune to quotes/newlines in the subject and tenant handling stays
+# entirely in Python.
+TICKET_EXIT=0
+TICKET_ID=$(HELPDESK_TENANT="$HELPDESK_TENANT" \
+    HELPDESK_ENDPOINT="$HELPDESK_ENDPOINT" \
+    TICKET_SUBJECT="$SUBJECT" \
+    TICKET_DESCRIPTION="$DESCRIPTION" \
+    OPERATOR_EMAIL="$OPERATOR_EMAIL" \
+    python3 - <<'PYEOF'
 import os, sys, json, requests
 
-password = os.environ.get(f"ERPNEXT_ADMIN_PASSWORD_{HELPDESK_TENANT.upper()}" if "$HELPDESK_TENANT" else "ERPNEXT_ADMIN_PASSWORD", "")
-host = "$HELPDESK_ENDPOINT"
+tenant = os.environ.get("HELPDESK_TENANT", "")
+password = os.environ.get(f"ERPNEXT_ADMIN_PASSWORD_{tenant.upper()}" if tenant else "ERPNEXT_ADMIN_PASSWORD", "")
+host = os.environ.get("HELPDESK_ENDPOINT", "")
 
 if not password:
     print("ERROR: ERPNext admin password not set in env", file=sys.stderr)
@@ -108,8 +118,10 @@ try:
                   json={"usr": "Administrator", "pwd": password}, timeout=10)
     resp.raise_for_status()
     ticket = s.post(f"{host}/api/resource/HD Ticket",
-                    json={"subject": "$SUBJECT", "description": "$DESCRIPTION",
-                          "raised_by": "$OPERATOR_EMAIL", "status": "Open", "priority": "Medium"},
+                    json={"subject": os.environ.get("TICKET_SUBJECT", ""),
+                          "description": os.environ.get("TICKET_DESCRIPTION", ""),
+                          "raised_by": os.environ.get("OPERATOR_EMAIL", ""),
+                          "status": "Open", "priority": "Medium"},
                     timeout=15)
     ticket.raise_for_status()
     tid = ticket.json().get("data", {}).get("name", "")
@@ -121,9 +133,7 @@ except Exception as e:
     print(f"ERROR: {e}", file=sys.stderr)
     sys.exit(1)
 PYEOF
-)
-
-TICKET_EXIT=$?
+) || TICKET_EXIT=$?
 if [ "$TICKET_EXIT" -ne 0 ] || [ -z "${TICKET_ID:-}" ]; then
     echo -e "${RED}Ticket creation failed.${NC}"
     echo "Falling back to local tracking."
