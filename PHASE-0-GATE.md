@@ -12,4 +12,4 @@ From the [opskit umbrella plan](https://github.com/CascadeSTEAM/opskit/blob/main
 - [ ] `.gitignore` guarantees: `environments/*/` ignored except `environments/example/`; `customer/` ignored; `data/` ignored
 - [ ] CI green: gitleaks, shellcheck, ansible-lint, pytest
 - [ ] Credentials rotated: zabbix-management.skill plaintext, S1 (Zabbix admin in git), S2 (Zabbix PSK in git)
-- [ ] Fresh git history (no import from predecessor-ops-repo)
+- [ ] Fresh git history (no import from the predecessor private ops repo)

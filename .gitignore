@@ -59,3 +59,7 @@ gitleaks-report.json
 
 # Claude Code machine-local settings (permission allowlists etc.) — never commit
 .claude/settings.local.json
+
+# Client-data isolation (docs/client-data-policy.md)
+.client-tokens
+mcp/*.local.json

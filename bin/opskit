@@ -147,7 +147,7 @@ def cmd_init(args):
             sys.exit(1)
         display = input("  Display name (press Enter for default): ").strip()
         subnets = input("  Subnets (CIDRs, comma-separated, e.g. 192.168.1.0/24): ").strip()
-        ticket = input("  Ticket prefix (e.g. CLIENT1, or press Enter for auto): ").strip()
+        ticket = input("  Ticket prefix (e.g. ACME, or press Enter for auto): ").strip()
         args.display_name = display or None
         args.subnets = subnets or None
         args.ticket_prefix = ticket or None
@@ -652,7 +652,7 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
     pi.add_argument('name', nargs='?', help='environment name (slug) — prompts interactively if omitted')
     pi.add_argument('--display-name', help='human-readable name')
     pi.add_argument('--subnets', help='comma-separated CIDR ranges (e.g. "10.0.0.0/24,192.168.1.0/24")')
-    pi.add_argument('--ticket-prefix', help='helpdesk ticket prefix (e.g. "CLIENT1")')
+    pi.add_argument('--ticket-prefix', help='helpdesk ticket prefix (e.g. "ACME")')
 
     # scan
     ps = sub.add_parser('scan', help='full network scan pipeline')

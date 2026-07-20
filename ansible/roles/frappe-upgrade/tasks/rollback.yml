@@ -80,6 +80,6 @@
       - ""
       - "REQUIRED ACTIONS:"
       - "  1. Investigate the failure in the Ansible output above."
-      - "  2. Add findings to CS-0024 and {{ client1_coordination_ticket | default('CLIENT1 ticket') }}."
+      - "  2. Add findings to CS-0024 and {{ client_coordination_ticket | default('client ticket') }}."
       - "  3. Do NOT retry without root-cause analysis."
       - "================================================================"
