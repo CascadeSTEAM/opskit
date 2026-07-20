@@ -75,7 +75,7 @@ Always use `@skill-builder` for new skills — enforces 4-field frontmatter and 
 **Domain enforcement:** These agents have runtime-enforced tool permissions. `@mikrotik` has `relay-shell_*` denied at the OpenCode runtime level, and `@linux` has `mikromcp_*` denied.
 
 ## Skills (load with: opencode tool skill use <name>)
-`lifecycle` | `git` | `security` | `backup` | `infra` | `check-connectivity` | `templates` | `tools` | `endsession`
+`lifecycle` | `git` | `security` | `backup` | `infra` | `check-connectivity` | `templates` | `tools` | `endsession` | `idea-triage`
 
 Load the relevant skill before working in its domain.
 
@@ -84,8 +84,11 @@ Load the relevant skill before working in its domain.
 Set by the project owner; they apply to every session, not per-task.
 
 1. **Never lose an idea.** An idea that surfaces in conversation and isn't acted
-   on immediately gets captured before the session ends — as an `issues/` file
-   (lifecycle entry point) or a helpdesk ticket, whichever fits.
+   on immediately gets captured before the session ends — cheapest first:
+   `bin/idea.py add --desire 1..5 --title "..." --desc "..."` (ledger row in
+   `docs/ideas.md`), or an `issues/` file / helpdesk ticket if it's already
+   concrete work. Ledger rows become GitHub issues only at triage time — load
+   the `idea-triage` skill for that deliberate pass.
 
 2. **Escalate repetition into automation.** Manual work climbs a ladder —
    `bin/automation-ladder.py` measures each rung:
@@ -120,6 +123,12 @@ For sessions requiring tool use, select a T1 or T2 model explicitly.
 - systemd units run with `NoNewPrivileges=true`
 - One-off tasks bypassing `plans/` are rejected
 - Credentials referenced by vault name only — never plaintext. See `.opencode/rules/no-plaintext-creds.md`.
+
+## Incident Recovery
+
+A merged PR that breaks the suite or the tooling → follow `ROLLBACK.md`
+(rollback / investigate / hotfix). The post-incident step is mandatory: every
+rollback produces a regression test (or guard) and prevention notes.
 
 ## Session Artifacts
 Both must be updated at session end — do not skip:
