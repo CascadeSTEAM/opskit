@@ -20,7 +20,8 @@
 #   ALLOW_CLIENT_TOKENS=1 skip checks 2 and 3
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# OPSKIT_ROOT override exists for tests (point at a temp repo root).
+REPO_ROOT="${OPSKIT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$REPO_ROOT"
 
 RFC1918='\b(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})\b'
@@ -100,7 +101,7 @@ if [ "${ALLOW_CLIENT_TOKENS:-0}" != "1" ]; then
     ADDED_NON_ENV=$(git diff "${DIFF_ARGS[@]}" -U0 --diff-filter=ACM -- ':!environments' | grep -E '^\+' | grep -vE '^\+\+\+' || true)
     for tok in $(collect_tokens); do
         tok_hits=$(echo "$ADDED_NON_ENV" | grep -icE "\b${tok}\b" || true)
-        path_hits=$(echo "$CHANGED_PATHS" | grep -v '^environments/' | grep -icE "${tok}" || true)
+        path_hits=$(echo "$CHANGED_PATHS" | grep -v '^environments/' | grep -icE "\b${tok}\b" || true)
         if [ "$tok_hits" -gt 0 ] || [ "$path_hits" -gt 0 ]; then
             echo "ERROR: Changes contain the client token '${tok}' (${tok_hits} content line(s), ${path_hits} path(s))."
             echo "Client-identifying information must never be published — see docs/client-data-policy.md."
