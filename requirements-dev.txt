@@ -1,0 +1,5 @@
+# Development/test dependencies — the single list used by `make test`
+# locally AND by CI, so the two cannot drift (issue #19).
+pytest>=8,<9
+pyyaml>=6,<7
+jsonschema>=4,<5
