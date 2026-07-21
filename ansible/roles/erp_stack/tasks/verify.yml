@@ -1,0 +1,21 @@
+---
+# Verify: every site answers over HTTP through the frontend on this host.
+
+- name: Probe each site through the frontend
+  ansible.builtin.uri:
+    url: "http://localhost:{{ erp_stack_http_port }}{{ erp_stack_verify_path }}"
+    headers:
+      Host: "{{ item }}"
+    status_code: 200
+    timeout: 10
+  loop: "{{ erp_stack_sites }}"
+  register: erp_stack_probe
+  retries: "{{ erp_stack_verify_retries }}"
+  delay: "{{ erp_stack_verify_delay }}"
+  until: erp_stack_probe is success
+
+- name: Report stack status
+  ansible.builtin.debug:
+    msg: >-
+      {{ erp_stack_name }} is serving {{ erp_stack_sites | join(', ') }}
+      from {{ erp_stack_image }} on port {{ erp_stack_http_port }}.

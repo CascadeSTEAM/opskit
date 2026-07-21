@@ -1,0 +1,35 @@
+---
+# Sites: create any site in erp_stack_sites that doesn't exist yet, installing
+# erp_stack_site_apps into it. Existing sites are never touched.
+
+- name: Check which sites already exist
+  ansible.builtin.stat:
+    path: "{{ erp_stack_data_root }}/sites/{{ item }}"
+  loop: "{{ erp_stack_sites }}"
+  register: erp_stack_site_dirs
+
+- name: Create missing sites
+  ansible.builtin.command:
+    cmd: >-
+      docker compose -f {{ erp_stack_compose_file }} exec -T backend
+      bench new-site {{ item.item }}
+      --db-root-password {{ erp_stack_db_root_password }}
+      --admin-password {{ erp_stack_admin_password }}
+      {% for app in erp_stack_site_apps %}--install-app {{ app }} {% endfor %}
+  loop: "{{ erp_stack_site_dirs.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: not item.stat.exists
+  no_log: true   # command line carries both vaulted passwords
+  register: erp_stack_new_sites
+  changed_when: true
+
+- name: Report created sites
+  ansible.builtin.debug:
+    msg: >-
+      Created site {{ item.item.item }} with apps:
+      {{ erp_stack_site_apps | join(', ') | default('none', true) }}
+  loop: "{{ erp_stack_new_sites.results }}"
+  loop_control:
+    label: "{{ item.item.item }}"
+  when: item is not skipped

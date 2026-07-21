@@ -1,0 +1,53 @@
+---
+# Deploy: bind-mount directories, compose file, pull, up.
+
+- name: Create bind-mount data directories
+  ansible.builtin.file:
+    path: "{{ erp_stack_data_root }}/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - db-data
+    - redis-queue-data
+
+# The frappe containers run as uid/gid 1000 — a root-owned sites mount makes
+# the configurator fail on `> sites/apps.txt` (permission denied) and the
+# whole stack stalls. db/redis chown their own dirs; frappe does not.
+- name: Create the sites bind mount owned by the frappe user
+  ansible.builtin.file:
+    path: "{{ erp_stack_data_root }}/sites"
+    state: directory
+    mode: "0755"
+    owner: "{{ erp_stack_frappe_uid }}"
+    group: "{{ erp_stack_frappe_gid }}"
+
+- name: Render the compose file
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ erp_stack_compose_file }}"
+    mode: "0600"
+  no_log: true   # rendered file embeds the MariaDB root password
+  register: erp_stack_compose_rendered
+
+- name: Pull the stack images
+  ansible.builtin.command:
+    cmd: docker compose -f {{ erp_stack_compose_file }} pull --quiet
+  register: erp_stack_pull
+  changed_when: erp_stack_pull.stderr is search('Pulled|Downloaded')
+
+- name: Bring the stack up
+  ansible.builtin.command:
+    cmd: docker compose -f {{ erp_stack_compose_file }} up -d --remove-orphans
+  register: erp_stack_up
+  changed_when: erp_stack_up.stderr is search('Started|Created|Recreated')
+
+- name: Wait for the backend container to be running
+  ansible.builtin.command:
+    cmd: >-
+      docker compose -f {{ erp_stack_compose_file }} ps backend
+      --format '{{ "{{" }}.State{{ "}}" }}'
+  register: erp_stack_backend_state
+  until: erp_stack_backend_state.stdout is search('running')
+  retries: "{{ erp_stack_verify_retries }}"
+  delay: "{{ erp_stack_verify_delay }}"
+  changed_when: false

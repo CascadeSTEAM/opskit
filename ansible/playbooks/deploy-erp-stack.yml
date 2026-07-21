@@ -1,0 +1,19 @@
+---
+# deploy-erp-stack.yml — deploy or upgrade a Frappe/ERPNext compose stack.
+#
+# Stack parameters (image use-case, tag, sites, port) come from the target
+# host's group_vars in the active environment; secrets come from vaulted
+# group_vars. See ansible/roles/erp_stack/README.md for a worked example.
+#
+# Usage:
+#   ansible-playbook playbooks/deploy-erp-stack.yml -l acme-erp --ask-vault-pass
+#   ansible-playbook playbooks/deploy-erp-stack.yml -l acme-erp \
+#     -e erp_stack_image_tag=v16.2.1 --ask-vault-pass          # image upgrade
+#   ansible-playbook playbooks/deploy-erp-stack.yml -l acme-erp \
+#     --tags verify                                            # health check only
+
+- name: Deploy ERP stack
+  hosts: "{{ erp_stack_hosts | default('erp_stacks') }}"
+  gather_facts: false
+  roles:
+    - erp_stack
