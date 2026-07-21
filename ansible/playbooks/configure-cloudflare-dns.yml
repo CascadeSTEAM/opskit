@@ -1,0 +1,90 @@
+---
+# configure-cloudflare-dns.yml — declaratively manage DNS records in Cloudflare
+# zones. The public-DNS counterpart to configure-dns-zones.yml (Technitium /
+# split-horizon): one playbook, data-driven from the active environment.
+#
+# Data model (environment group_vars: environments/<env>/ansible/group_vars/
+# cloudflare_api/vars.yml):
+#
+#   cloudflare_zones:
+#     - zone: example.org
+#       records:
+#         - { name: www, type: A, value: 203.0.113.10, proxied: false }
+#
+# Secrets (ansible-vault encrypted: group_vars/cloudflare_api/vault.yml):
+#
+#   vault_cloudflare_tokens:
+#     example.org: "<scoped API token: Zone.DNS edit, that zone only>"
+#
+# One token per zone because client zones may live in separate, dedicated
+# Cloudflare accounts. Create tokens in the owning account:
+# dash.cloudflare.com -> My Profile -> API Tokens -> Create Token ->
+# "Edit zone DNS" template -> scope to the zone.
+#
+# The playbook targets the `cloudflare_api` inventory group — a local pseudo-
+# host so environment group_vars load normally:
+#
+#   cloudflare_api:
+#     hosts:
+#       cloudflare-api:
+#         ansible_connection: local
+#
+# Usage:
+#   ansible-playbook playbooks/configure-cloudflare-dns.yml \
+#     -i environments/<env>/ansible/inventory.yml \
+#     --vault-password-file ~/.config/opskit/vault-pass-<env>
+#
+# Requires the community.general collection (community.general.cloudflare_dns).
+# proxied: false (grey cloud) is the default and the right choice for records
+# that must pass ACME HTTP-01 validation directly (Caddy / Let's Encrypt).
+
+- name: Manage Cloudflare DNS records
+  hosts: cloudflare_api
+  gather_facts: false
+
+  tasks:
+    - name: Assert zone data and tokens are present
+      ansible.builtin.assert:
+        that:
+          - cloudflare_zones is defined
+          - cloudflare_zones | length > 0
+          - vault_cloudflare_tokens is defined
+        fail_msg: >-
+          Define cloudflare_zones in the environment's group_vars and
+          vault_cloudflare_tokens in its vaulted group_vars (see the header
+          of this playbook for the data model).
+        quiet: true
+
+    - name: Assert every zone has a token
+      ansible.builtin.assert:
+        that: vault_cloudflare_tokens[item.zone] is defined
+        fail_msg: "No vault_cloudflare_tokens entry for zone {{ item.zone }}"
+        quiet: true
+      loop: "{{ cloudflare_zones }}"
+      loop_control:
+        label: "{{ item.zone }}"
+
+    - name: Ensure DNS records
+      community.general.cloudflare_dns:
+        api_token: "{{ vault_cloudflare_tokens[item.0.zone] }}"
+        zone: "{{ item.0.zone }}"
+        record: "{{ item.1.name }}"
+        type: "{{ item.1.type | default('A') }}"
+        value: "{{ item.1.value }}"
+        proxied: "{{ item.1.proxied | default(false) }}"
+        ttl: "{{ item.1.ttl | default(1) }}"   # 1 = automatic
+        state: "{{ item.1.state | default('present') }}"
+        solo: "{{ item.1.solo | default(false) }}"
+      loop: "{{ cloudflare_zones | subelements('records') }}"
+      loop_control:
+        label: "{{ item.1.name }}.{{ item.0.zone }} {{ item.1.type | default('A') }}"
+
+    - name: Show resulting records
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.1.name }}.{{ item.0.zone }} ->
+          {{ item.1.type | default('A') }} {{ item.1.value }}
+          (proxied: {{ item.1.proxied | default(false) }})
+      loop: "{{ cloudflare_zones | subelements('records') }}"
+      loop_control:
+        label: "{{ item.1.name }}.{{ item.0.zone }}"

@@ -67,3 +67,6 @@ mcp/*.local.json
 .current-ticket
 *.bundle
 .ansible/
+
+# vendored ansible collections (ansible-galaxy install -p ./)
+ansible_collections/
