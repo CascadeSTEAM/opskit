@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -sT">
+  <host>
+    <status state="up"/>
+    <address addr="192.0.2.10" addrtype="ipv4"/>
+    <address addr="AA:BB:CC:00:00:10" addrtype="mac" vendor="Example"/>
+    <ports>
+      <port protocol="tcp" portid="22">
+        <state state="open"/>
+        <service name="ssh"/>
+      </port>
+      <port protocol="tcp" portid="80">
+        <state state="closed"/>
+        <service name="http"/>
+      </port>
+    </ports>
+  </host>
+  <host>
+    <status state="up"/>
+    <address addr="192.0.2.11" addrtype="ipv4"/>
+    <address addr="AA:BB:CC:00:00:11" addrtype="mac" vendor="Example"/>
+    <ports>
+      <port protocol="tcp" portid="443">
+        <state state="open"/>
+        <service name="https"/>
+      </port>
+    </ports>
+  </host>
+  <host>
+    <status state="up"/>
+    <address addr="192.0.2.20" addrtype="ipv4"/>
+    <address addr="AA:BB:CC:00:00:20" addrtype="mac" vendor="Example"/>
+    <ports>
+      <port protocol="tcp" portid="22">
+        <state state="open"/>
+        <service name="ssh"/>
+      </port>
+    </ports>
+  </host>
+</nmaprun>

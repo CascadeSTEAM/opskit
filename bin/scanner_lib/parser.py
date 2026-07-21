@@ -115,6 +115,11 @@ def parse_portscan(xml_path: str, existing_hosts: Optional[list[dict]] = None) -
         if ip not in existing_by_ip:
             hosts.append(device)
 
+    # When merging into discovery results, existing hosts were enriched in
+    # place above; return the full set (existing + any newly-seen) so hosts
+    # present in discovery but absent from the portscan XML are not dropped.
+    if existing_hosts is not None:
+        return existing_hosts + hosts
     return hosts
 
 
