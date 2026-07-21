@@ -44,4 +44,5 @@ environments directory are both absent (fresh clone building the tool).
 
 Real environment data (`environments/<env>/`) never touches this repo, but it
 still needs a durable, access-controlled home shared between the operating
-team and the client — see `proposals/secure-environment-storage.md`.
+team and the client — per-env private repos behind SSO, synced with
+`bin/env-sync.sh`; see `docs/environment-storage.md`.
