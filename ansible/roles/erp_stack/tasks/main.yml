@@ -1,0 +1,45 @@
+---
+# erp_stack — deploy/upgrade a Frappe/ERPNext Docker Compose stack.
+# Distilled from a prior production cutover playbook into a reusable role.
+# Run a phase alone with its tag: preflight, deploy, sites, migrate, verify.
+#
+# Each include needs BOTH the tags on the include task (so --tags matches it)
+# AND apply: tags (so the dynamically included tasks inherit them —
+# include_tasks does not propagate tags on its own).
+
+- name: "Phase 1 | Pre-flight validation"
+  ansible.builtin.include_tasks:
+    file: preflight.yml
+    apply:
+      tags: [preflight, phase1]
+  tags: [preflight, phase1]
+
+- name: "Phase 2 | Render compose file, pull image, bring the stack up"
+  ansible.builtin.include_tasks:
+    file: deploy.yml
+    apply:
+      tags: [deploy, phase2]
+  tags: [deploy, phase2]
+
+- name: "Phase 3 | Create missing sites"
+  ansible.builtin.include_tasks:
+    file: sites.yml
+    apply:
+      tags: [sites, phase3]
+  when: erp_stack_create_sites | bool
+  tags: [sites, phase3]
+
+- name: "Phase 4 | Database migration"
+  ansible.builtin.include_tasks:
+    file: migrate.yml
+    apply:
+      tags: [migrate, phase4]
+  when: erp_stack_run_migrate | bool and erp_stack_sites | length > 0
+  tags: [migrate, phase4]
+
+- name: "Phase 5 | Post-deploy verification"
+  ansible.builtin.include_tasks:
+    file: verify.yml
+    apply:
+      tags: [verify, phase5]
+  tags: [verify, phase5]

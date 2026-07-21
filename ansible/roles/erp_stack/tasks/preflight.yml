@@ -1,0 +1,45 @@
+---
+# Pre-flight: required vars present, Docker usable, registry auth in place.
+
+- name: Assert required variables are defined
+  ansible.builtin.assert:
+    that:
+      - erp_stack_db_root_password is defined
+      - erp_stack_use_case is defined
+      - erp_stack_image_tag is defined
+    fail_msg: >-
+      erp_stack_db_root_password must come from vaulted group_vars
+      (see role README). Never pass it on the command line.
+    quiet: true
+
+- name: Assert site-creation prerequisites
+  ansible.builtin.assert:
+    that:
+      - erp_stack_admin_password is defined
+      - erp_stack_sites | length > 0
+    fail_msg: >-
+      erp_stack_create_sites is true, which requires erp_stack_admin_password
+      (vaulted) and at least one entry in erp_stack_sites.
+    quiet: true
+  when: erp_stack_create_sites | bool
+
+- name: Check Docker is available
+  ansible.builtin.command:
+    cmd: docker info --format '{{ "{{" }}.ServerVersion{{ "}}" }}'
+  register: erp_stack_docker_info
+  changed_when: false
+
+- name: Check registry credentials for {{ erp_stack_registry }}
+  ansible.builtin.command:
+    cmd: docker manifest inspect {{ erp_stack_image }}
+  register: erp_stack_manifest
+  changed_when: false
+  failed_when: false
+
+- name: Fail with a hint when the image is not pullable
+  ansible.builtin.fail:
+    msg: >-
+      Cannot access {{ erp_stack_image }} — either the tag was never built
+      (check your image pipeline CI) or this host lacks registry credentials
+      (run playbooks/configure-ghcr-auth.yml first).
+  when: erp_stack_manifest.rc != 0

@@ -1,0 +1,54 @@
+---
+# erp-stack role defaults — deploy or upgrade a Frappe/ERPNext Docker Compose
+# stack on a Docker host. Override per environment/host in
+# environments/<env>/ group_vars.
+#
+# REQUIRED (no default, define in vaulted group_vars — never plain text):
+#   erp_stack_db_root_password   MariaDB root password for the stack
+#   erp_stack_admin_password     only when erp_stack_create_sites is true
+
+# Image to run: {{ registry }}/erp-{{ use_case }}:{{ tag }}
+# Use cases map to your image pipeline's variants (use-cases/<name>/apps.json).
+# Override the registry per environment; the default is this org's GHCR.
+erp_stack_registry: ghcr.io/cascadesteam
+erp_stack_use_case: main
+erp_stack_image_tag: latest
+erp_stack_image: "{{ erp_stack_registry }}/erp-{{ erp_stack_use_case }}:{{ erp_stack_image_tag }}"
+
+# Compose project name; also names the data/compose directory on the host.
+erp_stack_name: "{{ erp_stack_use_case }}-erpnext"
+erp_stack_data_root: "/opt/{{ erp_stack_name }}"
+erp_stack_compose_file: "{{ erp_stack_data_root }}/compose.yml"
+
+# Host port the nginx frontend publishes.
+erp_stack_http_port: 8080
+
+# Sites served by this bench, e.g. [erp.example.org].
+# Used for bench migrate, site creation, and HTTP verification.
+erp_stack_sites: []
+
+# Create any missing sites (bench new-site) and install these apps into them.
+erp_stack_create_sites: false
+erp_stack_site_apps: []        # e.g. [erpnext, builder, raven]
+
+# Run bench migrate after deploy — the safe default for image upgrades.
+erp_stack_run_migrate: true
+
+# HTTP verification (per site, with Host header, against localhost:http_port).
+erp_stack_verify_path: /api/method/ping
+erp_stack_verify_retries: 30
+erp_stack_verify_delay: 5
+
+# uid/gid the frappe user runs as inside the image — owns the sites mount.
+erp_stack_frappe_uid: 1000
+erp_stack_frappe_gid: 1000
+
+# Supporting service images.
+erp_stack_mariadb_image: mariadb:11.8
+erp_stack_redis_image: redis:8.6-alpine
+
+# Gunicorn / nginx tuning.
+erp_stack_gunicorn_workers: 2
+erp_stack_gunicorn_threads: 4
+erp_stack_gunicorn_timeout: 120
+erp_stack_client_max_body_size: 50m
