@@ -28,8 +28,11 @@ services:
     <<: *erp_service
     entrypoint: ["bash", "-c"]
     command:
+      # A fresh bind-mounted sites/ dir is empty (unlike a named volume, which
+      # copies the image's sites/ content on first use) — seed
+      # common_site_config.json or every bench set-config below fails.
       - |
-        ls -1 apps > sites/apps.txt; bench set-config -g db_host $$DB_HOST; bench set-config -gp db_port $$DB_PORT; bench set-config -g redis_cache "redis://$$REDIS_CACHE"; bench set-config -g redis_queue "redis://$$REDIS_QUEUE"; bench set-config -g redis_socketio "redis://$$REDIS_QUEUE"; bench set-config -gp socketio_port $$SOCKETIO_PORT; bench set-config -g chromium_path /usr/bin/chromium-headless-shell;
+        ls -1 apps > sites/apps.txt; [ -f sites/common_site_config.json ] || echo "{}" > sites/common_site_config.json; bench set-config -g db_host $$DB_HOST; bench set-config -gp db_port $$DB_PORT; bench set-config -g redis_cache "redis://$$REDIS_CACHE"; bench set-config -g redis_queue "redis://$$REDIS_QUEUE"; bench set-config -g redis_socketio "redis://$$REDIS_QUEUE"; bench set-config -gp socketio_port $$SOCKETIO_PORT; bench set-config -g chromium_path /usr/bin/chromium-headless-shell;
     environment:
       DB_HOST: db
       DB_PORT: "3306"
