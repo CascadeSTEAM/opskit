@@ -58,7 +58,7 @@ services:
     environment:
       BACKEND: backend:8000
       SOCKETIO: websocket:9000
-      FRAPPE_SITE_NAME_HEADER: $$host
+      FRAPPE_SITE_NAME_HEADER: {{ erp_stack_site_name_header }}
       CLIENT_MAX_BODY_SIZE: {{ erp_stack_client_max_body_size }}
       PROXY_READ_TIMEOUT: "{{ erp_stack_gunicorn_timeout }}"
       UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1

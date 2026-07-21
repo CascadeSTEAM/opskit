@@ -23,6 +23,12 @@ erp_stack_compose_file: "{{ erp_stack_data_root }}/compose.yml"
 # Host port the nginx frontend publishes.
 erp_stack_http_port: 8080
 
+# Which site the nginx frontend serves. "$$host" (default) resolves the site
+# from the request Host header — right for multi-site frontends. For a single
+# site that must answer on several hostnames (apex + www + subdomain), set this
+# to the literal site name so every Host maps to that one site.
+erp_stack_site_name_header: "$$host"
+
 # Sites served by this bench, e.g. [erp.example.org].
 # Used for bench migrate, site creation, and HTTP verification.
 erp_stack_sites: []
