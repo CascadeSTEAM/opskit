@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -sn">
+  <host>
+    <status state="up"/>
+    <address addr="192.0.2.10" addrtype="ipv4"/>
+    <address addr="AA:BB:CC:00:00:10" addrtype="mac" vendor="Example"/>
+    <hostnames><hostname name="host-a" type="PTR"/></hostnames>
+  </host>
+  <host>
+    <status state="up"/>
+    <address addr="192.0.2.11" addrtype="ipv4"/>
+    <address addr="AA:BB:CC:00:00:11" addrtype="mac" vendor="Example"/>
+    <hostnames/>
+  </host>
+  <host>
+    <status state="up"/>
+    <address addr="192.0.2.12" addrtype="ipv4"/>
+    <address addr="AA:BB:CC:00:00:12" addrtype="mac" vendor="Example"/>
+    <hostnames/>
+  </host>
+</nmaprun>
