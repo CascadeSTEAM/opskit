@@ -1,5 +1,7 @@
 """Schema validation tests for opskit environment contract."""
 import json
+import subprocess
+
 import yaml
 from pathlib import Path
 from typing import Any
@@ -129,7 +131,18 @@ class TestDirectoryContract:
             assert full.exists(), f"Required path missing: {path}"
 
     def test_no_real_environment_leaks(self):
-        """Only environments/example/ should exist in git."""
-        envs_dir = ROOT / "environments"
-        env_dirs = [d for d in envs_dir.iterdir() if d.is_dir() and d.name != "example"]
-        assert not env_dirs, f"Real environment directories found: {env_dirs}"
+        """Only environments/example/ may be tracked in git.
+
+        Checks the git index, not the working tree — real environments are
+        expected to exist locally (gitignored); the contract is that git
+        never tracks them.
+        """
+        tracked = subprocess.run(
+            ["git", "ls-files", "environments/"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+        leaked = [p for p in tracked if not p.startswith("environments/example/")]
+        assert not leaked, f"Real environment files tracked in git: {leaked}"
