@@ -7,7 +7,7 @@ ROLLBACK.md.)
 Full test gate referenced below:
 
 ```bash
-.venv/bin/python -m pytest tests/
+make test
 ```
 
 ## Quick diagnosis: Is this a real blocker?
@@ -15,7 +15,7 @@ Full test gate referenced below:
 1. **Reproduce locally:**
    ```bash
    git fetch --all --prune && git pull
-   .venv/bin/python -m pytest tests/
+   make test
    ```
    If tests pass, the issue might be environment-specific (missing dependency,
    flaky test). Move to Procedure 2.
@@ -31,7 +31,7 @@ Full test gate referenced below:
 git log --oneline main | head -10        # find the merge commit of the broken PR
 git revert -m 1 <merge-commit>           # -m 1 keeps main, discards the PR branch
 git push origin main
-.venv/bin/python -m pytest tests/        # verify recovery
+make test        # verify recovery
 ```
 
 Then comment on the reverted PR: what failed, with the test output, and ask the
@@ -40,7 +40,7 @@ author to investigate and reopen. **Time: ~5 min.**
 ## Procedure 2: Investigate (thoughtful recovery)
 
 ```bash
-.venv/bin/python -m pytest tests/ 2>&1 | tee test-output.log
+make test 2>&1 | tee test-output.log
 git log --oneline -S "<failing symbol>" main | head -5   # did the PR change the code or the test?
 ```
 
@@ -58,7 +58,7 @@ git revert <revert-commit>               # if the revert itself was wrong, rever
 # otherwise:
 git checkout -b hotfix/emergency-fix-main
 # minimal change to get the suite green
-.venv/bin/python -m pytest tests/
+make test
 git push -u origin hotfix/emergency-fix-main
 ```
 

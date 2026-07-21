@@ -45,10 +45,57 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: pytest
+      # CI runs exactly what a developer runs — the Makefile owns the
+      # dependency list and command, so the two cannot drift (issue #19).
+      - name: make test
+        run: make test
+
+  # Server-side backstop for the local publication guards — the same
+  # bin/publication-guard.sh the git hooks call, so a --no-verify commit or a
+  # clone without hooksPath still cannot publish client data. The client-token
+  # list is injected from a repo secret; fork PRs (no secret) still get the
+  # RFC1918 + environment-name checks.
+  guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: publication guards (diff + commit messages)
+        env:
+          CLIENT_TOKENS: ${{ secrets.CLIENT_TOKENS }}
         run: |
-          pip install jsonschema pyyaml pytest
-          pytest tests/ -v
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="origin/${{ github.base_ref }}...HEAD"
+          elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ] && git cat-file -e "${{ github.event.before }}" 2>/dev/null; then
+            RANGE="${{ github.event.before }}...HEAD"
+          else
+            RANGE="HEAD~1...HEAD"
+          fi
+          echo "Checking range: $RANGE"
+          bash bin/publication-guard.sh "$RANGE"
+          bash bin/publication-guard.sh --messages "$RANGE"
+
+  # Warn (never fail) when a PR branch is behind main — stale merges are the
+  # failure class ROLLBACK.md exists to recover from.
+  check-sync:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: behind-main check (warn only)
+        run: |
+          git fetch origin main
+          BEHIND=$(git rev-list --count HEAD..origin/main)
+          if [ "$BEHIND" -gt 0 ]; then
+            echo "::warning::Branch is $BEHIND commit(s) behind main — sync and re-run tests before merging."
+          else
+            echo "Branch is up to date with main."
+          fi
 
   schema-check:
     runs-on: ubuntu-latest
@@ -94,8 +141,7 @@ jobs:
       - name: environment isolation check
         run: |
           git check-ignore environments/example/env.yml && echo "FAIL: example should not be ignored" && exit 1 || echo "PASS: example tracked"
-          echo "test-data" > /tmp/fake-env.yml
-          git check-ignore customer/test-data.yml && echo "PASS: customer/ ignored" || echo "WARN: customer check"
+          git check-ignore environments/fake-env/env.yml && echo "PASS: non-example environments ignored" || { echo "FAIL: real environments must be gitignored"; exit 1; }
 
       - name: verify directory contract
         run: |
