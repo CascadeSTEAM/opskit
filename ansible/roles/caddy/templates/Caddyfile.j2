@@ -4,7 +4,7 @@
 # Global Options
 {
 	email {{ caddy_global_email }}
-	admin 127.0.0.1:2019 {
+	admin {{ caddy_admin_listen }} {
 		origins {{ ansible_default_ipv4.address }}:2019 127.0.0.1:2019 localhost:2019
 	}
 	servers {

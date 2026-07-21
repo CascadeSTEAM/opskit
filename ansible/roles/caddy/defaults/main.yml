@@ -4,6 +4,11 @@ caddy_systemd_service: caddy
 
 caddy_global_email: support@cascadesteam.org
 
+# Admin API bind address. Default is loopback-only; environments that scrape
+# Caddy metrics remotely (binding 0.0.0.0:2019) override this in their
+# group_vars/host_vars.
+caddy_admin_listen: 127.0.0.1:2019
+
 caddy_internal_subnets:
   - 10.99.10.0/24
   - 10.99.20.0/24

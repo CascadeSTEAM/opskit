@@ -1,18 +1,21 @@
 ---
 # Verify: every site answers over HTTP through the frontend on this host.
 
+# curl, not ansible.builtin.uri: uri imports python-cryptography on the
+# target, which explodes on hosts whose system python lacks a matching
+# _cffi_backend (seen in the wild on python3.14). curl has no such dependency.
 - name: Probe each site through the frontend
-  ansible.builtin.uri:
-    url: "http://localhost:{{ erp_stack_http_port }}{{ erp_stack_verify_path }}"
-    headers:
-      Host: "{{ item }}"
-    status_code: 200
-    timeout: 10
+  ansible.builtin.command:
+    cmd: >-
+      curl -fsS -o /dev/null -w '%{http_code}' --max-time 10
+      -H 'Host: {{ item }}'
+      http://localhost:{{ erp_stack_http_port }}{{ erp_stack_verify_path }}
   loop: "{{ erp_stack_sites }}"
   register: erp_stack_probe
   retries: "{{ erp_stack_verify_retries }}"
   delay: "{{ erp_stack_verify_delay }}"
-  until: erp_stack_probe is success
+  until: erp_stack_probe.stdout | default('') == '200'
+  changed_when: false
 
 - name: Report stack status
   ansible.builtin.debug:
