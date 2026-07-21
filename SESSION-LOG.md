@@ -12,6 +12,30 @@ describe tool development, phrased client-agnostically. See
 
 ---
 
+## 2026-07-21 — Storage rollout (option A), reviewer team access, lint in CI
+
+Session note: `docs/session-notes/2026-07-21-storage-rollout-and-lint-ci.md`
+
+**Key decisions:**
+- Environment storage v1 ships as **option A**: one private GitHub repo per
+  environment, mapped in the gitignored `.env-remotes`, synced with
+  `bin/env-sync.sh`. Self-hosted Forgejo behind Authentik remains the later
+  target (migration = mirror push + one map line). Env-repo access is
+  owner-only; the opskit team grant does not extend to env repos.
+- Default PR reviewer is now the `CascadeSTEAM/technology-support` team
+  (granted push access); named-individual fallback.
+- e2e CI now proves the `opskit lint` gate fires (positive + negative test)
+  — issue #29 / PR #30.
+
+**Completed:** first real env layer pushed to its private repo; #29 closed;
+PR #30 merged; tracker and idea ledger both empty; suite 61/61 green.
+
+**Open threads:** ticketed client session (device YAML, context regen,
+semaphore-sync, vault) ending with a real env-sync push; ansible-lint to
+enforcing once roles settle; REVIEW.md port.
+
+---
+
 ## 2026-07-20 (evening) — Backlog cleared: issues #23 + #24
 
 Session note: `docs/session-notes/2026-07-20-backlog-issues-23-24.md`
