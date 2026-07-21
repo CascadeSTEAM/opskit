@@ -62,4 +62,5 @@ gitleaks-report.json
 
 # Client-data isolation (docs/client-data-policy.md)
 .client-tokens
+.env-remotes
 mcp/*.local.json

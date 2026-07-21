@@ -61,6 +61,7 @@ All scripts are data-driven — they read from `environments/$ACTIVE_ENV/env.yml
 | Script | Purpose |
 |--------|---------|
 | `bin/switch-env.sh <env>` | Set ACTIVE_ENV, probe connectivity |
+| `bin/env-sync.sh <env> <action>` | Sync `environments/<env>/` against its private repo (clone/pull/push/status; map in gitignored `.env-remotes`) |
 | `bin/check-connectivity.sh [env]` | Probe all connectivity targets from env.yml |
 | `bin/ap.sh <playbook>` | Run Ansible playbook with `--limit` scoped to ACTIVE_ENV |
 | `bin/open-ticket.sh [subject]` | Manage helpdesk tickets (reads env.yml for prefix/endpoint) |

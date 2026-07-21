@@ -47,6 +47,12 @@ TARGET="$1"
 # ── Validate against discovered environments ──────────────────────────────────
 if [ -z "${ENV_LABELS[$TARGET]:-}" ]; then
     echo -e "${RED}Unknown environment: $TARGET${NC}"
+    # If a private-repo mapping exists (.env-remotes), hint at env-sync — never auto-clone.
+    if [ ! -d "$REPO_ROOT/environments/$TARGET" ] && [ -f "$REPO_ROOT/.env-remotes" ] && \
+       [ -n "$(awk -v env="$TARGET" '$0 !~ /^[[:space:]]*#/ && $1 == env { print $2; exit }' "$REPO_ROOT/.env-remotes")" ]; then
+        echo -e "${YELLOW}A remote mapping for '$TARGET' exists in .env-remotes.${NC}"
+        echo "Clone it first: bin/env-sync.sh $TARGET clone"
+    fi
     echo "Valid: ${!ENV_LABELS[*]}"
     exit 1
 fi
