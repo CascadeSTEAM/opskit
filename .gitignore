@@ -66,3 +66,4 @@ gitleaks-report.json
 mcp/*.local.json
 .current-ticket
 *.bundle
+.ansible/
