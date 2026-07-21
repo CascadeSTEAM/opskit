@@ -6,6 +6,7 @@ opskit — unified CLI for network operations.
   opskit env my-env                                switch to environment
   opskit scan                                      full scan pipeline
   opskit status                                    inventory summary
+  opskit lint                                      inventory vs device YAML check
   opskit setup-completion bash                     install tab completion
 
 Every command reads from environments/<env>/env.yml.  No hardcoded hostnames.
@@ -457,6 +458,55 @@ def cmd_env(args):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# lint
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _inventory_hosts(node) -> set[str]:
+    """Recursively collect host names from an Ansible YAML inventory tree."""
+    found: set[str] = set()
+    if not isinstance(node, dict):
+        return found
+    for key, val in node.items():
+        if key == 'hosts' and isinstance(val, dict):
+            found.update(val.keys())
+        elif isinstance(val, dict):
+            found.update(_inventory_hosts(val))
+    return found
+
+
+def cmd_lint(args):
+    env = _resolve_env(args.env)
+    env_dir = _env_path(env)
+    inventory_file = env_dir / 'ansible' / 'inventory.yml'
+    devices_dir = env_dir / 'datasets' / 'devices'
+
+    print(f"  Linting environment: {env}")
+
+    if not inventory_file.exists():
+        print(f"  \033[0;31m✗\033[0m no inventory at environments/{env}/ansible/inventory.yml",
+              file=sys.stderr)
+        sys.exit(1)
+
+    inventory = yaml.safe_load(inventory_file.read_text()) or {}
+    hosts = _inventory_hosts(inventory)
+    device_yamls = {p.stem for p in devices_dir.glob('*.yml')} if devices_dir.exists() else set()
+
+    missing = sorted(hosts - device_yamls)
+    orphans = sorted(device_yamls - hosts)
+
+    for host in missing:
+        print(f"  \033[0;31m✗\033[0m {host}: in inventory but no datasets/devices/{host}.yml")
+    for name in orphans:
+        print(f"  \033[1;33m⚠\033[0m {name}: datasets/devices/{name}.yml has no inventory host")
+
+    covered = len(hosts) - len(missing)
+    print(f"\n  {covered}/{len(hosts)} inventory hosts have device YAML"
+          f"; {len(orphans)} orphan device YAML(s)")
+    if missing:
+        sys.exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # setup-completion
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -471,14 +521,14 @@ _opskit_completion() {{
         init|env)
             COMPREPLY=( $(compgen -W "" -- "$cur") )
             ;;
-        scan|status)
+        scan|status|lint)
             COMPREPLY=( $(compgen -W "--env --dry-run --discover-only --enrich-only --uplinks-only --skip-enrich --skip-uplinks --no-router --fixture" -- "$cur") )
             ;;
         setup-completion)
             COMPREPLY=( $(compgen -W "bash zsh" -- "$cur") )
             ;;
         *)
-            COMPREPLY=( $(compgen -W "init scan status env setup-completion" -- "$cur") )
+            COMPREPLY=( $(compgen -W "init scan status lint env setup-completion" -- "$cur") )
             ;;
     esac
 }}
@@ -489,7 +539,7 @@ COMPLETION_ZSH = """\
 #compdef opskit
 _opskit() {{
     local -a commands
-    commands=(init:'scaffold new environment' scan:'full network scan' status:'inventory summary' env:'switch environment' setup-completion:'install tab completion')
+    commands=(init:'scaffold new environment' scan:'full network scan' status:'inventory summary' lint:'inventory vs device YAML check' env:'switch environment' setup-completion:'install tab completion')
     _describe 'command' commands
     _arguments '--env[environment name]:env:'
 }}
@@ -650,6 +700,7 @@ examples:
   opskit scan                                     discover + enrich + resolve
   opskit scan --dry-run                           preview without touching network
   opskit status                                   inventory summary
+  opskit lint                                     flag inventory hosts missing device YAML
   opskit setup                                    install python deps + hooks
 
   opskit also works without the install:
@@ -692,6 +743,10 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
     pt = sub.add_parser('status', help='inventory summary')
     pt.add_argument('--env', help='environment name (default: ACTIVE_ENV)')
 
+    # lint
+    pl = sub.add_parser('lint', help='check inventory hosts against device YAMLs')
+    pl.add_argument('--env', help='environment name (default: ACTIVE_ENV)')
+
     # env
     pe = sub.add_parser('env', help='show or switch active environment')
     pe.add_argument('name', nargs='?', help='environment name to switch to')
@@ -710,6 +765,8 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
         cmd_scan(args)
     elif args.command == 'status':
         cmd_status(args)
+    elif args.command == 'lint':
+        cmd_lint(args)
     elif args.command == 'env':
         cmd_env(args)
     elif args.command == 'check':
