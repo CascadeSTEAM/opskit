@@ -4,11 +4,36 @@ Strategic index of work sessions on the opskit tool itself: key decisions,
 architectural choices, open threads. Detailed operational notes live in
 `docs/session-notes/`.
 
-**Client-data policy:** sessions operating a *client environment* are logged in
-that environment's gitignored layer — `environments/<env>/session-notes/` —
-never here. This file and `docs/session-notes/` are published; they may only
-describe tool development, phrased client-agnostically. See
-`docs/client-data-policy.md`.
+**Publication policy:** any session touching live infrastructure — a client's
+OR the org's own — is logged in that environment's private layer
+(`environments/<env>/session-notes/`), never here. This file and
+`docs/session-notes/` are published; they may describe *code and tool
+development only, never infrastructure state* (facts leak even when tokens
+don't). See docs/client-data-policy.md, "Facts leak too".
+
+---
+
+## 2026-07-21 (evening) — Session-note publication rule; env work logged privately
+
+Operational session notes for this session live in the relevant private
+environment layers (per the rule adopted below).
+
+**Key decisions:**
+- **New hard rule: public session notes may describe code and tool
+  development only — never infrastructure state** (not even the org's
+  own). Mixed or operational sessions are logged solely in the private
+  env layers; SESSION-LOG entries for them stay terse and state-free.
+  Rationale: token/IP guards cannot catch *facts* (topology, outages,
+  what runs where), and those are the actual intel.
+- Option-A env storage scaled to a second environment (second private
+  repo, two-row `.env-remotes`) with zero tooling changes — pattern holds
+- `opskit init` + wholesale import from a predecessor repo's layer,
+  live-verifying every fact before recording, worked well; `opskit lint`
+  passed its first real multi-env exercise
+- `.current-ticket` is now gitignored (was guard-only protected)
+
+**Tool issues found:** open-ticket.sh helpdesk API integration fails in
+both configured tenants (local fallback works) — needs investigation.
 
 ---
 
@@ -52,8 +77,8 @@ Session note: `docs/session-notes/2026-07-20-backlog-issues-23-24.md`
 **Completed:** issues #23, #24 closed; PRs #27, #28 merged; suite 61/61
 green; issue tracker empty.
 
-**Open threads:** operator actions from the earlier session (support purge,
-stale clones, storage host + `.env-remotes`, team repo access); ledger
+**Open threads:** operator actions from the earlier session (storage host +
+`.env-remotes`, scrub follow-through, team repo access); ledger
 row 3 awaiting triage; flip ansible-lint to enforcing once roles settle.
 
 ---
@@ -81,6 +106,6 @@ Session note: `docs/session-notes/2026-07-20-policy-hardening-and-tooling.md`
 #9, #11, #13, #15, #17, #18, #21, #22, #26 merged; suite 47/47 green.
 
 **Open threads:** #23 (init case-collision guard), #24 (inventory lint);
-GitHub support purge request + re-clone stale machines (operator); storage
+scrub follow-through (operator, tracked privately); storage
 rollout (host choice, per-env repos, `.env-remotes`); grant technology-support
 team repo access; flip ansible-lint to enforcing once roles settle.

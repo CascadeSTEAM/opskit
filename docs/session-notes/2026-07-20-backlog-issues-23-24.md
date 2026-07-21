@@ -48,6 +48,6 @@ None. Both PRs green on first CI run.
 ## Open threads
 
 Issue tracker is empty. Remaining items are operator actions carried from
-the earlier 2026-07-20 session (GitHub support purge, re-clone stale
-machines, storage host choice + `.env-remotes`, technology-support team
+the earlier 2026-07-20 session (storage host choice + `.env-remotes`,
+scrub follow-through per the private recovery note, technology-support team
 access) plus ledger row 3 awaiting triage.
