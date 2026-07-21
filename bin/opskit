@@ -20,8 +20,9 @@ from pathlib import Path
 from typing import Optional
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
-sys.path.insert(0, str(REPO_ROOT))
+# OPSKIT_ROOT override exists for tests (point at a temp repo root).
+REPO_ROOT = Path(os.environ.get('OPSKIT_ROOT') or SCRIPT_DIR.parent)
+sys.path.insert(0, str(SCRIPT_DIR.parent))
 
 import yaml
 
@@ -64,6 +65,17 @@ def _resolve_env(name: str | None) -> str:
         print(f"  Run: opskit init {name} --subnets <cidr,...>", file=sys.stderr)
         sys.exit(1)
     return name
+
+
+def _env_name_collision(name: str) -> Optional[str]:
+    """Return an existing environments/ entry matching name case-insensitively."""
+    ed = REPO_ROOT / 'environments'
+    if not ed.exists():
+        return None
+    for d in ed.iterdir():
+        if d.is_dir() and d.name.lower() == name.lower():
+            return d.name
+    return None
 
 
 def _list_envs() -> list[str]:
@@ -154,6 +166,15 @@ def cmd_init(args):
 
     dest = _env_path(name)
 
+    existing = _env_name_collision(name)
+    if existing and existing != name:
+        # A twin differing only by case is a footgun on case-insensitive
+        # filesystems and confuses env resolution — refuse outright.
+        print(f"ERROR: environments/{existing}/ already exists and differs "
+              f"from '{name}' only by case.", file=sys.stderr)
+        print(f"  Use the existing environment:  opskit env {existing}", file=sys.stderr)
+        print(f"  Or pick a name that is not a case-variant of '{existing}'.", file=sys.stderr)
+        sys.exit(1)
     if dest.exists():
         print(f"ERROR: environments/{name}/ already exists.", file=sys.stderr)
         sys.exit(1)
