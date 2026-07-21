@@ -12,6 +12,28 @@ describe tool development, phrased client-agnostically. See
 
 ---
 
+## 2026-07-20 (evening) — Backlog cleared: issues #23 + #24
+
+Session note: `docs/session-notes/2026-07-20-backlog-issues-23-24.md`
+
+**Key decisions:**
+- `opskit init` refuses case-insensitive duplicate environment names,
+  suggesting the existing env (#23, PR #27); `bin/opskit` gained an
+  `OPSKIT_ROOT` test override matching the env-sync.sh pattern
+- New `opskit lint` subcommand: inventory host without a device YAML is an
+  error, orphan device YAML is a warning (#24, PR #28)
+- Idea ledger row 3 captured (not yet triaged): run `opskit lint` in the
+  CI e2e job
+
+**Completed:** issues #23, #24 closed; PRs #27, #28 merged; suite 61/61
+green; issue tracker empty.
+
+**Open threads:** operator actions from the earlier session (support purge,
+stale clones, storage host + `.env-remotes`, team repo access); ledger
+row 3 awaiting triage; flip ansible-lint to enforcing once roles settle.
+
+---
+
 ## 2026-07-20 — Publication hardening, workflow codification, tooling ports
 
 Session note: `docs/session-notes/2026-07-20-policy-hardening-and-tooling.md`
