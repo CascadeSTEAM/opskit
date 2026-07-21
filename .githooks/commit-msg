@@ -6,25 +6,9 @@ set -euo pipefail
 COMMIT_MSG_FILE="$1"
 COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
 
-# Client-token guard — commit messages are published; they must never contain
-# client-identifying tokens (see docs/client-data-policy.md).
-if [ "${ALLOW_CLIENT_TOKENS:-0}" != "1" ]; then
-    CLIENT_TOKENS=""
-    if [ -d environments ]; then
-        CLIENT_TOKENS=$(find environments -mindepth 1 -maxdepth 1 -type d ! -name example ! -name '.*' -printf '%f\n')
-    fi
-    if [ -f .client-tokens ]; then
-        CLIENT_TOKENS="$CLIENT_TOKENS
-$(grep -vE '^\s*(#|$)' .client-tokens)"
-    fi
-    for tok in $CLIENT_TOKENS; do
-        if echo "$COMMIT_MSG" | grep -qiE "\b${tok}\b"; then
-            echo "ERROR: Commit message contains the client token '${tok}'."
-            echo "Commit messages are published — reference tickets as TKT-<num> and keep client context in the helpdesk."
-            exit 1
-        fi
-    done
-fi
+# Client-token guard — commit messages are published; shared logic lives in
+# bin/publication-guard.sh so local hooks and CI cannot drift.
+bash bin/publication-guard.sh --message-file "$COMMIT_MSG_FILE"
 
 # Detect ACTIVE_ENV from .env (site repo context)
 ACTIVE_ENV=""

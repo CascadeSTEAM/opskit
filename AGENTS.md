@@ -128,8 +128,8 @@ Set by the project owner (2026-07-20). These apply to every session, no exceptio
    Create a linked branch first: `gh issue develop <n> --checkout`. This keeps `main`
    conflict-free and ties the branch to the issue.
 3. **Full test gate before completing an issue.** Before an issue is marked ready, run
-   full testing of the entire application — the whole pytest suite (`.venv/bin/python -m
-   pytest tests/`), `bash -n`/shellcheck on touched scripts, and a functional check of the
+   full testing of the entire application — `make test` (the same command CI
+   runs), `bash -n`/shellcheck on touched scripts, and a functional check of the
    changed behavior — to ensure no regression or new errors were introduced. A failing
    test is fixed, not skipped or deferred; pre-existing unrelated failures get their own
    issue and are named in the PR.
