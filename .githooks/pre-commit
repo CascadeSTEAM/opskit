@@ -24,46 +24,10 @@ for pattern in "${PATTERNS[@]}"; do
     fi
 done
 
-# Private-IP guard — committed files must use documentation ranges (RFC 5737),
-# never real RFC1918 addresses. See docs/local-agent-context.md.
-# Legitimate exception: ALLOW_PRIVATE_IPS=1 git commit ...
-if [ "${ALLOW_PRIVATE_IPS:-0}" != "1" ]; then
-    RFC1918='\b(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})\b'
-    ip_matches=$(git diff --cached -U0 --diff-filter=ACM | grep -E '^\+' | grep -vE '^\+\+\+' | grep -oE "$RFC1918" | sort -u || true)
-    if [ -n "$ip_matches" ]; then
-        echo "ERROR: Staged changes add private (RFC1918) addresses:"
-        echo "$ip_matches"
-        echo "Committed files must not contain real network data — use RFC 5737"
-        echo "documentation ranges (192.0.2.x / 198.51.100.x / 203.0.113.x) instead."
-        echo "Intentional generic example? Re-run with: ALLOW_PRIVATE_IPS=1 git commit ..."
-        exit 1
-    fi
-fi
-
-# Client-token guard — nothing client-identifying may be published.
-# Tokens = local real environment names (environments/* minus example) plus
-# entries in .client-tokens (gitignored; one token per line, # comments ok).
-# Override for a reviewed false positive: ALLOW_CLIENT_TOKENS=1 git commit ...
-if [ "${ALLOW_CLIENT_TOKENS:-0}" != "1" ]; then
-    CLIENT_TOKENS=""
-    if [ -d environments ]; then
-        CLIENT_TOKENS=$(find environments -mindepth 1 -maxdepth 1 -type d ! -name example ! -name '.*' -printf '%f\n')
-    fi
-    if [ -f .client-tokens ]; then
-        CLIENT_TOKENS="$CLIENT_TOKENS
-$(grep -vE '^\s*(#|$)' .client-tokens)"
-    fi
-    for tok in $CLIENT_TOKENS; do
-        tok_hits=$(git diff --cached -U0 --diff-filter=ACM -- ':!environments' | grep -E '^\+' | grep -vE '^\+\+\+' | grep -icE "\b${tok}\b" || true)
-        path_hits=$(echo "$STAGED_FILES" | grep -v '^environments/' | grep -icE "\b${tok}\b|${tok}" || true)
-        if [ "$tok_hits" -gt 0 ] || [ "$path_hits" -gt 0 ]; then
-            echo "ERROR: Staged changes contain the client token '${tok}' (${tok_hits} content line(s), ${path_hits} path(s))."
-            echo "Client-identifying information must never be published — see docs/client-data-policy.md."
-            echo "Reviewed false positive? Re-run with: ALLOW_CLIENT_TOKENS=1 git commit ..."
-            exit 1
-        fi
-    done
-fi
+# Publication guards (RFC1918 + client tokens) — shared with CI so the local
+# and server-side checks cannot drift. See bin/publication-guard.sh and
+# docs/client-data-policy.md. Overrides: ALLOW_PRIVATE_IPS=1 / ALLOW_CLIENT_TOKENS=1.
+bash bin/publication-guard.sh --cached
 
 # Environment isolation — only environments/example/ may be committed
 ENV_FILES=$(echo "$STAGED_FILES" | grep '^environments/' | grep -v '^environments/example/' || true)
