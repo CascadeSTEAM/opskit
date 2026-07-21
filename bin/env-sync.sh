@@ -1,7 +1,7 @@
 #!/bin/bash
 # opskit env-sync.sh — Sync an environment layer against its private remote
 # environments/<env>/ is gitignored here; each env lives in its own private
-# repo (Forgejo behind Authentik SSO — see docs/environment-storage.md).
+# repo (any private git host behind SSO — see docs/environment-storage.md).
 # Remote URLs resolve from the gitignored map file .env-remotes at the repo
 # root: one "<env> <git-url>" per line, '#' comments allowed. The map is
 # gitignored because it is itself client-identifying (docs/client-data-policy.md).
