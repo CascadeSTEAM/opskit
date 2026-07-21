@@ -1,0 +1,34 @@
+# {{ ansible_managed | default('Managed by Ansible — role: env-storage') }}
+# Forgejo (private per-environment repos) behind Authentik OIDC.
+# See docs/environment-storage.md.
+services:
+  forgejo:
+    image: {{ env_storage_forgejo_image }}
+    container_name: env-storage-forgejo
+    restart: unless-stopped
+    environment:
+      USER_UID: "1000"
+      USER_GID: "1000"
+      FORGEJO__DEFAULT__APP_NAME: "{{ env_storage_app_name }}"
+      FORGEJO__server__DOMAIN: "{{ env_storage_domain }}"
+      FORGEJO__server__ROOT_URL: "{{ env_storage_root_url }}"
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__server__SSH_PORT: "{{ env_storage_ssh_port }}"
+      FORGEJO__database__DB_TYPE: "{{ env_storage_db_type }}"
+      # Accounts exist only via the IdP; new repos default private.
+      FORGEJO__service__DISABLE_REGISTRATION: "{{ env_storage_disable_registration | string | lower }}"
+      FORGEJO__service__ALLOW_ONLY_EXTERNAL_REGISTRATION: "true"
+      FORGEJO__repository__DEFAULT_PRIVATE: "private"
+      FORGEJO__repository__FORCE_PRIVATE: "true"
+      FORGEJO__openid__ENABLE_OPENID_SIGNIN: "false"
+      FORGEJO__openid__ENABLE_OPENID_SIGNUP: "false"
+      FORGEJO__oauth2_client__ENABLE_AUTO_REGISTRATION: "true"
+      FORGEJO__oauth2_client__ACCOUNT_LINKING: "auto"
+      FORGEJO__oauth2_client__USERNAME: "nickname"
+    volumes:
+      - {{ env_storage_data_dir }}:/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "{{ env_storage_http_port }}:3000"
+      - "{{ env_storage_ssh_port }}:22"

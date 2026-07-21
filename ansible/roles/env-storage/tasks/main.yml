@@ -1,0 +1,75 @@
+---
+# env-storage role — deploy Forgejo via Docker Compose and register Authentik
+# as its OIDC auth source. Generic v1: harden (TLS proxy, postgres, exact
+# image digest, backups) when a deployment target is chosen.
+
+- name: Assert vault-supplied OIDC client secret is defined
+  ansible.builtin.assert:
+    that:
+      - env_storage_oidc_client_secret is defined
+      - env_storage_oidc_client_secret | length > 0
+    fail_msg: >-
+      env_storage_oidc_client_secret must be supplied from ansible-vault
+      (never plaintext in this repo — see docs/client-data-policy.md).
+  no_log: true
+
+- name: Create env-storage directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ env_storage_compose_dir }}"
+    - "{{ env_storage_data_dir }}"
+
+- name: Render docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ env_storage_compose_dir }}/docker-compose.yml"
+    mode: "0640"
+  notify: restart env-storage
+
+- name: Deploy forgejo via docker compose
+  ansible.builtin.command:
+    cmd: docker compose -f {{ env_storage_compose_dir }}/docker-compose.yml up -d --wait
+  register: compose_up
+  changed_when: "'Creating' in compose_up.stdout or 'Starting' in compose_up.stdout"
+
+- name: Wait for forgejo to respond
+  ansible.builtin.uri:
+    url: "http://localhost:{{ env_storage_http_port }}"
+    status_code: [200, 302]
+  retries: 30
+  delay: 5
+  register: env_storage_health
+  until: env_storage_health is success
+
+- name: List forgejo authentication sources
+  ansible.builtin.command:
+    cmd: >-
+      docker compose -f {{ env_storage_compose_dir }}/docker-compose.yml
+      exec -T -u git forgejo forgejo admin auth list
+  register: env_storage_auth_list
+  changed_when: false
+
+- name: Register Authentik as OIDC auth source
+  ansible.builtin.command:
+    cmd: >-
+      docker compose -f {{ env_storage_compose_dir }}/docker-compose.yml
+      exec -T -u git forgejo forgejo admin auth add-oauth
+      --name {{ env_storage_oidc_source_name }}
+      --provider openidConnect
+      --key {{ env_storage_oidc_client_id }}
+      --secret {{ env_storage_oidc_client_secret }}
+      --auto-discover-url {{ env_storage_oidc_discover_url }}
+      --scopes 'openid profile email'
+      --group-claim-name {{ env_storage_oidc_group_claim }}
+  when: env_storage_oidc_source_name not in env_storage_auth_list.stdout
+  no_log: true
+
+- name: Report env-storage status
+  ansible.builtin.debug:
+    msg: >-
+      Forgejo ready at http://localhost:{{ env_storage_http_port }}
+      (public URL {{ env_storage_root_url }}) with OIDC source
+      '{{ env_storage_oidc_source_name }}' against {{ env_storage_authentik_url }}
