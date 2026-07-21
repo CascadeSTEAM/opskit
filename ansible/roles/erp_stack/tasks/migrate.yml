@@ -1,0 +1,19 @@
+---
+# Migrate: run bench migrate for every site — required after image upgrades,
+# harmless when nothing changed.
+
+- name: Run bench migrate
+  ansible.builtin.command:
+    cmd: >-
+      docker compose -f {{ erp_stack_compose_file }} exec -T backend
+      bench --site {{ item }} migrate
+  loop: "{{ erp_stack_sites }}"
+  register: erp_stack_migrate
+  changed_when: true
+
+- name: Show migrate output (tail)
+  ansible.builtin.debug:
+    msg: "{{ item.stdout_lines[-10:] }}"
+  loop: "{{ erp_stack_migrate.results }}"
+  loop_control:
+    label: "{{ item.item }}"
