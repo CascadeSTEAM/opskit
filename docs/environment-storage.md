@@ -111,7 +111,7 @@ reachable by the URL in `.env-remotes` with your normal git credentials.
   about infrastructure; credentials are referenced by vault name only.
 - **SSO-gated, per-env authorization.** Central identity in Authentik,
   authorization per environment via groups; access revocation is a group
-  membership change, and Forgejo gives a per-repo audit trail.
+  membership change, and the git host gives a per-repo audit trail.
 - **Client visibility without exposure.** Clients see only their own env repo
   (read-only in v1); a write/PR flow is deferred.
 
