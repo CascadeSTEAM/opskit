@@ -62,20 +62,15 @@ docs/client-data-policy.md).
 
 ## Undo / recovery pointers
 
-- Pre-rewrite history bundles (SENSITIVE — never publish): repo root,
-  `.pre-scrub-backup-2026-07-20.bundle` and `.pre-scrub2-backup-2026-07-20.bundle`.
-- Purged file contents preserved in the environment layer (`local-refs/`).
-- Any clone predating today must be re-cloned; never push from one.
-- Orphaned commits remain SHA-fetchable on GitHub until a support purge
-  request is filed (operator action, pending).
-- Branch protection blocks force-pushes to main — lift it temporarily if a
-  history rewrite is ever needed again.
+Relocated to the private environment layer (2026-07-21 audit): recovery
+details for a history scrub are themselves sensitive. General rule that
+remains publishable: branch protection blocks force-pushes to main — lift
+it temporarily if a history rewrite is ever needed again.
 
 ## Open threads
 
 - #23 (init collision guard), #24 (inventory lint)
-- GitHub support purge request; re-clone other machines (operator)
-- Storage rollout: pick a Forgejo host, create per-env repos, populate
+- Storage rollout: pick a git host, create per-env repos, populate
   `.env-remotes`; client write-access/PR flow and Netbox-SoT interaction
   deferred from v1
 - Grant technology-support team repo access (restores team review requests)

@@ -14,7 +14,7 @@ narratives specific enough to attribute.
 | Code, roles, playbooks | ✔ generic, var-driven | overrides in `environments/<env>/ansible/` |
 | Bug reports about the tool | ✔ GitHub issue, phrased generically | client context in the helpdesk ticket |
 | Deployment work / incidents | ✖ | helpdesk + `environments/<env>/lifecycle/` |
-| Session logs for client work | ✖ | `environments/<env>/session-notes/` |
+| Session logs for any session touching live infrastructure (client OR the org's own) | ✖ | `environments/<env>/session-notes/` |
 | Agent fact sheets | ✔ format examples only | `environments/<env>/context/` |
 | MCP tenant configs | ✔ example entry only | `mcp/*.local.json` (gitignored) |
 | Ticket references in commits | `TKT-<num>` only | full `<PREFIX>-<num>` in `.current-ticket` + helpdesk |
@@ -22,6 +22,22 @@ narratives specific enough to attribute.
 Rule of thumb: **GitHub gets the engineering problem; the helpdesk and the
 environment layer get the client.** "Nmap timeout too short for /16 subnets"
 is publishable; "the <client> scan of 10.x.y.z timed out" is not.
+
+## Facts leak too, not just tokens (session notes rule, 2026-07-21)
+
+The token/IP guards catch *identifiers*. They cannot catch *facts* — and
+facts are the actual intel: what runs where, what's down, what's half-built,
+where a CI runner lives, which service is unpatched. A session note can be
+completely token-free and still hand an attacker a target list.
+
+Therefore: **public session notes (`docs/session-notes/`, `SESSION-LOG.md`)
+may describe code and tool development only — never infrastructure state.**
+This applies to the org's own infrastructure, not just clients': the repo
+owner is publicly known, so "our" facts are fully attributable. Any session
+that touches live infrastructure is logged solely in the relevant
+environment layer; its SESSION-LOG entry (if any) stays terse, generic, and
+state-free. When in doubt, ask: "would this sentence help someone attack or
+case a network?" — if maybe, it goes in the env layer.
 
 ## Active enforcement
 

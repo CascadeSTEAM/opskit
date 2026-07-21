@@ -65,3 +65,4 @@ gitleaks-report.json
 .env-remotes
 mcp/*.local.json
 .current-ticket
+*.bundle

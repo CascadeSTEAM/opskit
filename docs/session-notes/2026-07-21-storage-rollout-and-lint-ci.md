@@ -43,7 +43,6 @@ None.
 ## Open threads
 
 - Issue tracker and idea ledger are both clear (`new` count: 0).
-- Ticketed client session next: device YAML for the new hypervisor node,
-  regenerate context/ fact sheets, semaphore-sync wiring, secrets to vault —
-  and end it with a real `env-sync.sh <env> push`.
+- Ticketed client session next (specifics in the env layer) — and end it
+  with a real `env-sync.sh <env> push`.
 - Flip ansible-lint to enforcing once roles settle; REVIEW.md checklist port.

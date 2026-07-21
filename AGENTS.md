@@ -169,9 +169,16 @@ A merged PR that breaks the suite or the tooling → follow `ROLLBACK.md`
 rollback produces a regression test (or guard) and prevention notes.
 
 ## Session Artifacts
-Both must be updated at session end — do not skip:
-- **SESSION-LOG.md** — strategic entry: key decisions, architectural choices, open threads
-- **`docs/session-notes/`** — operational log: commands run, errors encountered, undo instructions
+Both must be updated at session end — do not skip. **Route by session type
+(hard rule, see docs/client-data-policy.md "Facts leak too"):**
+- Pure public-repo development (issues/PRs/docs): note in
+  **`docs/session-notes/`** — commands run, errors, undo instructions —
+  plus a **SESSION-LOG.md** strategic entry (decisions, choices, threads).
+- Any session touching live infrastructure (client or the org's own),
+  including mixed sessions: the operational note goes ONLY in
+  **`environments/<env>/session-notes/`** (pushed via `env-sync.sh`);
+  the SESSION-LOG entry stays terse and infrastructure-state-free.
+  Public notes may describe *code*, never *infrastructure state*.
 
 ## Helpdesk Ticket Tracking (Hard Rule)
 

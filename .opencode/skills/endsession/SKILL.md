@@ -13,7 +13,14 @@ Triggered by: "endsession", "end session", "shutdown"
 
 1. Verify all planned work is committed
 2. Review `git status` for any remaining changes
-3. Write session note to `docs/session-notes/` with:
+3. Write the session note — ROUTE BY SESSION TYPE (hard rule,
+   docs/client-data-policy.md "Facts leak too"):
+   - Pure public-repo dev session → `docs/session-notes/`
+   - Session touched live infrastructure (client or org, incl. mixed
+     sessions) → `environments/<env>/session-notes/` ONLY, pushed via
+     `bin/env-sync.sh <env> push`; the public SESSION-LOG entry stays
+     terse and infrastructure-state-free
+   Contents either way:
    - Commands run
    - Errors encountered
    - Undo instructions
