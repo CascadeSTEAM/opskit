@@ -154,3 +154,15 @@ jobs:
         run: |
           pip install pyyaml
           python3 bin/scan.py --env example --dry-run 2>&1 | grep -q "Subnets" && echo "PASS: scan reads subnets from env.yml"
+
+      - name: lint example env
+        run: |
+          python3 bin/opskit lint --env example
+
+      - name: lint gate fires on missing device YAML
+        run: |
+          python3 bin/opskit init fake-env --subnets 192.0.2.0/24
+          echo "        fake-host-01:" >> environments/fake-env/ansible/inventory.yml
+          python3 bin/opskit lint --env fake-env && { echo "FAIL: lint should exit 1 on a host with no device YAML"; exit 1; } || echo "PASS: lint fails on missing device YAML"
+          echo "hostname: fake-host-01" > environments/fake-env/datasets/devices/fake-host-01.yml
+          python3 bin/opskit lint --env fake-env && echo "PASS: lint passes once device YAML exists"
