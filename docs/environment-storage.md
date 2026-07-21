@@ -3,16 +3,21 @@
 The client-data policy (`docs/client-data-policy.md`) keeps every real
 `environments/<env>/` layer out of this public repo. This document describes
 where that data lives instead: **one private git repo per environment**,
-hosted on self-hosted **Forgejo** behind **Authentik** SSO, cloned into
+hosted on any private git service behind your organization's SSO — Forgejo,
+Gitea, GitLab, or private GitHub all work — cloned into
 `environments/<env>/` on operator workstations and synced with
 `bin/env-sync.sh`.
+
+**Running the git host is separate infrastructure and out of scope for this
+repo** (operator decision, issue #25). opskit's contract ends at plain git:
+`env-sync.sh` works against any remote your credentials can reach.
 
 Implements GitHub issue #20 (v1: client access is read-only).
 
 ## Architecture
 
 ```
-Authentik (OIDC IdP)                     Forgejo (private git host)
+Your IdP (e.g. Authentik, OIDC)          Private git host (your choice)
   group: env-<name>-operators   ──────►   org team: <name> Owners   (write)
   group: env-<name>-clients     ──────►   org team: <name> Readers  (read-only, v1)
                                              │
@@ -25,10 +30,10 @@ Authentik (OIDC IdP)                     Forgejo (private git host)
 
 - **One private repo per environment.** Granting or revoking a client (or a
   departing operator) touches exactly one repo — no other client is affected.
-- **Authentik is the identity source.** Forgejo local registration is
-  disabled; accounts exist only via OIDC. Authentik groups
-  `env-<name>-operators` (write) and `env-<name>-clients` (read-only in v1)
-  map to Forgejo organization teams via the OIDC `groups` claim.
+- **SSO is the identity source.** Disable local registration on the git host;
+  accounts exist only via OIDC. IdP groups `env-<name>-operators` (write) and
+  `env-<name>-clients` (read-only in v1) map to the host's org teams via the
+  OIDC `groups` claim (Forgejo/Gitea/GitLab all support this).
 - **Each env repo carries** `env.yml`, `datasets/`, `ansible/` overrides,
   `context/`, `lifecycle/`, and `session-notes/` — exactly the layout this
   repo already gitignores under `environments/<env>/`. Nested git repos there
@@ -48,11 +53,11 @@ plaintext credentials. Same rule as everywhere else in opskit
 
 ### 1. Create the environment repo (once per environment)
 
-On the Forgejo instance (deployed by `ansible/roles/env-storage/`):
+On your private git host:
 
 1. Create org (or reuse one) and a **private** repo, e.g. `env-<name>`.
-2. In Authentik, create groups `env-<name>-operators` and
-   `env-<name>-clients`; map them to the Forgejo org teams (operators →
+2. In your IdP, create groups `env-<name>-operators` and
+   `env-<name>-clients`; map them to the host's org teams (operators →
    write team, clients → read-only team).
 3. Push the initial layout (`env.yml`, `datasets/devices/`, `ansible/`, ...)
    — `environments/example/` in this repo is the reference skeleton.
@@ -91,13 +96,10 @@ bin/env-sync.sh <env> push --commit "TKT-123: session data"
 
 ## Deploying the storage service
 
-`ansible/roles/env-storage/` deploys Forgejo via Docker Compose and registers
-Authentik as its OIDC auth source. All defaults are generic
-(`example.org`, pinned image, sqlite3); real values belong in the gitignored
-`environments/<env>/ansible/` layer, and
-`env_storage_oidc_client_secret` **must** come from ansible-vault. Hardening
-(TLS reverse proxy, postgres, exact image digest, backup jobs) happens when a
-deployment target is chosen — deferred by issue #20.
+Out of scope for this repo (issue #25): the git host is its own
+infrastructure, deployed and hardened wherever your organization runs such
+services. opskit only requires that each environment's private repo be
+reachable by the URL in `.env-remotes` with your normal git credentials.
 
 ## Security rationale
 
