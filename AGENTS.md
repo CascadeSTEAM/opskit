@@ -82,7 +82,7 @@ Always use `@skill-builder` for new skills — enforces 4-field frontmatter and 
 **Domain enforcement:** These agents have runtime-enforced tool permissions. `@mikrotik` has `relay-shell_*` denied at the OpenCode runtime level, and `@linux` has `mikromcp_*` denied.
 
 ## Skills (load with: opencode tool skill use <name>)
-`lifecycle` | `git` | `security` | `backup` | `infra` | `check-connectivity` | `templates` | `tools` | `endsession` | `idea-triage` | `baseline`
+`lifecycle` | `git` | `security` | `backup` | `infra` | `check-connectivity` | `templates` | `tools` | `endsession` | `idea-triage` | `baseline` | `gh`
 
 Load the relevant skill before working in its domain.
 
