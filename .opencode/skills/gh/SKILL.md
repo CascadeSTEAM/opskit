@@ -66,9 +66,14 @@ If the operator says `/gh` with no argument, offer both lists (`mine` first).
 5. **PR** — `bin/fix-issue.sh pr <n> --title "<conventional title>" --body "<summary>"`.
    It prepends `Closes #<n>`, requests the `technology-support` reviewer, and
    assigns the operator. Verify CI goes green.
-6. **Critical review + fix cycle** — adversarially review your own diff
-   (edge cases, regressions, behaviour changes). Fix what you find, then
-   **offer** to merge — do not merge unprompted.
+6. **Critical review + fix cycle** — use Claude Code's built-in reviewers
+   rather than ad-hoc prose:
+   - `/code-review` on the working diff (its `--comment` can post inline
+     findings straight onto the PR; `--fix` proposes edits).
+   - `/security-review` whenever the change touches auth, secrets, git hooks,
+     CI, or the publication guards.
+   - `/review <pr#>` to re-review the opened PR if needed.
+   Address every finding, then **offer** to merge — never merge unprompted.
 7. **After merge** — `bin/fix-issue.sh cleanup <n>` removes the worktree and
    deletes the local branch.
 
@@ -81,5 +86,6 @@ If the operator says `/gh` with no argument, offer both lists (`mine` first).
 
 ## Related
 
-- `bin/fix-issue.sh` — the mechanics (`setup` / `pr` / `cleanup`).
+- `bin/fix-issue.sh` — the mechanics (`setup` / `pr` / `cleanup` / `list` / `search` / `new` / `bump`).
+- Built-in reviewers: `/code-review`, `/security-review`, `/review <pr#>` (step 6).
 - `.opencode/rules/definition-of-done.md`, `.opencode/rules/document-as-you-go.md`.
