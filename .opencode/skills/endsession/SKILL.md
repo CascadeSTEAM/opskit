@@ -11,6 +11,17 @@ Triggered by: "endsession", "end session", "shutdown"
 
 ## Procedure
 
+0. **Definition-of-done check (hard gate — see
+   `.opencode/rules/definition-of-done.md`).** Before wrapping up, confirm each:
+   - Ideas that drove the work are `accepted`/`consolidated` with a GH# in
+     `docs/ideas.md` — not left `new` (`python3 bin/idea.py list --status new`).
+   - Non-trivial work has an issue + linked branch, not an unrelated branch.
+   - Docs/device-YAMLs/skill registries match what changed this session.
+   - `make test` is green.
+   - Machine checks pass: `python3 bin/definition-of-done-guard.py --cached`
+     (also runs in pre-commit/CI — new tool→test, new skill→registered, no stubs).
+   Anything unfinished that cannot be completed now gets a follow-up issue
+   before the session closes.
 1. Verify all planned work is committed
 2. Review `git status` for any remaining changes
 3. Write the session note — ROUTE BY SESSION TYPE (hard rule,

@@ -77,6 +77,27 @@ jobs:
           bash bin/publication-guard.sh "$RANGE"
           bash bin/publication-guard.sh --messages "$RANGE"
 
+  # Server-side backstop for the local definition-of-done guard — the same
+  # bin/definition-of-done-guard.py the pre-commit hook calls, so a --no-verify
+  # commit or a clone without hooksPath still cannot ship a new tool with no
+  # test, an unregistered skill, or a stub. See .opencode/rules/definition-of-done.md.
+  definition-of-done:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: definition-of-done guard (branch diff)
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="origin/${{ github.base_ref }}...HEAD"
+          else
+            RANGE="HEAD~1...HEAD"
+          fi
+          echo "Checking range: $RANGE"
+          python3 bin/definition-of-done-guard.py "$RANGE"
+
   # Warn (never fail) when a PR branch is behind main — stale merges are the
   # failure class ROLLBACK.md exists to recover from.
   check-sync:
