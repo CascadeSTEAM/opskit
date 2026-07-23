@@ -24,6 +24,16 @@ for pattern in "${PATTERNS[@]}"; do
     fi
 done
 
+# Deep secret scan (gitleaks) over staged changes — complements the fast grep
+# patterns above and the CI gitleaks job. Skips gracefully if gitleaks isn't
+# installed locally (CI still enforces). Config: .gitleaks.toml.
+# Override (discouraged): SKIP_GITLEAKS=1.
+if [ "${SKIP_GITLEAKS:-}" != "1" ] && command -v gitleaks >/dev/null 2>&1; then
+    gitleaks git --staged --no-banner --redact -l error
+elif [ "${SKIP_GITLEAKS:-}" != "1" ]; then
+    echo "NOTE: gitleaks not installed — skipping deep secret scan (CI will run it)."
+fi
+
 # Publication guards (RFC1918 + client tokens) — shared with CI so the local
 # and server-side checks cannot drift. See bin/publication-guard.sh and
 # docs/client-data-policy.md. Overrides: ALLOW_PRIVATE_IPS=1 / ALLOW_CLIENT_TOKENS=1.

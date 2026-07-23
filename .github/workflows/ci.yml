@@ -36,6 +36,34 @@ jobs:
             --include='*.yml' --include='*.yaml' --include='*.py' --include='*.sh' --include='*.md' . && \
             echo "ERROR: Secret pattern matched" && exit 1 || echo "PASS: no secrets found"
 
+  # Deep secret scan with gitleaks (default ruleset + .gitleaks.toml allowlists).
+  # Scans the PR diff range, not full history: main is already clean, and the
+  # historical Ansible/Jinja false positives stay behind the range. Same tool
+  # the pre-commit hook runs, so local and server-side cannot drift.
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: install gitleaks
+        run: |
+          VER=8.30.1
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: gitleaks (diff range)
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="origin/${{ github.base_ref }}..HEAD"
+          else
+            RANGE="HEAD~1..HEAD"
+          fi
+          echo "Scanning range: $RANGE"
+          gitleaks git . --no-banner --redact -l error --log-opts="$RANGE"
+
   test:
     runs-on: ubuntu-latest
     steps:
