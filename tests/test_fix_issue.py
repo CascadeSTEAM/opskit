@@ -110,3 +110,31 @@ def test_unknown_subcommand(tmp_path):
     r = _run(env, "frobnicate", "1")
     assert r.returncode != 0
     assert "unknown subcommand" in r.stderr
+
+
+def test_list_mine(tmp_path):
+    _, log, env = _setup_env(tmp_path)
+    r = _run(env, "list", "mine")
+    assert r.returncode == 0, r.stderr
+    assert "gh issue list --state open --assignee @me" in log.read_text()
+
+
+def test_list_unassigned(tmp_path):
+    _, log, env = _setup_env(tmp_path)
+    r = _run(env, "list", "unassigned")
+    assert r.returncode == 0, r.stderr
+    assert "gh issue list --state open --search no:assignee" in log.read_text()
+
+
+def test_list_rejects_bad_filter(tmp_path):
+    _, _, env = _setup_env(tmp_path)
+    r = _run(env, "list", "everything")
+    assert r.returncode != 0
+    assert "must be 'mine' or 'unassigned'" in r.stderr
+
+
+def test_list_requires_filter(tmp_path):
+    _, _, env = _setup_env(tmp_path)
+    r = _run(env, "list")
+    assert r.returncode != 0
+    assert "list needs" in r.stderr
