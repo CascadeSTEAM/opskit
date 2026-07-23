@@ -38,4 +38,10 @@ if [ -n "$ENV_FILES" ]; then
     exit 1
 fi
 
+# Definition-of-done guard — new tooling ships a test, new skills are
+# registered in AGENTS.md, no stub markers in shipped code. Same script CI
+# runs, so local and server-side enforcement cannot drift. See
+# .opencode/rules/definition-of-done.md. Override (discouraged): ALLOW_DOD_SKIP=1.
+python3 bin/definition-of-done-guard.py --cached
+
 echo "All checks passed."

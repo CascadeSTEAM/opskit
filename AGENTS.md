@@ -25,6 +25,7 @@ If you are NOT in a domain-specific subagent and the task matches one, switch. E
 - **Multi-system repo** — never assume a specific host. Check connectivity before infra operations.
 - **Hooks auto-setup** — at session start, verify `core.hooksPath` is `.githooks`. If not, run `bash bin/setup-hooks.sh` to ensure consistent commit enforcement across all clones.
 - **Document as you go** — every change to infrastructure MUST be recorded in device YAMLs, docs, or vault in the same session. See `.opencode/rules/document-as-you-go.md`.
+- **Definition of done** — work isn't done until it's triaged, tested, documented, and stub-free. Machine-enforced (new tool→test, new skill→registered, no stubs) by `bin/definition-of-done-guard.py` in pre-commit + CI; the rest is verified at `endsession`. See `.opencode/rules/definition-of-done.md`.
 - **SSH aliases REQUIRED** — never connect by raw IP. Always read `~/.ssh/config` first and use the defined host alias.
 
 ## Environment Model

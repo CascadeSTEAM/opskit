@@ -13,6 +13,32 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-07-22 — Recovered dropped baseline work; codified a definition of done
+
+Session note: `docs/session-notes/2026-07-22-baseline-recovery-and-definition-of-done.md`
+
+**Key decisions:**
+- A dead OpenCode session had left a half-finished `baseline` tool/skill with
+  none of the housekeeping done (untriaged idea, no issue/branch, no tests,
+  a stub, dead code, a client-token leak). Reconstructed intent from the
+  working tree and finished it properly rather than committing as-was.
+- **New hard rule: Definition of Done**, machine-enforced. New `bin/*.py`
+  must ship a test, new skills must be registered, no stub markers reach
+  committed code — checked by `bin/definition-of-done-guard.py` in both
+  pre-commit and CI (same script, can't drift; publication-guard pattern).
+  Agent-verified items (idea triaged, issue+branch, docs current, gate green,
+  session artifacts) moved into the `endsession` skill checklist.
+- Kept feature and governance work as **separate PRs** (baseline #37→PR #38,
+  DoD #39→its PR) rather than bundling a feature with CI/hook changes.
+
+**Completed:** PR #38 (baseline) and the #39 PR (DoD enforcement) opened,
+reviewer = technology-support, author as assignee; `make test` 90/90 green.
+
+**Open threads:** unrelated `ansible.cfg` yaml-callback change from the dropped
+session still uncommitted (needs its own PR); ERP branch work untouched.
+
+---
+
 ## 2026-07-21 (evening) — Session-note publication rule; env work logged privately
 
 Operational session notes for this session live in the relevant private
