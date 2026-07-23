@@ -1,0 +1,10 @@
+---
+# Ansible collections opskit's roles/playbooks depend on.
+# Rehydrate a fresh clone with:
+#   ansible-galaxy collection install -r requirements.yml
+# (ansible.cfg sets collections_path = ./, so they install into ./ansible_collections/,
+#  which is gitignored.)
+collections:
+  - name: ansible.posix        # ansible.posix.profile_tasks callback + posix modules
+  - name: community.general    # assorted general modules
+  - name: community.routeros   # MikroTik / RouterOS management
