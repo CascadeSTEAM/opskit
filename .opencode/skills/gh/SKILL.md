@@ -1,6 +1,6 @@
 ---
 name: gh
-description: Drive a GitHub issue through the full opskit fix workflow — assign, worktree, linked branch, plan-to-issue, implement, test, PR that closes it, review. Use when the operator says "fix issue N", "/gh N", or "work issue N".
+description: Drive a GitHub issue through the full opskit fix workflow — assign, worktree, linked branch, plan-to-issue, implement, test, PR that closes it, review — or list issues. Use when the operator says "/gh N", "fix issue N", "work issue N", "/gh mine", or "/gh unassigned".
 mode: skill
 triggers: gh, fix issue, work issue, take issue, /gh, resolve issue
 ---
@@ -12,6 +12,16 @@ triggers: gh, fix issue, work issue, take issue, /gh, resolve issue
 
 `bin/fix-issue.sh` does the deterministic plumbing; **you** do the judgment
 steps (plan, fix, tests, review). Never skip a step or a test.
+
+## Dispatch on the argument
+
+- **`/gh mine`** → `bin/fix-issue.sh list mine` — open issues assigned to the
+  operator. Just run it and show the output; no branch/worktree.
+- **`/gh unassigned`** → `bin/fix-issue.sh list unassigned` — open issues with
+  no assignee. Same: list only.
+- **`/gh <number>`** → run the full fix workflow below.
+
+If the operator says `/gh` with no argument, offer both lists (`mine` first).
 
 ## Workflow (all eight steps, in order)
 

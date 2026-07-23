@@ -7,6 +7,7 @@
 #   fix-issue.sh setup   <issue-number>
 #   fix-issue.sh pr      <issue-number> --title <title> [--body <body>]
 #   fix-issue.sh cleanup <issue-number>
+#   fix-issue.sh list    <mine|unassigned>
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -88,14 +89,24 @@ cmd_cleanup() {
     fi
 }
 
+cmd_list() {
+    local filter="${1:-}"
+    case "$filter" in
+        mine)       gh issue list --state open --assignee @me;;
+        unassigned) gh issue list --state open --search "no:assignee";;
+        *) die "list filter must be 'mine' or 'unassigned', got '${filter}'";;
+    esac
+}
+
 main() {
-    [ $# -ge 1 ] || die "usage: fix-issue.sh {setup|pr|cleanup} <issue-number> [...]"
+    [ $# -ge 1 ] || die "usage: fix-issue.sh {setup|pr|cleanup|list} <arg> [...]"
     local sub="$1"; shift
     case "$sub" in
         setup)   [ $# -ge 1 ] || die "setup needs <issue-number>";   cmd_setup "$@";;
         pr)      [ $# -ge 1 ] || die "pr needs <issue-number>";      cmd_pr "$@";;
         cleanup) [ $# -ge 1 ] || die "cleanup needs <issue-number>"; cmd_cleanup "$@";;
-        *) die "unknown subcommand: '$sub' (expected setup|pr|cleanup)";;
+        list)    [ $# -ge 1 ] || die "list needs <mine|unassigned>"; cmd_list "$@";;
+        *) die "unknown subcommand: '$sub' (expected setup|pr|cleanup|list)";;
     esac
 }
 
