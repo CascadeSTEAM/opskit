@@ -1,17 +1,34 @@
 # gitleaks configuration for opskit
 # Docs: https://github.com/gitleaks/gitleaks#configuration
+#
+# gitleaks catches SECRETS (keys, tokens, high-entropy strings). Client FACTS
+# (names, hostnames, branch names) are handled separately by
+# bin/publication-guard.sh + .client-tokens — do not rely on gitleaks for those.
 
 title = "opskit gitleaks config"
 
-[allowlist]
-  description = "Allowlist for opskit"
-  paths = [
-    '''environments/example/.*''',
-    '''CHANGELOG.md''',
-  ]
+# Use gitleaks' built-in, provider-specific ruleset (100+ well-tuned rules)
+# instead of one broad hand-rolled regex — far fewer false positives.
+[extend]
+useDefault = true
 
-[[rules]]
-  id = "generic-api-key"
-  description = "Catch generic API key patterns"
-  regex = '''(?i)(?:secret|token|key|password|auth)(?:\s*[=:]\s*)(?:"[^"]{16,}"|'[^']{16,}')'''
-  tags = ["secret", "api-key"]
+[[allowlists]]
+description = "Reference/example material — not real secrets"
+paths = [
+  '''environments/example/.*''',
+  '''CHANGELOG\.md''',
+]
+
+[[allowlists]]
+description = "Ansible/Jinja variable references are indirections to vault, not secret values"
+regexTarget = "match"
+regexes = [
+  '''\{\{[^}]*\}\}''',
+]
+
+[[allowlists]]
+description = "Python source that inspects env-var NAMES, not values (e.g. line.startswith('X_PASSWORD='))"
+regexTarget = "line"
+regexes = [
+  '''(startswith|split|in)\(\s*['"][A-Z_]*(PASSWORD|SECRET|TOKEN|KEY)=?['"]''',
+]
