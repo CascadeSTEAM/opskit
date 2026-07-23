@@ -19,9 +19,34 @@ steps (plan, fix, tests, review). Never skip a step or a test.
   operator. Just run it and show the output; no branch/worktree.
 - **`/gh unassigned`** → `bin/fix-issue.sh list unassigned` — open issues with
   no assignee. Same: list only.
+- **`/gh new`** → run the guided issue-creation cycle (see "Creating an issue").
 - **`/gh <number>`** → run the full fix workflow below.
 
 If the operator says `/gh` with no argument, offer both lists (`mine` first).
+
+## Creating an issue (`/gh new`)
+
+1. **Gather** — ask the operator to describe it in their words. Ask at most
+   2-3 targeted follow-ups, and only if type / affected area / (for bugs)
+   repro-vs-expected are unclear. Don't interrogate.
+2. **Dedup — propose, operator disposes.** Search open AND closed issues
+   (`bin/fix-issue.sh search <terms>`) plus `docs/ideas.md` and
+   `proposals/plans/`. On a strong match, show it and ask: bump the existing
+   one (`bin/fix-issue.sh bump <n> --priority … --note …`, adding the new info)
+   vs create a genuinely-distinct new issue. Never auto-merge.
+3. **Ledger off-ramp** — if it reads as a raw/vague idea rather than ready
+   work, offer `bin/idea.py add …` (docs/ideas.md) instead of a full issue
+   (the repo's anti-ticket-flood convention).
+4. **Classify** — pick the native Issue **Type** (`Task`/`Bug`/`Feature`) and
+   labels from the real set (`bug`/`enhancement`/`documentation`/…). Feature
+   request → Type `Feature`. Milestone only if one exists and clearly applies.
+5. **Draft, client-safe** — a proper title + structured body (Problem /
+   Proposal / Definition of done). **Scrub client-identifying facts** — issues
+   are public and the publication guard does NOT cover issue text.
+6. **Confirm, then create** — show the full draft (title, body, Type, labels)
+   and create only on explicit approval:
+   `bin/fix-issue.sh new --type <T> --title "…" --body "…" [--label …]`.
+   Report the returned number + title + URL.
 
 ## Workflow (all eight steps, in order)
 

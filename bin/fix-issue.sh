@@ -8,6 +8,9 @@
 #   fix-issue.sh pr      <issue-number> --title <title> [--body <body>]
 #   fix-issue.sh cleanup <issue-number>
 #   fix-issue.sh list    <mine|unassigned>
+#   fix-issue.sh search  <terms...>
+#   fix-issue.sh new     --type <Task|Bug|Feature> --title <t> [--body <b>] [--label <l>]...
+#   fix-issue.sh bump    <issue-number> --priority <high|medium|low> [--note <n>]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -98,15 +101,93 @@ cmd_list() {
     esac
 }
 
+cmd_search() {
+    [ $# -ge 1 ] || die "search needs <terms>"
+    gh issue list --state all --search "$*" --limit 20
+}
+
+ensure_priority_labels() {
+    gh label create "priority:high"   --color b60205 --description "High priority"   --force >/dev/null 2>&1 || true
+    gh label create "priority:medium" --color fbca04 --description "Medium priority" --force >/dev/null 2>&1 || true
+    gh label create "priority:low"    --color 0e8a16 --description "Low priority"    --force >/dev/null 2>&1 || true
+}
+
+cmd_new() {
+    local type="" title="" body=""
+    local -a labels=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --type)  type="${2:-}"; shift 2;;
+            --title) title="${2:-}"; shift 2;;
+            --body)  body="${2:-}"; shift 2;;
+            --label) labels+=("${2:-}"); shift 2;;
+            *) die "unknown new arg: $1";;
+        esac
+    done
+    [ -n "$title" ] || die "new requires --title"
+    case "$type" in Task|Bug|Feature) ;; *) die "new --type must be Task|Bug|Feature, got '${type}'";; esac
+
+    local -a create_args=(--title "$title" --body "$body")
+    local l
+    if [ "${#labels[@]}" -gt 0 ]; then
+        for l in "${labels[@]}"; do
+            if [ -n "$l" ]; then create_args+=(--label "$l"); fi
+        done
+    fi
+
+    local url num repo
+    url="$(gh issue create "${create_args[@]}")" || die "issue create failed"
+    num="${url##*/}"
+    repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
+    # gh 2.45 has no --type flag; set the native Issue Type via REST.
+    gh api -X PATCH "repos/$repo/issues/$num" -f "type=$type" >/dev/null 2>&1 \
+        || echo "fix-issue: warning: could not set native Type=$type on #$num" >&2
+
+    echo "issue=#$num"
+    echo "title=$title"
+    echo "url=$url"
+}
+
+cmd_bump() {
+    local n="$1"; shift; require_num "$n"
+    local prio="" note=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --priority) prio="${2:-}"; shift 2;;
+            --note)     note="${2:-}"; shift 2;;
+            *) die "unknown bump arg: $1";;
+        esac
+    done
+    case "$prio" in high|medium|low) ;; *) die "bump --priority must be high|medium|low, got '${prio}'";; esac
+
+    ensure_priority_labels
+    # Drop any other priority:* label already on the issue, then set the target.
+    local existing lbl
+    existing="$(gh issue view "$n" --json labels -q '.labels[].name' 2>/dev/null || true)"
+    for lbl in $existing; do
+        case "$lbl" in
+            priority:*) if [ "$lbl" != "priority:$prio" ]; then
+                gh issue edit "$n" --remove-label "$lbl" >/dev/null
+            fi;;
+        esac
+    done
+    gh issue edit "$n" --add-label "priority:$prio" >/dev/null
+    gh issue comment "$n" --body "Priority set to \`priority:$prio\`.${note:+ $note}"
+    echo "bumped #$n to priority:$prio"
+}
+
 main() {
-    [ $# -ge 1 ] || die "usage: fix-issue.sh {setup|pr|cleanup|list} <arg> [...]"
+    [ $# -ge 1 ] || die "usage: fix-issue.sh {setup|pr|cleanup|list|new|bump|search} <arg> [...]"
     local sub="$1"; shift
     case "$sub" in
         setup)   [ $# -ge 1 ] || die "setup needs <issue-number>";   cmd_setup "$@";;
         pr)      [ $# -ge 1 ] || die "pr needs <issue-number>";      cmd_pr "$@";;
         cleanup) [ $# -ge 1 ] || die "cleanup needs <issue-number>"; cmd_cleanup "$@";;
         list)    [ $# -ge 1 ] || die "list needs <mine|unassigned>"; cmd_list "$@";;
-        *) die "unknown subcommand: '$sub' (expected setup|pr|cleanup|list)";;
+        new)     cmd_new "$@";;
+        bump)    [ $# -ge 1 ] || die "bump needs <issue-number>";    cmd_bump "$@";;
+        search)  cmd_search "$@";;
+        *) die "unknown subcommand: '$sub' (expected setup|pr|cleanup|list|new|bump|search)";;
     esac
 }
 
