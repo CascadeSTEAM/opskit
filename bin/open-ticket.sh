@@ -5,11 +5,13 @@
 #   bin/open-ticket.sh                    # show current ticket
 #   bin/open-ticket.sh CS-0022            # select existing ticket
 #   bin/open-ticket.sh "Subject"          # create ticket on active env helpdesk
+#   bin/open-ticket.sh --local "Subject"  # local-only ticket (opt-in; skips helpdesk)
 #   bin/open-ticket.sh close              # clear active ticket
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# OPSKIT_ROOT override exists for tests (point at a temp repo root).
+REPO_ROOT="${OPSKIT_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 TICKET_FILE="$REPO_ROOT/.current-ticket"
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
 
@@ -32,7 +34,7 @@ HELPDESK_TENANT=$(read_env_field helpdesk_tenant)
 
 show_current() {
     if [ -f "$TICKET_FILE" ] && [ -s "$TICKET_FILE" ]; then
-        TICKET=$(cat "$TICKET_FILE" | tr -d '[:space:]')
+        TICKET=$(tr -d '[:space:]' < "$TICKET_FILE")
         echo -e "${GREEN}Active ticket: $TICKET${NC}  (env: ${ACTIVE_ENV:-unset})"
     else
         echo -e "${YELLOW}No active ticket.${NC}"
@@ -46,14 +48,23 @@ set_ticket() {
     echo -e "${GREEN}Active ticket: $1${NC}"
 }
 
+# --local: deliberately use local-only tracking instead of the helpdesk
+# (opt-in; a configured helpdesk otherwise fails loud — see issue #47).
+LOCAL_MODE=0
+if [ "${1:-}" = "--local" ]; then LOCAL_MODE=1; shift; fi
+
 if [ $# -eq 0 ]; then
+    if [ "$LOCAL_MODE" -eq 1 ]; then
+        echo -e "${RED}--local requires a subject: bin/open-ticket.sh --local \"Subject\"${NC}" >&2
+        exit 1
+    fi
     show_current
     exit 0
 fi
 
 if [ "$1" = "close" ]; then
     if [ -f "$TICKET_FILE" ]; then
-        TICKET=$(cat "$TICKET_FILE" | tr -d '[:space:]')
+        TICKET=$(tr -d '[:space:]' < "$TICKET_FILE")
         rm -f "$TICKET_FILE"
         echo -e "${YELLOW}Cleared active ticket ($TICKET).${NC}"
     else
@@ -73,16 +84,25 @@ SUBJECT="$1"
 DESCRIPTION="${2:-$SUBJECT}"
 
 if [ -z "$PREFIX" ]; then
-    echo -e "${RED}Cannot create ticket: ACTIVE_ENV='${ACTIVE_ENV}' has no ticket prefix in env.yml.${NC}"
-    echo "Run: bin/switch-env.sh <env>"
+    echo -e "${RED}Cannot create ticket: ACTIVE_ENV='${ACTIVE_ENV}' has no ticket prefix in env.yml.${NC}" >&2
+    echo "Run: bin/switch-env.sh <env>" >&2
     exit 1
 fi
 
+# A single-prefixed, clearly-marked local placeholder — distinguishable from a
+# real helpdesk id, and without the historical double prefix (#47).
+set_local() { set_ticket "${PREFIX}-LOCAL-$(date +%Y%m%d%H%M)"; }
+
+# Explicit opt-in (--local) or an env with no helpdesk → local tracking is the
+# expected mode.
+if [ "$LOCAL_MODE" -eq 1 ]; then
+    echo -e "${YELLOW}--local: recording a local-only ticket (not created in any helpdesk).${NC}"
+    set_local
+    exit 0
+fi
 if [ "$HELPDESK" = "none" ] || [ -z "$HELPDESK" ]; then
-    echo -e "${YELLOW}Helpdesk not configured for env '$ACTIVE_ENV'.${NC}"
-    echo "Using local-only ticket tracking."
-    TICKET_ID="${PREFIX}-$(date +%Y%m%d-%H%M)"
-    set_ticket "$TICKET_ID"
+    echo -e "${YELLOW}Helpdesk not configured for env '$ACTIVE_ENV' — using local tracking.${NC}"
+    set_local
     exit 0
 fi
 
@@ -102,17 +122,24 @@ TICKET_ID=$(HELPDESK_TENANT="$HELPDESK_TENANT" \
     TICKET_DESCRIPTION="$DESCRIPTION" \
     OPERATOR_EMAIL="$OPERATOR_EMAIL" \
     python3 - <<'PYEOF'
-import os, sys, json, requests
+import os, sys
 
 tenant = os.environ.get("HELPDESK_TENANT", "")
-password = os.environ.get(f"ERPNEXT_ADMIN_PASSWORD_{tenant.upper()}" if tenant else "ERPNEXT_ADMIN_PASSWORD", "")
+var = f"ERPNEXT_ADMIN_PASSWORD_{tenant.upper()}" if tenant else "ERPNEXT_ADMIN_PASSWORD"
+password = os.environ.get(var, "")
 host = os.environ.get("HELPDESK_ENDPOINT", "")
 
+# Validate config BEFORE importing requests, so a missing credential fails
+# fast with a clear, network-free error.
 if not password:
-    print("ERROR: ERPNext admin password not set in env", file=sys.stderr)
+    print(f"ERROR: helpdesk credential env var {var} is not set", file=sys.stderr)
+    sys.exit(1)
+if not host:
+    print("ERROR: helpdesk_endpoint not set in env.yml", file=sys.stderr)
     sys.exit(1)
 
 try:
+    import requests
     s = requests.Session()
     resp = s.post(f"{host}/api/method/login",
                   json={"usr": "Administrator", "pwd": password}, timeout=10)
@@ -126,7 +153,7 @@ try:
     ticket.raise_for_status()
     tid = ticket.json().get("data", {}).get("name", "")
     if not tid:
-        print("ERROR: no ticket ID", file=sys.stderr)
+        print("ERROR: no ticket ID returned", file=sys.stderr)
         sys.exit(1)
     print(tid)
 except Exception as e:
@@ -134,10 +161,16 @@ except Exception as e:
     sys.exit(1)
 PYEOF
 ) || TICKET_EXIT=$?
+
+# Helpdesk is configured, so a real ticket is required — fail loud, never
+# silently degrade to a local placeholder (#47).
 if [ "$TICKET_EXIT" -ne 0 ] || [ -z "${TICKET_ID:-}" ]; then
-    echo -e "${RED}Ticket creation failed.${NC}"
-    echo "Falling back to local tracking."
-    TICKET_ID="${PREFIX}-LOCAL-$(date +%Y%m%d%H%M)"
+    echo -e "${RED}Ticket creation failed on helpdesk '$HELPDESK'.${NC}" >&2
+    echo "A configured helpdesk must record a real ticket — no automatic local fallback." >&2
+    echo "Likely cause: ERPNEXT_ADMIN_PASSWORD_<TENANT> (tenant='${HELPDESK_TENANT:-}') is not set." >&2
+    echo "Set the credential and retry, or deliberately use local tracking:" >&2
+    echo "  bin/open-ticket.sh --local \"$SUBJECT\"" >&2
+    exit 1
 fi
 
 FULL_ID="${PREFIX}-${TICKET_ID}"
