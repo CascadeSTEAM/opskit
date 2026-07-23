@@ -13,6 +13,17 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-07-23 — Home-env wifi operations (logged privately); ideas captured
+
+Session note: in the relevant environment's private `session-notes/` layer
+(live-infrastructure session, no details here per publication policy).
+
+**Tool-development threads:** ideas #8–#10 added to the ledger, including a
+defect found in `skills/endsession` (references a `session:end` npm script that
+does not exist in this repo — shutdown performed manually per AGENTS.md).
+No code changes; an unexplained uncommitted edit to the caddy role template was
+found mid-session and deliberately left uncommitted for owner review.
+
 ## 2026-07-22 — Recovered dropped baseline work; codified a definition of done
 
 Session note: `docs/session-notes/2026-07-22-baseline-recovery-and-definition-of-done.md`
