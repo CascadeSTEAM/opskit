@@ -30,6 +30,9 @@ Subcommands (all print one JSON object; exit 0 unless noted):
   new-skill --name N --description D       scaffold .opencode/skills/<N>/
       --triggers T [--task SLUG]           SKILL.md + .claude/skills/<N>.md
       [--body-file F]                      pointer; --task marks it created
+  sync-agents                              render canonical agents/*.md into
+                                           .opencode/agent + .claude/agents so
+                                           both harnesses discover the subagents
   status                                   dump the full ladder state
 
 Thresholds: a task journaled >= 3 times offers a skill; a skill ticked
@@ -42,6 +45,8 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -49,7 +54,9 @@ from pathlib import Path
 TASK_OFFER_THRESHOLD = 3  # journaled occurrences before offering a skill
 SKILL_OFFER_THRESHOLD = 3  # ticks after which an upgrade is offered (>)
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+# OPSKIT_ROOT override exists for tests (point at a temp repo root); matches
+# the convention in bin/opskit, bin/env-sync.sh, and the guards.
+REPO_ROOT = Path(os.environ.get("OPSKIT_ROOT") or Path(__file__).resolve().parents[1])
 
 # This repo's skill format (see .opencode/skills/*/SKILL.md and the
 # skill-quality standard: 4 frontmatter fields, ~50 lines max, no
@@ -325,6 +332,129 @@ def cmd_new_skill(args: argparse.Namespace) -> dict:
     }
 
 
+def _split_frontmatter(text: str) -> tuple[str | None, str]:
+    """Return (frontmatter_yaml, body) for a doc with '---' YAML frontmatter."""
+    m = re.match(r"^---\n(.*?)\n---\n?(.*)$", text, re.DOTALL)
+    if not m:
+        return None, text
+    return m.group(1), m.group(2)
+
+
+def _render_claude_agent(name: str, fm: dict, body: str) -> tuple[str, bool]:
+    """Render a Claude Code agent file from a canonical OpenCode agent.
+
+    Claude Code selects subagents by `description` and has no equivalent of
+    OpenCode's `permission.tool` deny-globs, so triggers are folded into the
+    description (for routing) and the permission intent is preserved verbatim
+    (machine-readable comment + an advisory body section) rather than silently
+    dropped. Returns (file_text, has_unenforceable_denies).
+    """
+    import yaml
+
+    description = str(fm.get("description") or "").strip()
+    triggers = str(fm.get("triggers") or "").strip()
+    perm = fm.get("permission") if isinstance(fm.get("permission"), dict) else {}
+    tool_perm = perm.get("tool") if isinstance(perm.get("tool"), dict) else {}
+
+    tool_denies = [g for g, v in tool_perm.items() if v == "deny"]
+    scalar_denies = [
+        k for k in ("bash", "edit", "write", "read") if perm.get(k) == "deny"
+    ]
+
+    # Trigger phrases must live in the description — that is the only signal
+    # Claude Code routes on when auto-delegating to a subagent.
+    base = description.rstrip().rstrip(".")
+    desc = f"{base}. Use for: {triggers}." if triggers else description
+    fm_yaml = yaml.safe_dump(
+        {"name": name, "description": desc},
+        default_flow_style=False,
+        sort_keys=False,
+        allow_unicode=True,
+        width=4096,
+    ).strip()
+
+    parts = [f"---\n{fm_yaml}\n---\n"]
+    if perm:
+        parts.append(f"<!-- opencode-permission: {json.dumps(perm)} -->\n")
+    parts.append(body.lstrip("\n"))
+
+    has_soft = bool(tool_denies or scalar_denies)
+    if has_soft:
+        lines = [
+            "\n\n## Tool restrictions (advisory under Claude Code)\n\n",
+            "Claude Code does not hard-enforce OpenCode `permission` deny rules. "
+            "Honor these behaviorally; hard enforcement needs a PreToolUse deny "
+            "hook in `.claude/settings.json`.\n\n",
+        ]
+        lines += [f"- DENY tool `{g}`\n" for g in tool_denies]
+        lines += [f"- DENY `{k}`\n" for k in scalar_denies]
+        parts.append("".join(lines))
+
+    return "".join(parts), has_soft
+
+
+def cmd_sync_agents(_: argparse.Namespace) -> dict:
+    """Render canonical agents/*.md into both harnesses' discovery locations.
+
+    OpenCode discovers agents at .opencode/agent/<name>.md; Claude Code at
+    .claude/agents/<name>.md. Both targets are generated from the single
+    canonical agents/*.md source (the rendered dirs are gitignored — regenerate,
+    never hand-edit) — the same one-source/two-targets model new-skill uses for
+    skills.
+    """
+    import yaml
+
+    agents_dir = REPO_ROOT / "agents"
+    if not agents_dir.is_dir():
+        print(json.dumps({"error": f"{agents_dir} does not exist"}))
+        sys.exit(1)
+
+    oc_dir = REPO_ROOT / ".opencode" / "agent"
+    cc_dir = REPO_ROOT / ".claude" / "agents"
+    oc_dir.mkdir(parents=True, exist_ok=True)
+    cc_dir.mkdir(parents=True, exist_ok=True)
+
+    synced: list[str] = []
+    skipped: list[str] = []
+    soft_sandbox: list[str] = []
+
+    for src in sorted(agents_dir.glob("*.md")):
+        name = src.stem
+        fm_text, body = _split_frontmatter(src.read_text())
+        fm = yaml.safe_load(fm_text) if fm_text else None
+        if not isinstance(fm, dict) or fm.get("mode") != "subagent":
+            skipped.append(name)
+            continue
+
+        # OpenCode: symlink to the canonical source (relative, worktree-safe).
+        oc_link = oc_dir / f"{name}.md"
+        if oc_link.exists() or oc_link.is_symlink():
+            oc_link.unlink()
+        oc_link.symlink_to(Path("../../agents") / f"{name}.md")
+
+        # Claude Code: generate a translated file (frontmatter dialects differ).
+        cc_text, has_soft = _render_claude_agent(name, fm, body)
+        (cc_dir / f"{name}.md").write_text(cc_text)
+        if has_soft:
+            soft_sandbox.append(name)
+
+        synced.append(name)
+
+    return {
+        "synced": synced,
+        "skipped": skipped,
+        "opencode_dir": str(oc_dir),
+        "claude_dir": str(cc_dir),
+        "soft_sandbox_warning": soft_sandbox,
+        "note": (
+            "Regenerated both harness targets. Claude Code cannot hard-enforce "
+            "permission deny-globs (see soft_sandbox_warning); a PreToolUse hook "
+            "is the tighter follow-up. Restart the agent session so agents are "
+            "re-discovered."
+        ),
+    }
+
+
 def cmd_status(_: argparse.Namespace) -> dict:
     ledger = load_ledger()
     return {
@@ -380,6 +510,12 @@ def main() -> None:
     p.add_argument("--task", default=None, help="journal slug this skill covers")
     p.add_argument("--body-file", default=None)
     p.set_defaults(fn=cmd_new_skill)
+
+    p = sub.add_parser(
+        "sync-agents",
+        help="render agents/*.md into .opencode/agent + .claude/agents",
+    )
+    p.set_defaults(fn=cmd_sync_agents)
 
     p = sub.add_parser("status", help="dump ladder state")
     p.set_defaults(fn=cmd_status)
