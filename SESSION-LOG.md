@@ -13,6 +13,28 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-07-23 (cont.) — /gh workflow skill; tool fixes; trusted-tester bring-up
+
+Session note: `docs/session-notes/2026-07-23-gh-skill-and-tool-fixes.md`
+(a trusted-tester bring-up this session touched live infra — logged privately).
+
+**Key decisions / completed:**
+- Codified the 8-step issue-fix protocol as the **`/gh` skill + `bin/fix-issue.sh`**
+  (`setup`/`pr`/`cleanup`/`list`/`search`/`new`/`bump`; guided issue creation with
+  native issue **Types** + `priority:*` labels + dedup). Issues #50/#52/#54 →
+  PRs #51/#53/#55; dogfooded (opened its own PRs via the script).
+- `/gh` review step now uses built-in `/code-review` + `/security-review` (#58).
+- Fixes merged: `ap.sh` ANSIBLE_CONFIG for role playbooks (#49); `open-ticket.sh`
+  fail-loud instead of silent local-ticket fallback + double-prefix fix (#56);
+  ansible collections `requirements.yml` (#48); ansible.cfg yaml callback (#42);
+  gitleaks wired into pre-commit + CI (#44). Created `priority:*` labels.
+
+**Open threads:** tooling-consolidation proposal drafted, not filed (self-hosted
+GitHub MCP + distributable orchestration skill, merging `/gh` with the ported
+`docwright-issue-workflow`); DoD-guard skill-registration substring weakness;
+branch-name guard gap (ledger row 7); add `definition-of-done`/`gitleaks` to the
+required CI checks; rotate the tester box's PAT (tracked privately).
+
 ## 2026-07-23 — Home-env wifi operations (logged privately); ideas captured
 
 Session note: in the relevant environment's private `session-notes/` layer
