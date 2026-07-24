@@ -71,3 +71,6 @@ mcp/*.local.json
 .current-ticket
 *.bundle
 .ansible/
+
+# Notes
+NOTES.md
