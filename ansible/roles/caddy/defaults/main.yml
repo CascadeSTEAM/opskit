@@ -19,9 +19,24 @@ caddy_routes:
     target: 192.0.2.25:8080
     internal: false
   # Client/env-specific vhosts do NOT belong here — real values go in
-  # environments/<env>/ group_vars (override caddy_routes there). Example:
+  # environments/<env>/ group_vars (override caddy_routes there).
+  #
+  # Per-route options:
+  #   target        upstream host:port for reverse_proxy (required unless handler set)
+  #   internal      restrict to caddy_internal_subnets (import internal_only)
+  #   extra         raw Caddyfile directives inserted before reverse_proxy
+  #                 (e.g. `redir / /path` for an exact-root redirect)
+  #   handler       "file_server" to serve /var/www/html instead of proxying
+  #   upstream_host rewrite the Host header sent upstream (header_up Host <value>);
+  #                 use when the upstream resolves its site from the inbound Host
+  #                 but this vhost's public name differs from that site's name.
+  # Example:
   # - domain: helpdesk.example.org
   #   target: 192.0.2.10:80
+  #   internal: false
+  # - domain: alias.example.org      # serves the "canonical.example.org" upstream site
+  #   target: 192.0.2.10:80
+  #   upstream_host: canonical.example.org
   #   internal: false
   - domain: zabbix.cascadesteam.org
     target: 10.99.10.21:80

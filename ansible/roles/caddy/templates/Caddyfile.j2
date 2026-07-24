@@ -47,9 +47,21 @@
 {% for line in route.extra.split('\n') %}
 	{{ line }}
 {% endfor %}
-	reverse_proxy {{ route.target }}
+{% if route.upstream_host is defined %}
+	reverse_proxy {{ route.target }} {
+		header_up Host {{ route.upstream_host }}
+	}
 {% else %}
 	reverse_proxy {{ route.target }}
+{% endif %}
+{% else %}
+{% if route.upstream_host is defined %}
+	reverse_proxy {{ route.target }} {
+		header_up Host {{ route.upstream_host }}
+	}
+{% else %}
+	reverse_proxy {{ route.target }}
+{% endif %}
 {% endif %}
 }
 {% endfor %}
