@@ -13,6 +13,18 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-07-24 — cluster-llm fallback plugin setup
+
+Session note: `docs/session-notes/2026-07-24.md`
+
+**Key decisions / completed:**
+- Installed `@smart-coders-hq/opencode-model-fallback` plugin for automatic
+  inference failover: cluster-llm → BigPickle free → Claude direct.
+- cluster-llm remains primary; never modified directly.
+- Auto-recovers to cluster-llm after 5-minute cooldown.
+
+---
+
 ## 2026-07-23 (cont.) — /gh workflow skill; tool fixes; trusted-tester bring-up
 
 Session note: `docs/session-notes/2026-07-23-gh-skill-and-tool-fixes.md`
