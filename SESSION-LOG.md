@@ -13,6 +13,22 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-07-24 — missing Caddy vhosts for ERP client domain
+
+Infra session — note in private env session-notes.
+
+**Key decision:** Applied `upstream_host` rewrite pattern (apex/www/erp → the
+canonical Frappe site name) to Caddy vhost config, reusing the precedent from
+earlier host-alias work. Confirmed that the compose template uses
+`FRAPPE_SITE_NAME_HEADER: $$host`, requiring a Host-header rewrite to serve
+a single Frappe site under multiple hostnames.
+
+**Open thread:** No single Caddy route manifest exists — vhost omissions are
+invisible. Consider a route-inventory doc or validation that every DNS record
+has a matching Caddy vhost.
+
+---
+
 ## 2026-07-24 — cluster-llm fallback plugin setup
 
 Session note: `docs/session-notes/2026-07-24.md`
