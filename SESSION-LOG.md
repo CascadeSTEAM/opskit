@@ -13,6 +13,22 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-07-25 (cont. 2) — wiki-hook fix landed: live patch + image PR
+
+Infra session — operational note in the private env session-notes.
+
+**Key decisions:** kept the Wiki-User auto-role behavior (patched the hook to
+re-fetch the doc) instead of following upstream master's hook removal;
+validated the Containerfile patch step by building it as a layer on the
+current production image before opening the PR (images repo PR #8, closes
+issue #7). Patch step is guarded — skips cleanly when upstream drops the hook.
+
+**Open thread:** live containers carry the fix in their writable layers only —
+container recreation reverts it until a new image (with PR #8) is tagged,
+built, and deployed.
+
+---
+
 ## 2026-07-25 (cont.) — ERP outgoing email restored
 
 Infra session — operational note in the private env session-notes.
