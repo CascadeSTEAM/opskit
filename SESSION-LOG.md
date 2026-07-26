@@ -13,6 +13,24 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-07-25 (cont.) — ERP outgoing email restored
+
+Infra session — operational note in the private env session-notes.
+
+**Key finding:** the undecryptable-credential problem was NOT a changed site
+`encryption_key` — the credential had been migrated from a predecessor host
+and was still encrypted under *that* host's key. Fixed surgically by
+decrypting with the origin key and re-encrypting under the active site key
+(no config change). Lesson for restore/migration runbooks: after moving a
+Frappe site between benches, audit `__Auth` decryptability instead of
+assuming the key changed.
+
+**Open threads (tracked privately):** plaintext credential file found on the
+ERP host; stray half-configured email account; predecessor host still serving
+a live copy of the migrated site.
+
+---
+
 ## 2026-07-25 — ERP user-creation failure traced to wiki app hook
 
 Infra session — operational note in the private env session-notes.
