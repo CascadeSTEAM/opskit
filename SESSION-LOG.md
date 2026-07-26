@@ -13,6 +13,22 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-07-25 — ERP user-creation failure traced to wiki app hook
+
+Infra session — operational note in the private env session-notes.
+
+**Key finding:** the Frappe `wiki` app's `User.after_insert` hook
+(`add_wiki_user_role`) re-saves a stale in-memory doc, so on multi-app images
+every new-User insert dies with `TimestampMismatchError` and rolls back. Filed
+issue #7 on the org's ERP-images repo with fix options (image patch / upstream
+bump / hook override); a console workaround unblocked the immediate request.
+
+**Open threads:** two restored-site/credential follow-ups tracked privately;
+idea row 11 — `ACTIVE_ENV` race when two concurrent sessions share one clone
+(observed live this session: `.env` flipped mid-task by another session).
+
+---
+
 ## 2026-07-24 — missing Caddy vhosts for ERP client domain
 
 Infra session — note in private env session-notes.
