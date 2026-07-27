@@ -1,0 +1,697 @@
+<title>OpsKit 101</title>
+<style>
+  :root{
+    --teal:#34b0bf;
+    --teal-deep:#1f7f8c;
+    --navy:#0a2c3f;
+    --orange:#d46329;
+    --grey:#666666;
+    --paper:#f7f9fa;
+    --card:#ffffff;
+    --ink:#1a1a1a;
+    --hair:#dbe3e7;
+    --cream:#fdf6ec;
+    --teal-tint:#e7f6f8;
+    --shadow: 0 1px 2px rgba(10,44,63,.06), 0 8px 24px rgba(10,44,63,.08);
+    color-scheme: light dark;
+  }
+  :root[data-theme="dark"]{
+    --paper:#0a2c3f;
+    --card:#123049;
+    --ink:#eaf3f5;
+    --hair:#1e4a63;
+    --grey:#9fb4bf;
+    --cream:#1c2e2b;
+    --teal-tint:#0f3a42;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 28px rgba(0,0,0,.35);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper:#0a2c3f;
+      --card:#123049;
+      --ink:#eaf3f5;
+      --hair:#1e4a63;
+      --grey:#9fb4bf;
+      --cream:#1c2e2b;
+      --teal-tint:#0f3a42;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 28px rgba(0,0,0,.35);
+    }
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family: Arial, "Helvetica Neue", Helvetica, "Segoe UI", sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  .deck{
+    height:100vh;
+    overflow-y:auto;
+    overflow-x:hidden;
+    scroll-snap-type:y mandatory;
+    scroll-behavior:smooth;
+  }
+  .slide{
+    height:100vh;
+    width:100%;
+    scroll-snap-align:start;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    align-items:center;
+    padding:6vh 8vw;
+    position:relative;
+  }
+  .slide-inner{
+    width:100%;
+    max-width:920px;
+  }
+
+  .eyebrow{
+    display:inline-flex;
+    align-items:center;
+    gap:.5em;
+    font-size:.78rem;
+    font-weight:700;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--orange);
+    margin:0 0 .9em;
+  }
+  .eyebrow::before{
+    content:"";
+    width:22px;height:3px;
+    background:var(--orange);
+    display:inline-block;
+    border-radius:2px;
+  }
+
+  h1{
+    font-size:clamp(2.2rem, 5.4vw, 3.6rem);
+    line-height:1.05;
+    margin:0 0 .3em;
+    color:var(--teal);
+    font-weight:800;
+    text-wrap:balance;
+    letter-spacing:-.01em;
+  }
+  h2{
+    font-size:clamp(1.6rem, 3.6vw, 2.5rem);
+    line-height:1.12;
+    margin:0 0 .5em;
+    color:var(--teal);
+    font-weight:800;
+    text-wrap:balance;
+  }
+  .lede{
+    font-size:clamp(1.05rem, 1.7vw, 1.3rem);
+    line-height:1.55;
+    color:var(--ink);
+    max-width:62ch;
+    margin:0 0 0;
+  }
+  .lede b{ color:var(--orange); font-weight:700; }
+  .muted{ color:var(--grey); }
+
+  /* number badge shared by content slides */
+  .num{
+    font-size:.9rem;
+    font-weight:700;
+    color:var(--grey);
+    letter-spacing:.08em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* card grid for the toolbox */
+  .grid{
+    display:grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap:16px;
+    margin-top:1.6em;
+  }
+  @media (max-width:720px){ .grid{grid-template-columns:1fr;} }
+
+  .card{
+    background:var(--card);
+    border:1px solid var(--hair);
+    border-left:5px solid var(--teal);
+    border-radius:10px;
+    padding:1.1em 1.3em;
+    box-shadow:var(--shadow);
+  }
+  .card.orange{ border-left-color:var(--orange); }
+  .card .icon{ font-size:1.6rem; line-height:1; margin-bottom:.35em; display:block;}
+  .card h3{
+    margin:0 0 .25em;
+    font-size:1.08rem;
+    color:var(--ink);
+    font-weight:700;
+  }
+  .card p{
+    margin:0;
+    font-size:.95rem;
+    line-height:1.5;
+    color:var(--grey);
+  }
+  .card .tag{
+    display:inline-block;
+    margin-top:.6em;
+    font-size:.72rem;
+    font-weight:700;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    color:var(--teal-deep);
+    background:var(--teal-tint);
+    padding:.25em .6em;
+    border-radius:999px;
+  }
+
+  /* callout, echoing the org's own doc styles */
+  .callout{
+    margin-top:1.6em;
+    border-radius:10px;
+    padding:1.1em 1.4em;
+    box-shadow:var(--shadow);
+  }
+  .callout.tip{
+    background:var(--cream);
+    border:2px solid var(--orange);
+  }
+  .callout.rule{
+    background:var(--teal-tint);
+    border:2px solid var(--navy);
+  }
+  :root[data-theme="dark"] .callout.rule{ border-color: var(--teal); }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]) .callout.rule{ border-color: var(--teal); }
+  }
+  .callout .kicker{
+    font-size:.75rem;
+    font-weight:800;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    margin-bottom:.4em;
+    display:block;
+  }
+  .callout.tip .kicker{ color:var(--orange); }
+  .callout.rule .kicker{ color:var(--teal-deep); }
+  .callout p{ margin:0; line-height:1.5; font-size:.98rem; }
+
+  /* ordered steps for the workflow slide */
+  .steps{
+    counter-reset:step;
+    margin-top:1.6em;
+    display:flex;
+    flex-direction:column;
+    gap:0;
+  }
+  .step{
+    counter-increment:step;
+    display:grid;
+    grid-template-columns:44px 1fr;
+    gap:16px;
+    padding:.85em 0;
+    border-bottom:1px solid var(--hair);
+  }
+  .step:last-child{ border-bottom:none; }
+  .step::before{
+    content:counter(step);
+    font-variant-numeric: tabular-nums;
+    width:36px;height:36px;
+    border-radius:50%;
+    background:var(--navy);
+    color:#fff;
+    display:flex;align-items:center;justify-content:center;
+    font-weight:800;
+    font-size:.95rem;
+  }
+  :root[data-theme="dark"] .step::before{ background:var(--teal); color:var(--navy); }
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .step::before{ background:var(--teal); color:var(--navy);} }
+  .step h4{ margin:0 0 .15em; font-size:1.05rem; }
+  .step p{ margin:0; color:var(--grey); font-size:.92rem; line-height:1.45; }
+
+  /* code block */
+  pre{
+    background:var(--navy);
+    color:#dff3f6;
+    border-radius:10px;
+    padding:1.1em 1.3em;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size:.88rem;
+    line-height:1.6;
+    overflow-x:auto;
+    margin:1.4em 0 0;
+    box-shadow:var(--shadow);
+  }
+  pre .c{ color:#7fd8e0; }
+
+  code{
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size:.88em;
+    background:var(--teal-tint);
+    color:var(--teal-deep);
+    padding:.1em .4em;
+    border-radius:5px;
+  }
+  .callout.rule code{ background:rgba(10,44,63,.08); color:var(--navy); }
+  :root[data-theme="dark"] .callout.rule code{ background:rgba(0,0,0,.25); color:var(--teal); }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]) .callout.rule code{ background:rgba(0,0,0,.25); color:var(--teal); }
+  }
+
+  /* logo mark */
+  .logo{ height:34px; width:auto; display:block; }
+  .logo path.t{ fill:var(--teal); }
+  .logo path.n{ fill:var(--navy); }
+  .logo path.o{ fill:var(--orange); }
+
+  .brandbar{
+    position:fixed;
+    top:0; left:0; right:0;
+    height:4px;
+    background:linear-gradient(90deg, var(--orange), var(--teal));
+    transform-origin:left;
+    z-index:20;
+  }
+
+  .corner-logo{
+    position:fixed;
+    left:24px; bottom:20px;
+    opacity:.85;
+    z-index:15;
+  }
+
+  /* dot nav */
+  .dots{
+    position:fixed;
+    right:22px; top:50%;
+    transform:translateY(-50%);
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    z-index:15;
+  }
+  .dots a{
+    width:9px;height:9px;
+    border-radius:50%;
+    background:var(--hair);
+    display:block;
+    transition:background .2s, transform .2s;
+  }
+  .dots a.active{ background:var(--orange); transform:scale(1.3); }
+
+  .slidecount{
+    position:fixed;
+    right:24px; bottom:20px;
+    font-size:.78rem;
+    color:var(--grey);
+    font-variant-numeric:tabular-nums;
+    letter-spacing:.04em;
+    z-index:15;
+  }
+
+  .hint{
+    position:fixed;
+    left:50%; bottom:18px;
+    transform:translateX(-50%);
+    font-size:.72rem;
+    color:var(--grey);
+    letter-spacing:.05em;
+    text-transform:uppercase;
+    z-index:15;
+  }
+
+  .center{ text-align:center; }
+  .center .lede{ margin-left:auto; margin-right:auto; }
+  .stack{ display:flex; flex-direction:column; align-items:center; gap:1.4em; }
+
+  @media (prefers-reduced-motion: reduce){
+    .deck{ scroll-behavior:auto; }
+    .dots a{ transition:none; }
+  }
+</style>
+
+<div class="brandbar" id="progress"></div>
+
+<div class="deck" id="deck">
+
+  <!-- 1 : TITLE -->
+  <section class="slide" id="s1">
+    <div class="slide-inner stack center">
+      <svg class="logo" viewBox="0 0 435.75 128.83" xmlns="http://www.w3.org/2000/svg" style="height:56px">
+        <g>
+          <g>
+            <path class="o" d="M336.83,59.87c10.36,1.31,23.31,2.98,31.71-4.54.64-.58.02-1.62-.79-1.31-7.87,3.02-12.22,5-26.45,2.01-5.69-1.19.07-19.48,3.22-25.19,6.49-11.77,21.68-25.19,37.07-25.19,10.72,0,15.69,21.46,11.8,34.74-3.11,10.62-8.22,14.96-20.73,22.29-.75.44-.34,1.52.53,1.44,3.87-.37,7.39-1.67,10.54-3.63.86.78,2.42,1.48,4.11,2,9.07,2.78,31.4-.32,37.33-23.53,1.66-6.5,3.12-22.92-10.49-29.22-2.28-1.06,4.71,10.83-1.43,25.29-5.69,13.4-12.29,18.82-22.01,18.79,2.41-2.89,4.45-6.21,6.07-9.72,6.38-13.77,9.68-44.09-13.59-44.09-17.17,0-19.6,7.25-28.22,7.25-22.5,0-28.32,36.84-28.32,44.33,0,4.18-36.43-.83-36.43,39.95,0,10.54,9.25,32.8,32.8,32.8,3.95,0-14.65-12.32-14.65-37,0-16.9,11.75-29.49,27.9-27.45Z"/>
+            <path class="o" d="M345.3,111.32c-6.86-8.73-7.03-25.26-7.03-35.95,0-5.4-3.32-3.29-6.3-.31-4.54,4.54-12.71,27.26,4.12,45.38,4.71,5.07,19.62,13.63,31.8,4.07,2.04-1.6-12.57-.42-22.59-13.18Z"/>
+            <path class="o" d="M385.13,109.04c-10.08-3.76-19.85-16.28-23.96-26.17-2.01-4.83-4.41-1.04-5.36,2.92-1.46,6.05,6.34,29.72,26.32,35.42,6.45,1.84,23.09,1.36,28.33-12.69.88-2.36-10.61,6-25.33.51Z"/>
+            <path class="o" d="M432.99,55.21c-1.21-2.21-2.4,11.94-16.18,19.49-9.43,5.17-24.45,5.03-35.46,1-4.91-1.8-3.67,2.65-1.3,5.97,3.62,5.06,22.35,17.57,44.01,3.27,7.89-5.21,16.13-16.58,8.93-29.73Z"/>
+          </g>
+          <path class="t" d="M384.34,35.96c2.89-6.65,2.6-13.18-.65-14.59-3.24-1.41-10.3-.56-13.19,6.09-2.89,6.65-.51,16.58,2.74,17.99,3.24,1.41,8.21-2.84,11.1-9.49Z"/>
+          <path class="n" d="M380.32,37.33c.92-2.13,2.21-6.34.81-6.87-1.06-.4-3.91.92-5.74,6.25-.75,2.19-.85,4.26.21,4.66,2.15.81,3.81-1.92,4.73-4.04Z"/>
+          <circle class="o" cx="378.97" cy="13.05" r="1.17"/>
+          <circle class="o" cx="384.52" cy="16.34" r="1.17"/>
+          <circle class="o" cx="384.52" cy="11.88" r="1.17"/>
+        </g>
+        <g>
+          <path class="t" d="M16.82,51.94c-2.66,0-5.11-.32-7.34-.97-2.23-.65-4.12-1.62-5.66-2.93-1.55-1.31-2.63-2.96-3.26-4.96-.63-2-.72-4.34-.29-7.04.27-1.6.62-3.33,1.03-5.17.41-1.84.81-3.6,1.2-5.28.94-3.52,2.35-6.47,4.23-8.83,1.88-2.37,4.24-4.14,7.07-5.31,2.84-1.17,6.15-1.76,9.95-1.76,2.43,0,4.75.3,6.98.91,2.23.61,4.18,1.52,5.84,2.73,1.66,1.21,2.89,2.73,3.67,4.55.78,1.82.94,3.96.47,6.43-.08.35-.26.65-.56.88-.29.23-.62.35-.97.35h-9.98c-.55,0-.95-.12-1.2-.35-.25-.23-.42-.65-.5-1.23-.04-1.64-.5-2.77-1.38-3.37-.88-.61-2.02-.91-3.43-.91-1.72,0-3.2.46-4.43,1.38-1.23.92-2.12,2.53-2.67,4.84-.82,3.21-1.53,6.5-2.11,9.86-.43,2.31-.24,3.92.56,4.84.8.92,2.06,1.38,3.79,1.38,1.41,0,2.69-.31,3.84-.94,1.15-.63,2.12-1.74,2.91-3.35.31-.63.64-1.05.97-1.26.33-.21.79-.32,1.38-.32h9.98c.35,0,.64.12.85.35.21.23.28.53.21.88-.63,2.43-1.56,4.55-2.79,6.37s-2.77,3.35-4.61,4.58c-1.84,1.23-3.91,2.15-6.22,2.76-2.31.61-4.81.91-7.51.91Z"/>
+          <path class="t" d="M51.5,51.94c-1.8,0-3.41-.27-4.84-.82-1.43-.55-2.6-1.39-3.52-2.52-.92-1.13-1.54-2.56-1.85-4.28-.31-1.72-.27-3.74.12-6.05.16-.86.3-1.6.44-2.23.14-.63.3-1.35.5-2.17.55-2.19,1.29-4.14,2.23-5.84.94-1.7,2.05-3.12,3.35-4.26,1.29-1.13,2.75-2,4.37-2.61,1.62-.61,3.39-.91,5.31-.91,2.31,0,4.08.3,5.31.91,1.23.61,2.2,1.38,2.91,2.32l.29-1.12c.08-.43.29-.79.65-1.09s.72-.44,1.12-.44h8.28c.43,0,.76.15,1,.44.23.29.31.66.23,1.09l-5.81,27.47c-.08.43-.29.79-.65,1.09-.35.29-.74.44-1.17.44h-8.28c-.43,0-.77-.15-1.03-.44-.25-.29-.34-.65-.26-1.09l.35-1.64c-1.17,1.14-2.45,2.05-3.82,2.73-1.37.68-3.11,1.03-5.22,1.03ZM56.79,42.78c1.02,0,1.87-.21,2.55-.65.68-.43,1.24-1,1.67-1.7.43-.7.76-1.49,1-2.35.23-.86.42-1.6.56-2.23.14-.63.26-1.35.38-2.17.12-.82.11-1.55-.03-2.17-.14-.63-.46-1.13-.97-1.53-.51-.39-1.23-.59-2.17-.59s-1.8.21-2.47.62c-.67.41-1.2.98-1.61,1.7-.41.72-.75,1.56-1.03,2.49-.16.59-.31,1.21-.47,1.88-.16.67-.27,1.29-.35,1.88-.12.94-.14,1.77-.06,2.49.08.72.35,1.29.82,1.7.47.41,1.19.62,2.17.62Z"/>
+          <path class="t" d="M91.48,51.94c-2.66,0-4.87-.28-6.63-.85-1.76-.57-3.14-1.28-4.14-2.14-1-.86-1.68-1.75-2.05-2.67-.37-.92-.5-1.73-.38-2.44.08-.43.29-.79.65-1.09s.7-.44,1.06-.44h8.45c.08,0,.15,0,.21.03.06.02.13.07.21.15.47.16.9.41,1.29.76.39.35.84.67,1.35.94.51.27,1.13.41,1.88.41.7,0,1.35-.15,1.94-.44.59-.29.94-.71,1.06-1.26.12-.47.07-.88-.15-1.23-.22-.35-.77-.69-1.67-1.03-.9-.33-2.33-.69-4.29-1.09-1.84-.39-3.46-.97-4.87-1.73-1.41-.76-2.45-1.79-3.11-3.08-.67-1.29-.78-2.88-.35-4.75.31-1.6,1.15-3.15,2.52-4.64,1.37-1.49,3.21-2.71,5.52-3.67,2.31-.96,4.99-1.44,8.04-1.44,2.31,0,4.29.27,5.96.82,1.66.55,3.02,1.23,4.08,2.05,1.06.82,1.81,1.7,2.26,2.64.45.94.6,1.78.44,2.52-.04.43-.22.79-.53,1.09-.31.29-.65.44-1,.44h-7.75c-.12,0-.23,0-.35-.03-.12-.02-.22-.07-.29-.15-.51-.12-.96-.34-1.35-.68-.39-.33-.81-.65-1.26-.94-.45-.29-1.07-.44-1.85-.44-.67,0-1.23.16-1.7.47-.47.31-.76.72-.88,1.23-.12.43-.07.82.15,1.17.21.35.77.69,1.67,1,.9.31,2.37.65,4.4,1,2.66.43,4.71,1.14,6.13,2.14,1.43,1,2.36,2.16,2.79,3.49.43,1.33.51,2.66.23,3.99-.43,2-1.4,3.74-2.91,5.22-1.51,1.49-3.51,2.63-6.02,3.43-2.5.8-5.42,1.2-8.75,1.2Z"/>
+          <path class="t" d="M125.99,51.94c-2.7,0-5.17-.52-7.4-1.56-2.23-1.04-3.9-2.56-5.02-4.58-1.12-2.01-1.46-4.45-1.03-7.31.12-.63.27-1.41.47-2.35.2-.94.37-1.74.53-2.41,1.13-4.3,3.28-7.63,6.43-9.98,3.15-2.35,7.05-3.52,11.71-3.52,2.78,0,5.13.41,7.04,1.23,1.92.82,3.43,1.84,4.55,3.05,1.12,1.21,1.9,2.44,2.35,3.67.45,1.23.62,2.26.5,3.08-.04.43-.24.79-.62,1.09-.37.29-.75.44-1.14.44h-9.51c-.43,0-.75-.1-.97-.29-.22-.2-.36-.49-.44-.88-.12-.86-.38-1.51-.79-1.94-.41-.43-1.07-.65-1.97-.65-1.25,0-2.26.42-3.02,1.26-.76.84-1.36,2.08-1.79,3.73-.2.82-.37,1.59-.53,2.29-.16.7-.27,1.33-.35,1.88-.27,1.68-.23,2.93.15,3.73.37.8,1.16,1.2,2.38,1.2.98,0,1.76-.21,2.35-.62s1.13-1.05,1.64-1.91c.23-.39.5-.69.79-.91.29-.21.65-.32,1.09-.32h9.51c.43,0,.77.16,1.03.47.25.31.32.68.21,1.12-.23.7-.72,1.65-1.47,2.85-.74,1.19-1.81,2.42-3.2,3.67-1.39,1.25-3.19,2.31-5.4,3.17-2.21.86-4.9,1.29-8.07,1.29Z"/>
+          <path class="t" d="M158.33,51.94c-1.8,0-3.41-.27-4.84-.82-1.43-.55-2.6-1.39-3.52-2.52-.92-1.13-1.54-2.56-1.85-4.28-.31-1.72-.27-3.74.12-6.05.16-.86.3-1.6.44-2.23.14-.63.3-1.35.5-2.17.55-2.19,1.29-4.14,2.23-5.84.94-1.7,2.05-3.12,3.35-4.26,1.29-1.13,2.75-2,4.37-2.61,1.62-.61,3.39-.91,5.31-.91,2.31,0,4.08.3,5.31.91,1.23.61,2.2,1.38,2.91,2.32l.29-1.12c.08-.43.29-.79.65-1.09s.72-.44,1.12-.44h8.28c.43,0,.76.15,1,.44.23.29.31.66.23,1.09l-5.81,27.47c-.08.43-.29.79-.65,1.09-.35.29-.74.44-1.17.44h-8.28c-.43,0-.77-.15-1.03-.44-.25-.29-.34-.65-.26-1.09l.35-1.64c-1.17,1.14-2.45,2.05-3.82,2.73-1.37.68-3.11,1.03-5.22,1.03ZM163.61,42.78c1.02,0,1.87-.21,2.55-.65.68-.43,1.24-1,1.67-1.7.43-.7.76-1.49,1-2.35.23-.86.42-1.6.56-2.23.14-.63.26-1.35.38-2.17.12-.82.11-1.55-.03-2.17-.14-.63-.46-1.13-.97-1.53-.51-.39-1.23-.59-2.17-.59s-1.8.21-2.47.62c-.67.41-1.2.98-1.61,1.7-.41.72-.75,1.56-1.03,2.49-.16.59-.31,1.21-.47,1.88-.16.67-.27,1.29-.35,1.88-.12.94-.14,1.77-.06,2.49.08.72.35,1.29.82,1.7.47.41,1.19.62,2.17.62Z"/>
+          <path class="t" d="M196.07,51.94c-1.8,0-3.41-.27-4.84-.82-1.43-.55-2.59-1.39-3.49-2.52-.9-1.13-1.52-2.56-1.85-4.28-.33-1.72-.3-3.74.09-6.05.16-.86.3-1.6.44-2.23.14-.63.3-1.35.5-2.17.55-2.19,1.28-4.14,2.2-5.84.92-1.7,2.03-3.12,3.32-4.26,1.29-1.13,2.72-2,4.28-2.61,1.56-.61,3.25-.91,5.05-.91s3.41.28,4.84.85c1.43.57,2.51,1.32,3.26,2.26l2.52-12.15c.08-.43.29-.79.65-1.09.35-.29.74-.44,1.17-.44h9.04c.39,0,.71.15.97.44.25.29.34.66.26,1.09l-8.22,38.62c-.08.43-.3.79-.67,1.09-.37.29-.75.44-1.14.44h-8.33c-.43,0-.76-.15-1-.44-.23-.29-.31-.65-.23-1.09l.35-1.64c-1.17,1.14-2.46,2.05-3.84,2.73-1.39.68-3.16,1.03-5.31,1.03ZM201.41,42.78c1.02,0,1.87-.21,2.55-.65.68-.43,1.25-1,1.7-1.7.45-.7.79-1.49,1.03-2.35.2-.86.36-1.6.5-2.23.14-.63.26-1.35.38-2.17.16-.82.16-1.55,0-2.17-.16-.63-.49-1.13-1-1.53-.51-.39-1.23-.59-2.17-.59s-1.81.21-2.49.62c-.68.41-1.23.98-1.64,1.7-.41.72-.75,1.56-1.03,2.49-.16.59-.31,1.21-.47,1.88-.16.67-.27,1.29-.35,1.88-.12.94-.14,1.77-.06,2.49.08.72.36,1.29.85,1.7.49.41,1.22.62,2.2.62Z"/>
+          <path class="t" d="M237.74,51.94c-3.25,0-5.96-.56-8.13-1.67s-3.67-2.81-4.49-5.08c-.82-2.27-.88-5.15-.18-8.63.04-.16.08-.36.12-.62.04-.25.08-.44.12-.56.78-3.25,2.07-6,3.87-8.25,1.8-2.25,4.01-3.96,6.63-5.14,2.62-1.17,5.54-1.76,8.75-1.76,3.6,0,6.43.71,8.48,2.14,2.05,1.43,3.4,3.33,4.05,5.69.65,2.37.67,5.02.09,7.95l-.29,1.64c-.08.39-.3.74-.67,1.06-.37.31-.77.47-1.2.47h-18.14c-.04.16-.06.27-.06.35-.2.94-.24,1.77-.15,2.49.1.72.37,1.29.82,1.7.45.41,1.07.62,1.85.62.51,0,.96-.08,1.35-.23.39-.16.74-.36,1.06-.62.31-.25.61-.5.88-.73.43-.35.77-.58,1.03-.68.25-.1.6-.15,1.03-.15h9.22c.39,0,.68.12.88.35.2.23.23.53.12.88-.2.7-.7,1.56-1.53,2.55-.82,1-1.97,1.97-3.43,2.91-1.47.94-3.22,1.72-5.25,2.35-2.03.63-4.3.94-6.81.94ZM238.16,32.63h7.34v-.12c.23-1.06.28-1.96.15-2.7-.14-.74-.44-1.3-.91-1.67-.47-.37-1.1-.56-1.88-.56s-1.49.19-2.11.56c-.63.37-1.14.93-1.56,1.67-.41.74-.75,1.64-1.03,2.7v.12Z"/>
+        </g>
+        <g>
+          <path class="n" d="M54.83,111.53c-4.19,0-7.64-.58-10.36-1.75-2.72-1.17-4.66-2.71-5.83-4.62-1.17-1.91-1.57-3.96-1.21-6.13.08-.36.26-.66.54-.91.28-.24.6-.36.97-.36h9.6c.6,0,1.05.09,1.33.27.28.18.56.43.85.75.24.44.57.86,1,1.24.42.38.99.69,1.69.91.7.22,1.54.33,2.51.33,1.85,0,3.35-.25,4.5-.75,1.15-.5,1.82-1.2,2.02-2.08.16-.68,0-1.25-.45-1.69-.46-.44-1.31-.85-2.54-1.21-1.23-.36-2.89-.74-4.98-1.15-3.02-.52-5.53-1.37-7.52-2.54-1.99-1.17-3.39-2.69-4.2-4.56-.81-1.87-.93-4.1-.36-6.67.8-3.9,2.88-6.97,6.22-9.21,3.34-2.23,7.67-3.35,12.98-3.35,2.66,0,5.05.38,7.19,1.15,2.13.77,3.93,1.76,5.4,2.99,1.47,1.23,2.56,2.55,3.26,3.96.7,1.41.94,2.76.69,4.05-.04.36-.21.67-.51.94-.3.26-.61.39-.94.39h-10.08c-.52,0-.94-.08-1.24-.24-.3-.16-.57-.42-.82-.78-.08-.56-.47-1.07-1.18-1.51-.7-.44-1.64-.66-2.81-.66-1.37,0-2.49.23-3.35.69-.87.46-1.4,1.14-1.6,2.02-.12.6,0,1.13.36,1.57.36.44,1.07.84,2.11,1.18,1.05.34,2.54.72,4.47,1.12,3.74.56,6.67,1.43,8.79,2.6,2.11,1.17,3.52,2.67,4.23,4.5.7,1.83.79,4.02.27,6.55-.93,4.27-3.15,7.5-6.67,9.69-3.52,2.19-8.3,3.29-14.34,3.29Z"/>
+          <path class="n" d="M88.59,110.93c-.4,0-.73-.15-1-.45-.26-.3-.35-.67-.27-1.12l6.34-29.47h-10.39c-.44,0-.8-.15-1.06-.45-.26-.3-.35-.67-.27-1.12l1.75-8.09c.08-.44.31-.82.69-1.12.38-.3.77-.45,1.18-.45h33.94c.44,0,.79.15,1.06.45.26.3.35.67.27,1.12l-1.75,8.09c-.08.44-.3.82-.66,1.12-.36.3-.77.45-1.21.45h-10.39l-6.34,29.47c-.08.44-.3.82-.66,1.12-.36.3-.77.45-1.21.45h-10.02Z"/>
+          <path class="n" d="M118.6,110.93c-.44,0-.8-.15-1.06-.45-.26-.3-.35-.67-.27-1.12l8.33-39.13c.08-.44.31-.82.69-1.12.38-.3.79-.45,1.24-.45h29.59c.44,0,.78.15,1.03.45.24.3.32.67.24,1.12l-1.51,7.13c-.08.4-.31.77-.69,1.09-.38.32-.8.48-1.24.48h-18.66l-1.33,5.98h17.33c.44,0,.79.15,1.06.45.26.3.35.67.27,1.12l-1.45,6.52c-.08.44-.31.82-.69,1.12-.38.3-.8.45-1.24.45h-17.33l-1.27,6.1h19.14c.44,0,.79.16,1.03.48.24.32.32.7.24,1.15l-1.51,7.06c-.08.44-.3.82-.66,1.12-.36.3-.77.45-1.21.45h-30.07Z"/>
+          <path class="n" d="M154.22,110.93c-.44,0-.76-.19-.97-.57-.2-.38-.18-.77.06-1.18l21.98-38.65c.24-.44.6-.87,1.09-1.27.48-.4,1.11-.6,1.87-.6h11.35c.76,0,1.31.2,1.63.6.32.4.5.83.54,1.27l5.62,38.65c.08.52-.05.95-.39,1.27-.34.32-.73.48-1.18.48h-9.06c-.68,0-1.16-.16-1.42-.48-.26-.32-.43-.64-.51-.97l-.85-5.01h-14.49l-3.02,5.07c-.16.32-.43.63-.82.94-.38.3-.92.45-1.6.45h-9.84ZM174.39,94.26h9l-1.57-13.59-7.43,13.59Z"/>
+          <path class="n" d="M202.71,110.93c-.44,0-.8-.15-1.06-.45-.26-.3-.35-.67-.27-1.12l8.33-39.13c.08-.44.31-.82.69-1.12.38-.3.79-.45,1.24-.45h8.03c.72,0,1.24.2,1.54.6.3.4.47.69.51.85l6.16,16.79,13.22-16.79c.16-.16.46-.44.91-.85.44-.4,1.03-.6,1.75-.6h8.03c.44,0,.79.15,1.03.45.24.3.32.67.24,1.12l-8.33,39.13c-.08.44-.3.82-.66,1.12-.36.3-.77.45-1.21.45h-9.12c-.44,0-.78-.15-1.03-.45-.24-.3-.32-.67-.24-1.12l4.11-19.38-7.31,9.36c-.28.32-.62.64-1.03.97-.4.32-.89.48-1.45.48h-3.68c-.56,0-.98-.16-1.24-.48-.26-.32-.45-.64-.57-.97l-3.5-9.66-4.17,19.68c-.08.44-.3.82-.66,1.12-.36.3-.77.45-1.21.45h-9.06Z"/>
+        </g>
+      </svg>
+      <div class="eyebrow">New Dev Orientation</div>
+      <h1>OpsKit, explained like you're new here</h1>
+      <p class="lede">One toolkit that knows every device, every password, and every rule &mdash;
+      so you never have to guess how our tech works. This is the fast version.</p>
+    </div>
+  </section>
+
+  <!-- 2 : THE PROBLEM -->
+  <section class="slide" id="s2">
+    <div class="slide-inner">
+      <span class="num">01 / 10</span>
+      <h2>Running a network by memory doesn't work</h2>
+      <p class="lede">Before OpsKit, "how do I fix this?" lived in someone's head &mdash; a
+      password here, a login there, a script only one person remembered writing.
+      <b>New person joins, and the knowledge walks out the door with whoever leaves.</b></p>
+      <div class="callout tip">
+        <span class="kicker">📋 Sound familiar?</span>
+        <p>"Ask Dave, he set that up" is not a system &mdash; it's a single point of failure with a name.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 : WHAT OPSKIT IS -->
+  <section class="slide" id="s3">
+    <div class="slide-inner">
+      <span class="num">02 / 10</span>
+      <h2>OpsKit is the home base for all of it</h2>
+      <p class="lede">Think of it like a <b>giant, well-organized binder</b> for every router,
+      server, and account we manage &mdash; plus the tools to act on that binder instead of just
+      reading it. One place to look. One place to change things. One place that remembers.</p>
+      <div class="grid" style="margin-top:2em;">
+        <div class="card">
+          <span class="icon">🗂️</span>
+          <h3>Knows every device</h3>
+          <p>Routers, WiFi, servers, containers &mdash; all catalogued, not guessed at.</p>
+        </div>
+        <div class="card orange">
+          <span class="icon">🔑</span>
+          <h3>Knows every password</h3>
+          <p>Pulled from a secure vault at the moment it's needed &mdash; never typed from memory.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 : ENVIRONMENTS -->
+  <section class="slide" id="s4">
+    <div class="slide-inner">
+      <span class="num">03 / 10</span>
+      <h2>Every network gets its own labeled folder</h2>
+      <p class="lede">OpsKit calls each network an <b>environment</b> &mdash; its own folder with
+      its own devices, its own passwords, its own rules. Nothing is hardcoded, so the same
+      toolkit works for a homelab, a client site, or a school lab without rewriting anything.</p>
+      <div class="callout rule">
+        <span class="kicker">Why this matters</span>
+        <p>Real environments never touch the public code. A shared example folder shows the
+        pattern; your actual devices, IPs, and client details stay private and local.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 : THE TOOLBOX -->
+  <section class="slide" id="s5">
+    <div class="slide-inner">
+      <span class="num">04 / 10</span>
+      <h2>Inside the toolbox</h2>
+      <p class="lede">OpsKit doesn't reinvent these &mdash; it wires proven, open-source tools together
+      so you use one consistent front door.</p>
+      <div class="grid">
+        <div class="card">
+          <span class="icon">📖</span>
+          <h3>Ansible &mdash; the recipe book</h3>
+          <p>Step-by-step "recipes" (playbooks) that set up or fix a machine the exact same way, every time.</p>
+          <span class="tag">automation</span>
+        </div>
+        <div class="card">
+          <span class="icon">🗺️</span>
+          <h3>NetBox &mdash; the map</h3>
+          <p>The source of truth for what exists, where it lives, and how it connects.</p>
+          <span class="tag">inventory</span>
+        </div>
+        <div class="card orange">
+          <span class="icon">🔒</span>
+          <h3>Vaultwarden &mdash; the safe</h3>
+          <p>Locks up every password and secret so nobody has to memorize or paste them around.</p>
+          <span class="tag">credentials</span>
+        </div>
+        <div class="card orange">
+          <span class="icon">❤️</span>
+          <h3>Zabbix &mdash; the heartbeat monitor</h3>
+          <p>Watches everything and speaks up the moment something looks wrong.</p>
+          <span class="tag">monitoring</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5b : ANSIBLE PLAYBOOKS -->
+  <section class="slide" id="s5b">
+    <div class="slide-inner">
+      <span class="num">05 / 10</span>
+      <h2>Playbooks: instructions a computer can't get wrong</h2>
+      <p class="lede">A <b>playbook</b> is a plain-text list of steps &mdash; written once, run as
+      many times as needed, always in the same order. No copy-pasting commands into a terminal
+      and hoping you didn't miss one.</p>
+      <pre><span class="c"># a tiny slice of a real playbook</span>
+- name: make sure the web service is running
+  hosts: servers
+  tasks:
+    - name: install nginx
+      apt:
+        name: nginx
+        state: present
+    - name: start nginx
+      service:
+        name: nginx
+        state: started</pre>
+      <div class="callout tip">
+        <span class="kicker">📋 The superpower: idempotence</span>
+        <p>Run a playbook once or fifty times &mdash; it only changes what actually needs
+        changing. That makes it safe to re-run any time you're not sure the last run finished.
+        In OpsKit you run one through <code>bin/ap.sh &lt;playbook&gt;</code>, which scopes it to
+        whichever environment you've switched into, so it only ever touches the network you meant.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 : AI HELPERS -->
+  <section class="slide" id="s6">
+    <div class="slide-inner">
+      <span class="num">06 / 10</span>
+      <h2>You get specialist helpers, not one generalist</h2>
+      <p class="lede">OpsKit plugs in AI subagents scoped to one job each &mdash; like handing the
+      router questions to the router expert instead of a jack-of-all-trades who might miss something.</p>
+      <div class="grid">
+        <div class="card">
+          <h3>@mikrotik</h3>
+          <p>Handles routers, switches, and WiFi &mdash; through a safe, approved tool path only.</p>
+        </div>
+        <div class="card">
+          <h3>@linux</h3>
+          <p>Handles servers, Docker, and Ansible &mdash; router tools are off-limits to it, on purpose.</p>
+        </div>
+      </div>
+      <div class="callout tip" style="margin-top:1.4em;">
+        <span class="kicker">📋 Why split them up?</span>
+        <p>Guardrails, not gatekeeping &mdash; each helper can only touch what it's actually
+        qualified for, so a mistake in one lane can't spill into another.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 : GOLDEN RULES -->
+  <section class="slide" id="s7">
+    <div class="slide-inner">
+      <span class="num">07 / 10</span>
+      <h2>Four rules that never bend</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Never assume</h3>
+          <p>IPs, credentials, and roles get verified live &mdash; not remembered from last time.</p>
+        </div>
+        <div class="card">
+          <h3>Every change gets a ticket</h3>
+          <p>If it touches real infrastructure, there's a helpdesk ticket number attached to it.</p>
+        </div>
+        <div class="card">
+          <h3>Repeatable work becomes code</h3>
+          <p>Do something by hand twice, and it becomes a script or playbook the third time.</p>
+        </div>
+        <div class="card">
+          <h3>Document as you go</h3>
+          <p>Not done until it's written down &mdash; future-you and new-hire-you will thank present-you.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7b : HELPDESK TICKETS -->
+  <section class="slide" id="s7b">
+    <div class="slide-inner">
+      <span class="num">08 / 10</span>
+      <h2>Tickets: the paper trail for real changes</h2>
+      <p class="lede">Before anything touches a real device, OpsKit wants a <b>ticket</b> &mdash;
+      a short record of what you're about to do and why. It's not bureaucracy for its own sake;
+      it's how "who changed this, and when, and why" stays answerable months later.</p>
+      <pre><span class="c"># open one before you touch anything live</span>
+bash bin/switch-env.sh homelab
+bash bin/open-ticket.sh "patching WiFi firmware on the 3rd floor APs"
+<span class="c"># the ticket number gets written to .current-ticket automatically</span></pre>
+      <div class="callout rule">
+        <span class="kicker">Enforced, not optional</span>
+        <p>Every commit touching live infrastructure must reference its ticket
+        (<code>TKT-42: fixed AP firmware</code>) &mdash; a pre-commit hook checks for it and
+        blocks the commit if it's missing. Read-only checks and docs-only commits are the only
+        exceptions.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8 : DAY IN THE LIFE -->
+  <section class="slide" id="s8">
+    <div class="slide-inner">
+      <span class="num">09 / 10</span>
+      <h2>A typical change, start to finish</h2>
+      <div class="steps">
+        <div class="step">
+          <div>
+            <h4>Pick the environment</h4>
+            <p>Switch into the right network so every command points at the right place.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h4>Open a ticket</h4>
+            <p>State what you're about to do before you do it.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h4>Make the change</h4>
+            <p>Through a playbook or an approved tool &mdash; not a one-off manual edit.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h4>Test it</h4>
+            <p>Confirm it actually worked before calling it done.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h4>Write it down</h4>
+            <p>Update the device record so the next person doesn't start from zero.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 9 : GET STARTED -->
+  <section class="slide" id="s9">
+    <div class="slide-inner">
+      <span class="num">10 / 10</span>
+      <h2>Try it yourself</h2>
+      <p class="lede">Five commands take you from a fresh clone to a full picture of a network.</p>
+      <pre><span class="c"># clone it and check your setup</span>
+git clone https://github.com/CascadeSTEAM/opskit
+cd opskit &amp;&amp; bash install.sh
+opskit check
+
+<span class="c"># point it at a network and look around</span>
+opskit env homelab
+opskit scan
+opskit status</pre>
+    </div>
+  </section>
+
+  <!-- 10 : CLOSING -->
+  <section class="slide" id="s10">
+    <div class="slide-inner stack center">
+      <span class="eyebrow">You're ready</span>
+      <h1 style="font-size:clamp(2rem,4.6vw,3rem);">Read AGENTS.md first, ask questions after</h1>
+      <p class="lede">It's the one page that always tells the truth about how this project works
+      today. Everything else &mdash; skills, playbooks, subagents &mdash; branches off from there.</p>
+      <div class="callout rule" style="text-align:left;">
+        <span class="kicker">Welcome aboard</span>
+        <p>You don't need to memorize OpsKit. You need to know it exists, know where the binder is,
+        and know the four rules. The toolkit does the remembering for you.</p>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<div class="dots" id="dots"></div>
+<div class="slidecount" id="slidecount">01 / 10</div>
+<div class="hint">Scroll or press &darr; / &uarr;</div>
+
+<script>
+(function(){
+  var deck = document.getElementById('deck');
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var dots = document.getElementById('dots');
+  var progress = document.getElementById('progress');
+  var counter = document.getElementById('slidecount');
+
+  slides.forEach(function(s, i){
+    var a = document.createElement('a');
+    a.href = '#' + s.id;
+    a.setAttribute('aria-label', 'Go to slide ' + (i+1));
+    dots.appendChild(a);
+  });
+  var dotEls = Array.prototype.slice.call(dots.children);
+
+  function pad(n){ return (n < 10 ? '0' : '') + n; }
+
+  function update(){
+    var idx = Math.round(deck.scrollTop / window.innerHeight);
+    idx = Math.max(0, Math.min(slides.length - 1, idx));
+    dotEls.forEach(function(d, i){ d.classList.toggle('active', i === idx); });
+    counter.textContent = pad(idx + 1) + ' / ' + pad(slides.length);
+    progress.style.transform = 'scaleX(' + ((idx + 1) / slides.length) + ')';
+  }
+
+  deck.addEventListener('scroll', function(){
+    window.requestAnimationFrame(update);
+  }, { passive: true });
+
+  window.addEventListener('keydown', function(e){
+    var idx = Math.round(deck.scrollTop / window.innerHeight);
+    if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === ' '){
+      e.preventDefault();
+      slides[Math.min(slides.length - 1, idx + 1)].scrollIntoView({ behavior: 'smooth' });
+    } else if (e.key === 'ArrowUp' || e.key === 'PageUp'){
+      e.preventDefault();
+      slides[Math.max(0, idx - 1)].scrollIntoView({ behavior: 'smooth' });
+    }
+  });
+
+  update();
+})();
+</script>
