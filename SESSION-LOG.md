@@ -13,6 +13,25 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-07-27 — OpsKit 101 onboarding slide deck
+
+Session note: `docs/session-notes/2026-07-27-opskit-101-onboarding-deck.md`
+
+**Key decisions:** built a self-contained scroll-snap HTML slide deck
+(`docs/onboarding/opskit-101.html`) introducing OpsKit to new developers,
+styled from the actual Cascade STEAM brand assets rather than guessed colors;
+verified rendering with headless system Chrome via Playwright
+(`channel: 'chrome'`) since no project skill covers screenshotting a static
+page; PR opened without a linked issue (doc-only work, not issue-driven).
+
+**Completed:** PR #66 opened (`docs/opskit-101-onboarding-deck` branch,
+reviewer `CascadeSTEAM/technology-support`, self as assignee).
+
+**Open threads:** PR #66 awaiting review/merge; idea ledger row added for a
+reusable "screenshot a static/browser-driven page" recipe in the `run` skill.
+
+---
+
 ## 2026-07-25 (cont. 2) — wiki-hook fix landed: live patch + image PR
 
 Infra session — operational note in the private env session-notes.
