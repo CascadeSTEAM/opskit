@@ -13,6 +13,32 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-07-27 — Helpdesk ticket tooling: skill + MCP server extension
+
+**Key decisions:** codified a recurring manual pattern (reading/commenting on
+live Frappe Helpdesk tickets via SSH + `bench execute`) as a new
+`helpdesk-ticket` skill — two footguns had bitten real sessions: trusting a
+stale post-migration host copy, and posting to the wrong comment doctype
+(invisible in the portal UI). Discovered an existing-but-unconnected
+`mcp/erpnext-mcp-server.py` already covered list/get/create/update/reply;
+decided to extend and connect it rather than write a parallel script.
+Scoped the extension to add true per-agent ticket assignment (Frappe's
+standard assign-to/ToDo mechanism, not just bulk agent-group), fix the same
+comment-doctype bug in the MCP server's reply tool, generalize the server to
+use a configurable low-privilege service-account login instead of a
+hardcoded Administrator user, and register the server so it's actually
+connected.
+
+**Completed:** issue #67 / PR #68 merged — `helpdesk-ticket` skill added,
+registered in AGENTS.md, 115/115 tests green.
+
+**Open threads:** issue #69 (MCP server extension) opened and scoped, work
+started in its linked worktree but not yet implemented/committed — pick up
+next session. Idea ledger row added for an unrelated small UX gap surfaced
+along the way (row referencing a live-helpdesk diagnosis, no client detail).
+
+---
+
 ## 2026-07-27 — OpsKit 101 onboarding slide deck
 
 Session note: `docs/session-notes/2026-07-27-opskit-101-onboarding-deck.md`
