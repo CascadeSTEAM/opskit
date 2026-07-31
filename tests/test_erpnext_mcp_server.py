@@ -206,6 +206,36 @@ class TestCreateCustomerPaired:
         wire_client.delete.assert_not_called()
         assert wire_client.post.call_count == 1
 
+    def test_bridge_uses_actual_returned_name_not_input_label(self, mod, wire_client):
+        """Guards the Customer <-> HD Customer bridge against conflating the
+        display label (customer_name) with the real primary key
+        (Customer.name). Today cust_master_name == "Customer Name" so the two
+        happen to match, but if it were ever "Naming Series" Customer.name
+        would be a generated value like 'CUST-00042' while customer_name
+        stayed the display label -- the bridge must resolve to the real
+        primary key regardless."""
+        wire_client.post.side_effect = [
+            {"data": {"name": "CUST-00042"}},  # Customer.name != customer_name
+            {"data": {"name": "Acme Corp", "erpnext_customer": "CUST-00042"}},
+        ]
+        result = json.loads(mod.erpnext_create_customer(tenant=TENANT, customer_name="Acme Corp"))
+        assert "error" not in result
+
+        (_, hd_doc), _ = wire_client.post.call_args_list[1]
+        assert hd_doc["erpnext_customer"] == "CUST-00042"
+        assert hd_doc["erpnext_customer"] != "Acme Corp"
+
+    def test_missing_created_name_in_response_refuses_rather_than_guessing(self, mod, wire_client):
+        """If the Customer POST response is missing 'data.name', the code must
+        not fall back to guessing the primary key from customer_name -- that
+        guess could mis-pair the bridge or, on rollback, delete an unrelated
+        pre-existing Customer that happens to share the label."""
+        wire_client.post.return_value = {"data": {}}
+        result = json.loads(mod.erpnext_create_customer(tenant=TENANT, customer_name="Acme"))
+        assert "error" in result
+        assert wire_client.post.call_count == 1  # HD Customer must never be attempted
+        wire_client.delete.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Rename propagation

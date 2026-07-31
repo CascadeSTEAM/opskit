@@ -896,7 +896,21 @@ def erpnext_create_customer(
     except Exception as e:
         return json.dumps({"error": f"Customer creation failed; nothing created: {e}"})
 
-    created_customer = cust_result.get("data", {}).get("name") or customer_name
+    created_customer = (cust_result.get("data") or {}).get("name")
+    if not created_customer:
+        # Never fall back to the customer_name label here. The bridge field
+        # and any rollback delete must target the Customer's actual primary
+        # key (Customer.name), which only equals customer_name today because
+        # Selling Settings.cust_master_name == "Customer Name" -- if it were
+        # ever "Naming Series" the two would diverge, and guessing would
+        # either mis-pair the bridge or delete an unrelated pre-existing
+        # Customer that happens to share the label.
+        return json.dumps({
+            "error": "Customer creation response did not include a 'name' -- refusing to "
+            "guess the new record's identity (would risk mis-pairing HD Customer or "
+            "rolling back the wrong record). The Customer may have been created without "
+            "a paired HD Customer; check ERPNext manually and run erpnext_check_party_drift."
+        })
 
     hd_doc = {"customer_name": customer_name, "erpnext_customer": created_customer}
     if hd_domain:
