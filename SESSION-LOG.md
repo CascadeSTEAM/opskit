@@ -67,14 +67,39 @@ protection.
 - `frappe.rename_doc` (the `frappe/__init__.py` wrapper) does **not** accept
   `ignore_permissions`; only `frappe.model.rename_doc.rename_doc` does.
 
-**Completed:** issues #70 and #71 closed via PRs #72 and #73 (squash-merged);
-142 tests green (115 pre-existing + 25 new + 2 injection regressions).
+**Path A's record surface was then extended too** (#74 / PR #75): full party
+management with a 1:1 invariant that the application cannot enforce itself,
+because the bridge between the two customer doctypes is a free-text field
+rather than a link — so the tooling owns the invariant, including a drift
+check that doubles as its regression test.
 
-**Open threads:** extending Path A's record surface to parties/relationships is
-deliberately deferred pending a development instance (tracked privately). Idea
-row 15 logged (site named for a superseded vhost, forcing a permanent
-reverse-proxy Host rewrite). A stray top-level `rules/iac-required.md` still
-carries pre-split wording — pre-existing dual-harness drift, tracked in #62.
+**A defect CI structurally could not see.** After that merge, the suite failed
+locally while CI reported success on the byte-identical commit — not venv, not
+ordering. The server read a **gitignored local config file at import time**, so
+CI (which never has one) was permanently green while any developer holding real
+config saw 41 failures. Fixed in #76 / PR #77 by making the config path
+injectable. Worth internalizing: *"CI is green" is not "the suite passes"* — a
+suite that depends on the **absence** of gitignored config is green forever and
+wrong for everyone.
+
+**Method note that paid for itself:** every PR was built by one agent and then
+critiqued by a **fresh adversarial reviewer**, never the author. Two of three
+reviews found real high-severity defects, and in one case the reviewer also
+showed the feature's own test could not have caught its bug — a passing test
+that proved nothing. Author self-review would have missed both.
+
+**Completed:** issues #70, #71, #74, #76 closed via PRs #72, #73, #75, #77
+(all squash-merged). **191 tests green**, verified both with and without local
+config present.
+
+**Open threads:** live write-path validation of the party tooling is
+deliberately deferred pending a development instance (tracked privately) — the
+service account is read-only by design. Idea row 15 logged (site named for a
+superseded vhost, forcing a permanent reverse-proxy Host rewrite). A stray
+top-level `rules/iac-required.md` still carries pre-split wording — pre-existing
+dual-harness drift, tracked in #62. **Issue #69's in-progress worktree targets
+the same MCP server file that #73 and #75 substantially rewrote, so it needs
+rebase or reassessment before it resumes.**
 
 ## 2026-07-27 — Helpdesk ticket tooling: skill + MCP server extension
 
