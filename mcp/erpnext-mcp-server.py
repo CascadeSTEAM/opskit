@@ -26,10 +26,19 @@ Tenant configuration:
       }
     }
 
+Auth:
+  Uses Frappe token auth (Authorization: token <api_key>:<api_secret>) against
+  a low-privilege service account -- never Administrator, never a plaintext
+  password. Resolve the key/secret from the vault at runtime; do not commit
+  them (see .opencode/rules/no-plaintext-creds.md).
+
 Environment (or .env):
-  Each tenant reads ERPNEXT_ADMIN_PASSWORD_<TENANT_KEY_UPPERCASED>, e.g.:
-  ERPNEXT_ADMIN_PASSWORD_CLIENT1=<password for helpdesk.client1.example.org>
-  # ERPNEXT_ADMIN_PASSWORD=<password>   # fallback used for any tenant without its own var
+  Each tenant reads ERPNEXT_API_KEY_<TENANT_KEY_UPPERCASED> and
+  ERPNEXT_API_SECRET_<TENANT_KEY_UPPERCASED>, e.g.:
+  ERPNEXT_API_KEY_CLIENT1=<service-account API key for helpdesk.client1.example.org>
+  ERPNEXT_API_SECRET_CLIENT1=<service-account API secret>
+  # ERPNEXT_API_KEY=<key>       # fallback used for any tenant without its own var
+  # ERPNEXT_API_SECRET=<secret> # fallback used for any tenant without its own var
 """
 
 import asyncio
@@ -80,35 +89,19 @@ def load_env():
 
 
 class FrappeClient:
-    def __init__(self, base_url: str, site: str, password: str):
+    """Talks to a Frappe/ERPNext site as a configured service account using
+    token auth (Authorization: token <api_key>:<api_secret>) -- no login
+    call, no session cookie, no Administrator password."""
+
+    def __init__(self, base_url: str, site: str, api_key: str, api_secret: str):
         self.base_url = base_url.rstrip("/")
         self.site = site
-        self.password = password
         self.session = requests.Session()
-        self._login()
-
-    def _login(self):
-        resp = self.session.post(
-            f"{self.base_url}/api/method/login",
-            data={"usr": "Administrator", "pwd": self.password},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("message") != "Logged In":
-            raise RuntimeError(f"Login failed for {self.site}: {resp.text}")
-
-    def _ensure_auth(self):
-        if not self.session.cookies.get("sid", domain=self.site):
-            self._login()
+        self.session.headers.update({"Authorization": f"token {api_key}:{api_secret}"})
 
     def _request(self, method: str, resource: str, **kwargs):
         url = f"{self.base_url}/api/resource/{resource}"
-        self._ensure_auth()
         resp = self.session.request(method, url, **kwargs)
-        if resp.status_code in (401, 417):
-            self._login()
-            resp = self.session.request(method, url, **kwargs)
         resp.raise_for_status()
         return resp.json()
 
@@ -123,7 +116,6 @@ class FrappeClient:
 
     def run_method(self, method: str, params: dict = None):
         url = f"{self.base_url}/api/method/{method}"
-        self._ensure_auth()
         resp = self.session.post(url, data=params or {}, timeout=15)
         resp.raise_for_status()
         return resp.json()
@@ -136,18 +128,22 @@ def get_client(tenant: str) -> FrappeClient:
     if tenant not in _clients:
         load_env()
         site = TENANTS[tenant]["site"]
-        env_key = f"ERPNEXT_ADMIN_PASSWORD_{tenant.upper()}"
-        password = os.environ.get(env_key) or os.environ.get("ERPNEXT_ADMIN_PASSWORD")
-        if not password:
+        key_var = f"ERPNEXT_API_KEY_{tenant.upper()}"
+        secret_var = f"ERPNEXT_API_SECRET_{tenant.upper()}"
+        api_key = os.environ.get(key_var) or os.environ.get("ERPNEXT_API_KEY")
+        api_secret = os.environ.get(secret_var) or os.environ.get("ERPNEXT_API_SECRET")
+        if not api_key or not api_secret:
             raise RuntimeError(
-                f"{env_key} (or ERPNEXT_ADMIN_PASSWORD) not set. Add to .env or export it."
+                f"{key_var}/{secret_var} (or ERPNEXT_API_KEY/ERPNEXT_API_SECRET) not set. "
+                "Resolve the service account's API key/secret from the vault and export "
+                "them (or add to .env) -- never commit them."
             )
         # Connect to each tenant's real domain directly rather than a shared
         # IP + Host header -- both tenants sit behind cs-caddy's automatic
         # HTTPS, which redirects plain-HTTP-by-IP requests to the real
         # hostname, and a cert issued for that hostname won't validate
         # against a bare-IP connection anyway.
-        _clients[tenant] = FrappeClient(f"https://{site}", site, password)
+        _clients[tenant] = FrappeClient(f"https://{site}", site, api_key, api_secret)
     return _clients[tenant]
 
 
@@ -344,7 +340,7 @@ def erpnext_add_reply(
         ticket_id: Ticket ID to reply to.
         content: Message content (supports HTML, plain text will be wrapped).
         reply_type: 'Reply' for customer-facing reply, 'Comment' for internal note.
-        sender: Sender email (defaults to Administrator).
+        sender: Sender email (defaults to the connected service account if omitted).
     """
     if tenant not in TENANTS:
         return f"Invalid tenant '{tenant}'. Choose: {', '.join(TENANTS.keys())}"
@@ -433,8 +429,13 @@ def erpnext_list_tenants() -> str:
 
 def test_tools():
     load_env()
-    if not any(os.environ.get(f"ERPNEXT_ADMIN_PASSWORD_{t.upper()}") or os.environ.get("ERPNEXT_ADMIN_PASSWORD") for t in TENANTS):
-        print("No ERPNEXT_ADMIN_PASSWORD_<TENANT> (or ERPNEXT_ADMIN_PASSWORD) set. Edit .env first.")
+    has_creds = any(
+        (os.environ.get(f"ERPNEXT_API_KEY_{t.upper()}") or os.environ.get("ERPNEXT_API_KEY"))
+        and (os.environ.get(f"ERPNEXT_API_SECRET_{t.upper()}") or os.environ.get("ERPNEXT_API_SECRET"))
+        for t in TENANTS
+    )
+    if not has_creds:
+        print("No ERPNEXT_API_KEY_<TENANT>/ERPNEXT_API_SECRET_<TENANT> (or the unsuffixed fallbacks) set. Edit .env first.")
         sys.exit(1)
 
     print("=== Testing ERPNext MCP Tools ===\n")
