@@ -38,8 +38,27 @@ def load_module():
     return mod
 
 
+TENANT = "client1"  # the tenant key baked into the fixture below
+
+
 @pytest.fixture
-def mod():
+def isolated_tenants_file(tmp_path, monkeypatch):
+    """Point ERPNEXT_TENANTS_FILE at a throwaway fixture file so the module
+    (loaded fresh per test via `load_module`, below) never reads a
+    developer's real, gitignored mcp/tenants.local.json -- whether or not
+    one exists, and regardless of what it contains (opskit issue #76: the
+    suite used to inherit whatever that file happened to hold, so it passed
+    with no local file and failed for anyone with real tenant config)."""
+    fixture_file = tmp_path / "tenants.local.json"
+    fixture_file.write_text(json.dumps({
+        TENANT: {"site": "helpdesk.example.org", "description": "Fixture tenant for tests"},
+    }))
+    monkeypatch.setenv("ERPNEXT_TENANTS_FILE", str(fixture_file))
+    return fixture_file
+
+
+@pytest.fixture
+def mod(isolated_tenants_file):
     return load_module()
 
 
@@ -63,9 +82,6 @@ def http_error(status_code=409, body=None):
     if body is not None:
         resp._content = json.dumps(body).encode("utf-8")
     return requests.HTTPError(response=resp)
-
-
-TENANT = "client1"  # the built-in fallback tenant when tenants.local.json is absent
 
 
 # ---------------------------------------------------------------------------
@@ -630,3 +646,42 @@ class TestFindHdCustomerFor:
         client.get.return_value = {"data": [{"name": "hdA", "erpnext_customer": "Acme"}]}
         found = mod._find_hd_customer_for(client, "Acme")
         assert found["name"] == "hdA"
+
+
+# ---------------------------------------------------------------------------
+# Regression guard for opskit issue #76: this suite must never depend on the
+# presence, absence, or content of a developer's real, gitignored
+# mcp/tenants.local.json. The `mod` fixture achieves this by pointing
+# ERPNEXT_TENANTS_FILE at a throwaway fixture file (see `isolated_tenants_file`
+# above) instead of relying on the module's hardcoded default path. These
+# tests pin down that the override is actually load-bearing -- if the
+# ERPNEXT_TENANTS_FILE coupling in mcp/erpnext-mcp-server.py were ever
+# removed (reverting to reading only the fixed default path), the module
+# would fall back to reading whatever is (or isn't) really on disk, and the
+# assertions below -- which check for exact fixture content that has nothing
+# to do with the default fallback tenant -- would fail.
+# ---------------------------------------------------------------------------
+
+class TestTenantConfigIsolation:
+    def test_module_tenants_come_from_the_injected_file(self, mod, isolated_tenants_file):
+        on_disk = json.loads(isolated_tenants_file.read_text())
+        assert mod.TENANTS == on_disk
+
+    def test_env_override_wins_with_multiple_distinct_tenants(self, tmp_path, monkeypatch):
+        """A from-scratch check (independent of the `mod`/`isolated_tenants_file`
+        fixtures) that ERPNEXT_TENANTS_FILE, when pointed at a file with
+        multiple tenants whose keys/sites differ from the module's built-in
+        fallback ('client1'), is what the module actually loads."""
+        fixture_file = tmp_path / "custom_tenants.json"
+        fixture_file.write_text(json.dumps({
+            "alpha": {"site": "helpdesk.alpha.example.org", "description": "Fixture tenant alpha"},
+            "beta": {"site": "helpdesk.beta.example.org", "description": "Fixture tenant beta"},
+        }))
+        monkeypatch.setenv("ERPNEXT_TENANTS_FILE", str(fixture_file))
+
+        module = load_module()
+
+        assert set(module.TENANTS) == {"alpha", "beta"}
+        assert "client1" not in module.TENANTS
+        assert module.TENANTS["alpha"]["site"] == "helpdesk.alpha.example.org"
+        assert module.TENANTS["beta"]["site"] == "helpdesk.beta.example.org"
