@@ -70,6 +70,11 @@ Tenant configuration:
       }
     }
 
+  Set ERPNEXT_TENANTS_FILE to point at a different path instead of the
+  default mcp/tenants.local.json -- this is how the test suite stays
+  independent of whatever (if anything) a developer has locally (opskit
+  issue #76): it never reads the real gitignored file.
+
 Auth:
   Uses Frappe token auth (Authorization: token <api_key>:<api_secret>) against
   a low-privilege service account -- never Administrator, never a plaintext
@@ -102,7 +107,14 @@ except ImportError:
 
 REPO_ROOT = Path(__file__).parent.parent.resolve()
 
-_TENANTS_FILE = Path(__file__).parent / "tenants.local.json"
+# ERPNEXT_TENANTS_FILE lets a caller (notably the test suite) override the
+# config path instead of always reading the developer's real, gitignored
+# mcp/tenants.local.json -- see "Tenant configuration" above (opskit #76).
+_TENANTS_FILE = (
+    Path(os.environ["ERPNEXT_TENANTS_FILE"])
+    if os.environ.get("ERPNEXT_TENANTS_FILE")
+    else Path(__file__).parent / "tenants.local.json"
+)
 
 
 def _load_tenants() -> dict:
