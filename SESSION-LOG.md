@@ -13,6 +13,29 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-07-31 — One sanctioned Frappe/ERPNext Path B execution wrapper
+
+Session note: `docs/session-notes/2026-07-31-frappe-exec-path-b-wrapper.md`
+
+**Key decisions:** added `bin/frappe-exec.py` as the single sanctioned Path B
+(SSH + `docker exec` + bench) route, engineering three recurring defects out
+structurally instead of documenting them again: never `bench console` (venv
+python over stdin instead), never `docker cp` (script base64-embedded and
+streamed, no file ever written in-container), always one JSON envelope
+`{"ok","result","error"}` so falsy/empty results are never ambiguous. Fixed
+Path A's auth defect in `mcp/erpnext-mcp-server.py` — configurable
+API-key/secret token auth replacing hardcoded `Administrator` + plaintext
+password. Added the `frappe-access` skill for the A-vs-B routing rule.
+
+**Completed:** issue #71 / PR opened — 140/140 tests green (115 pre-existing
++ 25 new).
+
+**Open threads:** Path A's record-surface extension (parties/relationships)
+and the separate tool-placement-rule issue (script vs. Ansible role) that
+issue #71 named as dependencies were left for follow-up, as scoped.
+
+---
+
 ## 2026-07-27 — Helpdesk ticket tooling: skill + MCP server extension
 
 **Key decisions:** codified a recurring manual pattern (reading/commenting on
