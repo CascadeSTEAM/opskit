@@ -13,28 +13,68 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
-## 2026-07-31 — One sanctioned Frappe/ERPNext Path B execution wrapper
+## 2026-07-31 — Two execution paths for Frappe; one of them now sanctioned
 
 Session note: `docs/session-notes/2026-07-31-frappe-exec-path-b-wrapper.md`
 
-**Key decisions:** added `bin/frappe-exec.py` as the single sanctioned Path B
-(SSH + `docker exec` + bench) route, engineering three recurring defects out
-structurally instead of documenting them again: never `bench console` (venv
-python over stdin instead), never `docker cp` (script base64-embedded and
-streamed, no file ever written in-container), always one JSON envelope
-`{"ok","result","error"}` so falsy/empty results are never ambiguous. Fixed
-Path A's auth defect in `mcp/erpnext-mcp-server.py` — configurable
-API-key/secret token auth replacing hardcoded `Administrator` + plaintext
-password. Added the `frappe-access` skill for the A-vs-B routing rule.
+**Correction to how these defects were first framed.** They are *not* general
+Frappe traps. They belong specifically to the SSH + container-exec + `bench`
+path ("Path B"). The repo's existing HTTP/REST MCP server ("Path A") is
+**structurally immune to all three**, because it speaks JSON in and JSON out:
 
-**Completed:** issue #71 / PR opened — 140/140 tests green (115 pre-existing
-+ 25 new).
+- `bench execute` **suppresses falsy return values** — a call returning `0`
+  prints nothing. Empty output is neither an error nor reliably zero, so
+  reading it wrong yields a confidently false answer. A correctness defect,
+  not a cosmetic one. (Live contrast: the same count over HTTP returns
+  `{"message": 0}`.)
+- `bench console` mangles piped multi-line scripts (IPython auto-indent).
+- Frappe images exec as a **non-root** user while `docker cp` writes
+  **root-owned** files into a sticky `/tmp` — cleanup fails with "Operation not
+  permitted" and scripts persist in the container unless `docker exec -u 0` is
+  used. (This one bit: a cleanup step was reported done when it had not been.)
 
-**Open threads:** Path A's record-surface extension (parties/relationships)
-and the separate tool-placement-rule issue (script vs. Ansible role) that
-issue #71 named as dependencies were left for follow-up, as scoped.
+**The real problem was that no rule said which path to use**, so the
+credential-free `bench` path kept being hand-rolled — six times in one session.
+Path A wasn't the default because it authenticated as `Administrator` with a
+password from a plaintext `.env`, contradicting
+`.opencode/rules/no-plaintext-creds.md`. That auth defect was the actual blocker.
 
----
+**What shipped:** `bin/frappe-exec.py` as the single sanctioned Path B route,
+engineering all three defects out structurally rather than documenting them
+again — never `bench console` (venv python over stdin), never `docker cp` (no
+file ever written in-container), always one JSON envelope
+`{"ok","result","error"}` so falsy and empty can never be confused. Path A's
+auth replaced with configurable API-key/secret token auth. New `frappe-access`
+skill carries the A-vs-B routing rule; the tools carry the behaviour.
+
+**A fresh adversarial critique before merge caught a high-severity defect the
+author pass missed:** `ssh` appends trailing argv into a *single string* that a
+remote shell parses, so unquoted interpolation of a container name achieved
+arbitrary remote command execution. Fixed with `shlex.quote` plus regression
+tests. Worth generalizing — anything building an `ssh` command from
+parameters needs quoting, and "it's passed as separate argv elements" is not
+protection.
+
+**Key decisions:**
+- A documented footgun is not a fixed footgun — make the trap-laden path
+  non-default and non-hand-rolled instead of adding footnotes to a skill.
+- Tool-placement rule split by *kind* of state: Ansible for system/deployment
+  state, MCP tool for application records. The old single rule was genuinely
+  ambiguous and stalled a decision twice in one session.
+- An "epic" in Frappe Helpdesk is expressed by subject-prefix convention plus
+  cross-referencing, not a doctype field — the app has no native parent/epic
+  concept and a schema change isn't warranted for grouping tickets.
+- `frappe.rename_doc` (the `frappe/__init__.py` wrapper) does **not** accept
+  `ignore_permissions`; only `frappe.model.rename_doc.rename_doc` does.
+
+**Completed:** issues #70 and #71 closed via PRs #72 and #73 (squash-merged);
+142 tests green (115 pre-existing + 25 new + 2 injection regressions).
+
+**Open threads:** extending Path A's record surface to parties/relationships is
+deliberately deferred pending a development instance (tracked privately). Idea
+row 15 logged (site named for a superseded vhost, forcing a permanent
+reverse-proxy Host rewrite). A stray top-level `rules/iac-required.md` still
+carries pre-split wording — pre-existing dual-harness drift, tracked in #62.
 
 ## 2026-07-27 — Helpdesk ticket tooling: skill + MCP server extension
 
