@@ -50,6 +50,7 @@ import argparse
 import base64
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -161,7 +162,20 @@ def build_command(container: str, ssh_alias: str, venv_python: str, cwd: str) ->
     if ssh_alias:
         # SSH aliases only (AGENTS.md) -- never a raw IP -- resolved by the
         # caller's ~/.ssh/config, not this script.
-        return ["ssh", ssh_alias] + docker_part
+        #
+        # ssh(1) does NOT execute docker_part as a local argv array on the
+        # remote end: "If supplied, the arguments will be appended to the
+        # command, separated by spaces, before it is sent to the server to be
+        # executed" -- i.e. ssh joins every trailing argument into ONE string
+        # with plain spaces and a shell on the remote host parses that
+        # string. Passing docker_part unquoted here would let a container /
+        # cwd / venv_python value containing shell metacharacters (';',
+        # '$(...)', backticks, quotes, spaces) execute arbitrary commands on
+        # the remote host. Fix: shell-quote every token ourselves and hand
+        # ssh a single already-quoted string, so ssh has nothing left to
+        # join and the remote shell reconstructs exactly these tokens.
+        remote_cmd = " ".join(shlex.quote(part) for part in docker_part)
+        return ["ssh", ssh_alias, remote_cmd]
     return docker_part
 
 

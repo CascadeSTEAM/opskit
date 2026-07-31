@@ -9,6 +9,7 @@ between tests without import caching getting in the way.
 import importlib.util
 import io
 import json
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -57,12 +58,48 @@ class TestBuildCommand:
     def test_ssh_alias_wraps_docker_exec(self, fe):
         cmd = fe.build_command("mycontainer", "myhostalias", "/venv/bin/python", "/sites")
         assert cmd[0:2] == ["ssh", "myhostalias"]
-        assert "docker" in cmd
+        # The remote command is one already shell-quoted string (see
+        # test_ssh_alias_quotes_hostile_values for why), not separate argv
+        # elements -- ssh(1) would otherwise re-join separate elements with
+        # spaces and hand them to a remote shell.
+        assert len(cmd) == 3
+        assert "docker" in cmd[2]
 
     def test_no_ssh_alias_runs_docker_directly(self, fe):
         cmd = fe.build_command("mycontainer", "", "/venv/bin/python", "/sites")
         assert cmd[0] == "docker"
         assert "ssh" not in cmd
+
+    def test_ssh_alias_quotes_hostile_values(self, fe):
+        """ssh(1): 'the arguments will be appended to the command, separated
+        by spaces, before it is sent to the server to be executed' -- ssh
+        joins trailing argv with plain spaces and a shell on the remote end
+        parses the result. A container/cwd/venv_python value containing
+        shell metacharacters must not be able to inject a second command."""
+        evil_container = "good; touch /tmp/PWNED; echo x"
+        cmd = fe.build_command(evil_container, "myhostalias", "/venv/bin/python", "/sites")
+        assert cmd[0:2] == ["ssh", "myhostalias"]
+        remote_string = cmd[2]
+
+        # Simulate what ssh(1) does on the remote end: hand the string to a
+        # POSIX shell. shlex (POSIX mode) is a faithful stand-in for that.
+        parsed_back = shlex.split(remote_string)
+        assert parsed_back == [
+            "docker", "exec", "-i", "-w", "/sites",
+            evil_container, "/venv/bin/python", "-",
+        ]
+        # The injected shell metacharacters must not appear unquoted/bare in
+        # the string ssh will forward -- i.e. they must be wrapped in quotes.
+        assert "'good; touch /tmp/PWNED; echo x'" in remote_string
+
+    def test_no_ssh_alias_needs_no_quoting(self, fe):
+        """Without --ssh-alias, subprocess.run gets the argv list directly
+        (no shell=True, no remote shell) -- metacharacters in a value are
+        just inert bytes in one argv element, never re-parsed."""
+        evil_container = "good; touch /tmp/PWNED; echo x"
+        cmd = fe.build_command(evil_container, "", "/venv/bin/python", "/sites")
+        assert evil_container in cmd
+        assert cmd == ["docker", "exec", "-i", "-w", "/sites", evil_container, "/venv/bin/python", "-"]
 
 
 class TestBuildHarness:
