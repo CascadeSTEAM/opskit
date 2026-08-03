@@ -13,6 +13,58 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-08-03 — Two guards that had never guarded anything
+
+PRs open: #88 (unbreak ansible-lint repo-wide + regression guard), #89 (make the
+workstation Ansible toolchain playbook actually run). Issues filed: #86 (Proxmox
+MCP wiring), #87 (ansible-lint backlog triage). Ledger row 22. This session
+touched live systems; operational detail is in the private environment layer.
+
+**Closed out yesterday's open question first: the parallel MCP entry namespaces
+correctly, no collision, nothing to disable.** Worth recording the method, since
+it cost more than it should have — per-server connect status and the server's
+own tool endpoints do *not* include MCP tools, so the only way to enumerate the
+resolved tool namespace is to run an actual agent session and ask it. Two
+runtime entries whose backing clones or config had never existed were removed.
+
+**`skip_list` contained a rule that cannot be skipped, and so nothing was ever
+linted.** `syntax-check` is unskippable; listing it makes ansible-lint abort on
+the config instead of skipping that one rule. 13 playbooks and 14 roles, never
+checked. The CI step carried the identical bug from a second direction — the
+same rule on the command line, with `continue-on-error` swallowing the abort.
+
+**What made it survive is worth generalising: the failure exited non-zero.**
+"Lint ran and found problems" and "lint never ran" are the same signal to anyone
+skimming, so the breakage was self-camouflaging in the one place a human would
+look. This is the same class as 2026-08-02's silent MCP launch failures, and the
+third instance in two sessions of *a guard whose own correctness nothing checks*.
+The response was a test that fails if the config ever disables linting again —
+and it was verified by reintroducing the exact breakage, because a guard that
+has never been seen to fail is indistinguishable from one that cannot.
+
+**The toolchain playbook failed twice over, and the second failure was only
+reachable by fixing the first.** The reported bug was a module requiring a
+newer pipx than the current LTS ships — on the bootstrap playbook, so the
+unsupported case was the normal case. Fixing it revealed the collections task
+pointed at a requirements path that has never existed in this repo's history.
+Both failures sat on the path a fresh workstation takes, which means the
+playbook had almost certainly never run to completion anywhere. A third defect
+found while reading it: the toolchain-state report's PATH warning was
+unreachable, because the check meant to feed it aborted the play first — the
+diagnostic was dead exactly when it was needed.
+
+**Pattern across all three:** code that was never executed on the path it exists
+to serve. The lint config, the CI lint step, and the bootstrap playbook each
+looked maintained and each had never done its job. Tests assert behaviour of
+things we run; nothing asserted these ran at all.
+
+Unblocked before triaging #87: local and CI ansible-lint disagree 128 findings
+to 2, because CI pins the action five majors behind what a provisioned
+workstation installs. Cleaning against one leaves the tree dirty against the
+other — a straight #19 parity problem, and the version needs settling first.
+
+---
+
 ## 2026-08-02 — Installability, and the wiring nobody was checking
 
 Merged: #79 (workstation install guide + real dependency preflight),
