@@ -61,6 +61,42 @@ Threads: retire the duplicate copies once proven; four ledger rows
 (#18–21) covering a wiring guard, the retirement, an unrecoverable-environment
 check, and credential-documentation drift.
 
+### Continuation, 2026-08-03 — #85, and what linting the new playbook exposed
+
+`uv` was missing, so every `uvx`-distributed MCP server had silently never
+started. Installing it turned into an IaC question rather than a one-liner:
+`workstation-ansible-toolchain.yml` already states the principle at the top of
+the file — *control-node software lands via playbook, not ad-hoc shell* — so
+the fix is `workstation-mcp-toolchain.yml`, not a curl-pipe in the docs.
+
+**The playbook takes a `target` override, and that is the interesting part.**
+A freshly-provisioned workstation belongs to no inventory group, which is
+precisely when a provisioning playbook needs to run. A play hard-bound to
+`hosts: workstations` cannot bootstrap the machine it exists to bootstrap.
+The first draft had exactly that defect and the documented invocation matched
+zero hosts — visible only because it was actually run.
+
+**Two latent defects surfaced while validating one small playbook**, which
+says something about how much of the Ansible layer is unexercised:
+
+- **#83 (urgent)** — `.ansible-lint.yml` skips `syntax-check[specific]`, which
+  is unskippable, so ansible-lint aborts before evaluating a single rule. *No
+  playbook or role in this repo has ever been linted.* It exits non-zero, so
+  the breakage reads as "lint found problems" rather than "lint never ran" —
+  the same silent-failure shape as the MCP wiring above, and as the
+  documented-but-nonexistent script. Third instance this session of a check
+  that appears to run and doesn't.
+- **#84 (high)** — `community.general.pipx` requires pipx ≥ 1.7.0; the current
+  Ubuntu LTS ships 1.4.3. The existing toolchain playbook therefore fails at
+  its first task on a stock workstation. The new playbook drives the pipx CLI
+  with explicit idempotency guards instead, rather than upgrading pipx as a
+  side effect of installing something else.
+
+Order matters: #83 before #84, since unbreaking the linter sweeps all 13
+playbooks and 14 roles at once and #84's file is in that sweep.
+
+Session totals: #79, #81, #85 merged; #83, #84 open.
+
 ---
 
 ## 2026-07-31 — Two execution paths for Frappe; one of them now sanctioned
