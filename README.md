@@ -12,10 +12,13 @@ mature FOSS: [Ansible](https://ansible.com),
 
 ## Quick start
 
+For a **fully capable** workstation — Ansible, the commit guards, and the
+agent/MCP layer — follow [docs/INSTALL.md](docs/INSTALL.md). The short version:
+
 ```bash
 git clone https://github.com/CascadeSTEAM/opskit
 cd opskit
-bash install.sh              # symlink to PATH, install completions, check deps
+bash install.sh              # symlink to PATH, install completions, preflight deps
 opskit check                 # verify everything
 opskit setup                 # install pip deps + git hooks
 opskit init homelab --subnets 192.168.1.0/24
