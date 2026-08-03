@@ -13,6 +13,56 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-08-02 — Installability, and the wiring nobody was checking
+
+Merged: #79 (workstation install guide + real dependency preflight),
+#81 (vault-resolving MCP launcher). Operational detail is in the private
+environment layer — this session touched live systems.
+
+**The question that started it was "what do I install on a second machine",
+and the honest answer turned out to be "more than this repo knows about".**
+A fresh clone passed `install.sh` and then failed at the first playbook run,
+the first commit, or the first agent tool call: collections are gitignored,
+`core.hooksPath` is per-clone, `gitleaks`/`shellcheck` degrade silently, and
+the servers backing the domain subagents are launched by absolute path from
+outside the repo. `docs/INSTALL.md` now states each layer and what its absence
+disables; `install.sh` checks ~20 dependencies instead of 4 and distinguishes
+required from optional-per-capability.
+
+**`AGENTS.md` has instructed every session since the hooks rule landed to run
+`bash bin/setup-hooks.sh`. The script did not exist.** Documentation asserted a
+tool into being and nothing ever checked. Written now, with a `--check` mode.
+Worth noticing as a class: the repo's guards check *content* thoroughly and
+*its own claims about itself* not at all.
+
+**The larger instance of the same class:** the agent runtime was launching
+older duplicate copies of two MCP servers from a sibling repo. Everything
+merged into `mcp/` — an entire expanded tool surface, plus an auth fix — had
+never once been reachable from an agent session. The code shipped; the wiring
+pointed elsewhere; no test, guard, or review step covers "is the thing we
+built the thing that runs". `bin/mcp-run.sh` makes the launch path a
+first-class, tested artifact of this repo rather than tribal configuration,
+and `--check` exists specifically because the failure is *silent* — a server
+that fails to start is indistinguishable from an agent declining to call it.
+
+**Decision (owner, mid-session): add alongside, never cut over.** A parallel
+runtime entry now serves the in-repo implementation while the pre-existing one
+stays untouched, so the new path can be proven on real work with no moment of
+downtime and a one-line revert. A repoint made earlier in the session was
+reverted to honour this; the runtime config was verified byte-identical to its
+pre-session state before anything was added.
+
+Also learned, generally: adding a parallel MCP entry needs its own permission
+rules. Tools are namespaced by server key, so a new entry does *not* inherit
+the deny that covers the entry it shadows — it would be more exposed, not
+equally exposed.
+
+Threads: retire the duplicate copies once proven; four ledger rows
+(#18–21) covering a wiring guard, the retirement, an unrecoverable-environment
+check, and credential-documentation drift.
+
+---
+
 ## 2026-07-31 — Two execution paths for Frappe; one of them now sanctioned
 
 Session note: `docs/session-notes/2026-07-31-frappe-exec-path-b-wrapper.md`
