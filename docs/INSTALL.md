@@ -167,14 +167,36 @@ cd .opencode && npm install && cd ..
 ## 5. `uv` (required for the Python-packaged MCP servers)
 
 Some MCP servers are distributed as `uvx`-runnable packages rather than being
-vendored here:
+vendored here. Install it via the playbook, not the vendor's curl-pipe —
+control-node software lands via IaC (`.opencode/rules/iac-required.md`):
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+# On a workstation already in a `workstations` inventory group:
+bash bin/ap.sh playbooks/workstation-mcp-toolchain.yml
+
+# Bootstrap — a fresh workstation is in no inventory yet, which is exactly
+# when this needs to run:
+ansible-playbook -i "$(hostname)," -c local -e target="$(hostname)" \
+  ansible/playbooks/workstation-mcp-toolchain.yml
 ```
 
-Without `uv`, those servers simply fail to start and their tool namespaces are
-absent from the agent session.
+This installs `uv` through pipx in user scope, no root, and is idempotent —
+re-running reports `changed=0`. Rollback is `pipx uninstall uv`.
+
+`uv` and `uvx` are separate console scripts from the same package; the
+playbook verifies both resolve and that `uvx` is on `PATH`, because `uvx` is
+the entry point the MCP server definitions actually invoke.
+
+Without it, those servers fail to start and their tool namespaces are simply
+absent from the agent session — which reads as the agent declining to use
+them, not as a broken install.
+
+> The playbook drives `pipx` through its CLI rather than the
+> `community.general.pipx` module: that module requires pipx ≥ 1.7.0 and fails
+> with a bare version error on anything older, and the current Ubuntu LTS
+> ships 1.4.3. Worth knowing, because
+> `workstation-ansible-toolchain.yml` *does* use the module and will fail the
+> same way on a stock workstation.
 
 ---
 
@@ -336,6 +358,7 @@ make lint                           # shell syntax + shellcheck
 bash bin/switch-env.sh <env>        # select environment, probe connectivity
 bash bin/check-connectivity.sh      # reachability for every probe in env.yml
 ansible-galaxy collection list      # the three collections resolve
+uv --version && uvx --version       # uvx-distributed MCP servers can start
 ```
 
 Then verify the agent layer, which none of the above touches:
@@ -356,6 +379,7 @@ Then verify the agent layer, which none of the above touches:
 | Commit succeeds locally, CI secret scan fails | `gitleaks` missing locally (§2) |
 | Commit rejected for a missing ticket reference | no active environment or ticket — run `switch-env.sh` then `open-ticket.sh` |
 | A whole MCP tool namespace is absent | server failed at launch: bad path, missing checkout, unbuilt `dist/`, or missing `.venv` (§6.4) |
+| Only the `uvx`-launched servers' tools are absent | `uv` not installed, or `uvx` not on `PATH` (§5) |
 | Every MCP server fails at once | no `BW_SESSION` exported before the runtime started (§6.4) |
 | Router/switch work has no available tool path | `mikromcp` not installed — direct SSH is denied by design, so there is no fallback (§4) |
 | `opskit` not found after install | `~/.local/bin` not on `PATH` |
@@ -376,7 +400,6 @@ sudo apt install -y git python3 python3-venv python3-pip nmap \
 # 2. runtimes
 nvm install 22 && npm install -g mikromcp @bitwarden/cli
 pipx install --include-deps ansible && pipx install ansible-lint
-curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # 3. repo
 git clone <opskit remote> && cd opskit
@@ -385,6 +408,8 @@ bash bin/setup-hooks.sh
 make deps
 ansible-galaxy collection install -r requirements.yml
 (cd .opencode && npm install)
+ansible-playbook -i "$(hostname)," -c local -e target="$(hostname)" \
+  ansible/playbooks/workstation-mcp-toolchain.yml     # uv/uvx
 
 # 4. user-level config + secrets (copied from the old workstation)
 #    ~/.claude/CLAUDE.md, ~/.config/opencode/, ~/.ssh/
