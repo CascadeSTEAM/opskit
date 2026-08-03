@@ -195,8 +195,12 @@ check_cmd mikromcp optional "the ONLY sanctioned RouterOS path — direct SSH is
     "npm install -g mikromcp"
 check_cmd bw       optional "credential resolution for every MCP wrapper" \
     "npm install -g @bitwarden/cli"
-check_cmd uvx      optional "uvx-distributed MCP servers" \
-    "curl -LsSf https://astral.sh/uv/install.sh | sh"
+# uv and uvx ship together but are linked separately — check both, or a
+# partial/shadowed install reads as a clean result either way.
+check_cmd uv       optional "uv toolchain (provides uvx)" \
+    "ansible-playbook -i \"\$(hostname),\" -c local -e target=\"\$(hostname)\" ansible/playbooks/workstation-mcp-toolchain.yml"
+check_cmd uvx      optional "uvx-distributed MCP servers — absent uvx means those tools never appear" \
+    "same playbook as uv (uvx is one of its console scripts)"
 check_cmd gh       optional "issue/PR workflow, bin/fix-issue.sh" "apt install gh"
 check_cmd jq       optional "JSON handling in shell tooling" "apt install jq"
 

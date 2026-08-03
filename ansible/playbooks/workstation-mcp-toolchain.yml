@@ -1,0 +1,96 @@
+---
+# workstation-mcp-toolchain.yml — runtime tooling the MCP servers depend on.
+#
+# Sibling to workstation-ansible-toolchain.yml, same principle (IaC rule
+# extension): control-node software lands via playbook, not ad-hoc shell.
+# Where that playbook covers the Ansible toolchain, this one covers what the
+# agent/MCP layer needs (issue #82).
+#
+# Installs/upgrades (user scope, no root):
+#   - uv via pipx — provides both `uv` and `uvx`. Without it, every
+#     uvx-distributed MCP server fails to start, and because a failed MCP
+#     server is silent, its tools simply never appear in the agent session.
+#
+# Rollback: pipx uninstall uv
+#
+# Usage:
+#   bash bin/ap.sh playbooks/workstation-mcp-toolchain.yml
+#
+#   Bootstrap (a freshly-provisioned workstation is not in any inventory yet,
+#   which is exactly when this needs to run). `target` overrides the host
+#   pattern, because an ad-hoc inventory host is in no group:
+#     ansible-playbook -i "$(hostname)," -c local -e target="$(hostname)" \
+#       ansible/playbooks/workstation-mcp-toolchain.yml
+
+- name: Workstation MCP runtime toolchain (pipx-managed uv/uvx)
+  hosts: "{{ target | default('workstations') }}"
+  gather_facts: true
+  vars:
+    local_bin: "{{ ansible_env.HOME }}/.local/bin"
+
+  tasks:
+    - name: Refuse to run on the wrong machine (mandatory for connection=local)
+      ansible.builtin.assert:
+        that: ansible_hostname == inventory_hostname
+        fail_msg: >-
+          This machine is {{ ansible_hostname }}, not {{ inventory_hostname }} —
+          refusing to run a workstation play meant for another host.
+
+    - name: Require pipx
+      ansible.builtin.command: pipx --version
+      register: pipx_check
+      changed_when: false
+      failed_when: pipx_check.rc != 0
+
+    # Deliberately NOT community.general.pipx: that module requires pipx
+    # >= 1.7.0 and fails with a bare version error on anything older. The
+    # current Ubuntu LTS ships 1.4.3, so on a stock workstation the module
+    # path is simply unavailable — and upgrading pipx itself is a wider change
+    # than a toolchain playbook should make as a side effect. pipx's own CLI
+    # is stable across both, so drive it directly and supply the idempotency
+    # the module would otherwise provide.
+    - name: Query pipx-managed packages
+      ansible.builtin.command: pipx list --short
+      register: pipx_list
+      changed_when: false
+
+    - name: Install uv via pipx
+      ansible.builtin.command: pipx install uv
+      when: "'uv ' not in pipx_list.stdout"
+      register: uv_install
+      changed_when: uv_install.rc == 0
+
+    - name: Upgrade uv via pipx
+      ansible.builtin.command: pipx upgrade uv
+      when: "'uv ' in pipx_list.stdout"
+      register: uv_upgrade
+      changed_when: "'upgraded' in (uv_upgrade.stdout | default('') | lower)"
+
+    # uv ships both console scripts; pipx only links the ones it discovers, so
+    # verify uvx explicitly rather than assuming it came along for the ride —
+    # uvx is the entry point the MCP server definitions actually invoke.
+    - name: Verify uv resolves and report version
+      ansible.builtin.command: "{{ local_bin }}/uv --version"
+      register: uv_version
+      changed_when: false
+
+    - name: Verify uvx resolves and report version
+      ansible.builtin.command: "{{ local_bin }}/uvx --version"
+      register: uvx_version
+      changed_when: false
+
+    - name: Verify shell PATH picks up uvx
+      ansible.builtin.command: which uvx
+      register: which_uvx
+      changed_when: false
+      failed_when: false
+
+    - name: Report toolchain state
+      ansible.builtin.debug:
+        msg:
+          - "{{ uv_version.stdout }}"
+          - "{{ uvx_version.stdout }}"
+          - >-
+            {{ 'PATH resolves uvx -> ' ~ which_uvx.stdout
+               if which_uvx.rc == 0
+               else 'WARNING: uvx not on PATH — check ~/.local/bin precedence (pipx ensurepath)' }}
