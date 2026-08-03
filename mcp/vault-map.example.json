@@ -1,0 +1,39 @@
+{
+  "_comment": [
+    "Template for the gitignored mcp/vault-map.local.json used by bin/mcp-run.sh.",
+    "Maps each MCP server's expected environment variables to the vault item",
+    "that holds the secret. Item identifiers and tenant names are why the real",
+    "file is gitignored (docs/client-data-policy.md) — keep this template free",
+    "of both.",
+    "",
+    "Top-level key = server name, i.e. mcp/<server>-mcp-server.py.",
+    "Value = {ENV_VAR: {item, field}}. 'field' is one of password | username |",
+    "notes | <custom field name>, and defaults to password when omitted.",
+    "",
+    "Which variables a server expects is documented in its own module",
+    "docstring. Two examples:",
+    "  technitium — one password per DNS server, named by that server's",
+    "               'env_pass' key in tenants-technitium.local.json",
+    "  erpnext    — ERPNEXT_API_KEY_<TENANT> and ERPNEXT_API_SECRET_<TENANT>",
+    "               per tenant in tenants.local.json (token auth against a",
+    "               low-privilege service account — never an admin password)"
+  ],
+
+  "technitium": {
+    "TECHNITIUM_CLIENT1_PASS": {
+      "item": "00000000-0000-0000-0000-000000000000",
+      "field": "password"
+    }
+  },
+
+  "erpnext": {
+    "ERPNEXT_API_KEY_CLIENT1": {
+      "item": "00000000-0000-0000-0000-000000000000",
+      "field": "username"
+    },
+    "ERPNEXT_API_SECRET_CLIENT1": {
+      "item": "00000000-0000-0000-0000-000000000000",
+      "field": "password"
+    }
+  }
+}

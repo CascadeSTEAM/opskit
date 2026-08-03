@@ -234,14 +234,27 @@ start. Audit the block and satisfy each entry:
 | Wrapper script in a sibling repo | clone that repo **and build its own virtualenv** — the wrappers exec their repo's `.venv/bin/python3`, not yours |
 | Node server in a sibling repo | clone **and build it** — the config points at compiled output under `dist/`, which is not committed |
 
-> **Check for drift while you migrate.** Wrapper scripts in sibling repos can
-> point at an *older copy* of a server that this repo has since superseded —
-> this repo's `mcp/` directory holds the current implementations. Before
-> copying the config verbatim, diff each wrapper's target against `mcp/` and
-> repoint it here if this repo's copy is newer. Migrating is the cheapest
-> moment to collapse that duplication.
+For the servers **this repo owns** (`mcp/*-mcp-server.py`), do not write a
+wrapper — use the launcher:
 
-Every wrapper aborts unless a vault session is exported first:
+```bash
+bin/mcp-run.sh --list                  # servers this repo provides
+bin/mcp-run.sh <server> --check        # validate the launch path, fetch nothing
+bin/mcp-run.sh <server>                # resolve secrets from the vault, exec the server
+```
+
+Point the runtime config at `bin/mcp-run.sh <server>`. Secrets are declared in
+a gitignored `mcp/vault-map.local.json` mapping each env var to a vault
+item/field — copy `mcp/vault-map.example.json` and fill it in. Nothing tracked
+in this repo contains a vault identifier or a tenant name.
+
+> **Check for drift while you migrate.** Wrapper scripts in sibling repos can
+> point at an *older copy* of a server this repo has since superseded. Before
+> copying the config verbatim, diff each wrapper's target against `mcp/` and
+> repoint it at `bin/mcp-run.sh` if this repo's copy is newer. Migrating is the
+> cheapest moment to collapse that duplication.
+
+Every launch path aborts unless a vault session is exported first:
 
 ```bash
 export BW_SESSION=$(bw unlock --raw)
@@ -249,6 +262,10 @@ export BW_SESSION=$(bw unlock --raw)
 
 Do this **before** starting the agent runtime — servers read the variable at
 launch, so unlocking afterwards does not help the current session.
+
+`--check` is the fast diagnosis for a missing tool namespace: it reports the
+venv, the server file, the vault map, the CLI, the session, and how many
+secrets are declared, without touching the vault or a live endpoint.
 
 ---
 
