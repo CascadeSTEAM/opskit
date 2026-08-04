@@ -7,18 +7,33 @@
 # Installs/upgrades (user scope, no root):
 #   - ansible-core via pipx (latest; shadows distro /usr/bin/ansible via ~/.local/bin)
 #   - ansible-lint via pipx (quality gate for Phase 4)
-#   - pinned collections from ansible/requirements.yml (into ~/.ansible/collections)
+#   - pinned collections from the repo-root requirements.yml (ansible.cfg sets
+#     collections_path = ./, so they land in ./ansible_collections/, gitignored)
 #
 # The distro ansible package is left untouched — rollback is `pipx uninstall ansible-core`.
 #
 # Usage:
-#   bash scripts/ap.sh playbooks/workstation-ansible-toolchain.yml
+#   bash bin/ap.sh playbooks/workstation-ansible-toolchain.yml
+#
+#   Bootstrap (a freshly-provisioned workstation is not in any inventory yet,
+#   which is exactly when this needs to run). `target` overrides the host
+#   pattern, because an ad-hoc inventory host is in no group:
+#     ansible-playbook -i "$(hostname)," -c local -e target="$(hostname)" \
+#       ansible/playbooks/workstation-ansible-toolchain.yml
 
 - name: Workstation Ansible toolchain (pipx ansible-core + lint + collections)
-  hosts: workstations
-  gather_facts: yes
+  hosts: "{{ target | default('workstations') }}"
+  gather_facts: true
   vars:
     local_bin: "{{ ansible_env.HOME }}/.local/bin"
+    # requirements.yml lives at the repo root, not under ansible/ — the old
+    # `{{ playbook_dir }}/../requirements.yml` pointed at a file that has never
+    # existed in this repo, so the play always failed here even once the pipx
+    # tasks succeeded.
+    repo_root: "{{ playbook_dir }}/../.."
+    pipx_packages:
+      - ansible-core
+      - ansible-lint
 
   tasks:
     - name: Refuse to run on the wrong machine (mandatory for connection=local)
@@ -34,20 +49,52 @@
       changed_when: false
       failed_when: pipx_check.rc != 0
 
-    - name: Install/upgrade ansible-core via pipx
-      community.general.pipx:
-        name: ansible-core
-        state: latest
+    # Deliberately NOT community.general.pipx: that module requires pipx
+    # >= 1.7.0 and fails with a bare version error on anything older. The
+    # current Ubuntu LTS ships 1.4.3, so on a stock workstation the module
+    # path is simply unavailable — and this is the bootstrap playbook, so the
+    # stock case is the normal case. Upgrading pipx itself is a wider change
+    # than a toolchain playbook should make as a side effect. pipx's own CLI
+    # is stable across both, so drive it directly and supply the idempotency
+    # the module would otherwise provide. Matches the sibling
+    # workstation-mcp-toolchain.yml (issues #82, #84).
+    - name: Query pipx-managed packages
+      ansible.builtin.command: pipx list --short
+      register: pipx_list
+      changed_when: false
 
-    - name: Install/upgrade ansible-lint via pipx
-      community.general.pipx:
-        name: ansible-lint
-        state: latest
+    # `pipx list --short` prints "<name> <version>" per line, so the trailing
+    # space anchors the match to a whole package name.
+    - name: Install missing toolchain packages via pipx
+      ansible.builtin.command: "pipx install {{ item }}"
+      loop: "{{ pipx_packages }}"
+      when: (item ~ ' ') not in pipx_list.stdout
+      register: pipx_install
+      changed_when: pipx_install.rc == 0
+
+    - name: Upgrade already-installed toolchain packages via pipx
+      ansible.builtin.command: "pipx upgrade {{ item }}"
+      loop: "{{ pipx_packages }}"
+      when: (item ~ ' ') in pipx_list.stdout
+      register: pipx_upgrade
+      changed_when: "'upgraded' in (pipx_upgrade.stdout | default('') | lower)"
+
+    - name: Fail early if the pinned requirements file is missing
+      ansible.builtin.stat:
+        path: "{{ repo_root }}/requirements.yml"
+      register: requirements_file
+
+    - name: Assert the pinned requirements file was found
+      ansible.builtin.assert:
+        that: requirements_file.stat.exists
+        fail_msg: >-
+          {{ repo_root }}/requirements.yml not found — the collection pins are
+          missing, so this playbook cannot install the toolchain it promises.
 
     - name: Install pinned collections from requirements.yml
       ansible.builtin.command: >
         {{ local_bin }}/ansible-galaxy collection install
-        -r {{ playbook_dir }}/../requirements.yml --upgrade
+        -r {{ repo_root }}/requirements.yml --upgrade
       register: galaxy_out
       changed_when: "'Installing' in galaxy_out.stdout or 'Downloading' in galaxy_out.stdout"
 
@@ -56,14 +103,25 @@
       register: new_ansible
       changed_when: false
 
+    # failed_when: false — a PATH that misses ~/.local/bin is exactly what the
+    # report below is meant to warn about, so this task must not abort the play
+    # before that warning can print. `command`, not `shell`: no shell features
+    # are needed here.
     - name: Verify shell PATH picks up the pipx ansible
-      ansible.builtin.shell: which ansible
+      ansible.builtin.command: which ansible
       register: which_ansible
       changed_when: false
+      failed_when: false
 
     - name: Report toolchain state
       ansible.builtin.debug:
         msg:
           - "{{ new_ansible.stdout_lines[0] }}"
-          - "PATH resolves ansible -> {{ which_ansible.stdout }}"
-          - "{{ 'OK: pipx ansible shadows distro' if local_bin in which_ansible.stdout else 'WARNING: PATH still resolves to distro ansible — check ~/.local/bin precedence (pipx ensurepath)' }}"
+          - >-
+            {{ 'PATH resolves ansible -> ' ~ which_ansible.stdout
+               if which_ansible.rc == 0
+               else 'WARNING: ansible not on PATH at all — check ~/.local/bin precedence (pipx ensurepath)' }}
+          - >-
+            {{ 'OK: pipx ansible shadows distro'
+               if which_ansible.rc == 0 and local_bin in which_ansible.stdout
+               else 'WARNING: PATH does not resolve to the pipx ansible — check ~/.local/bin precedence (pipx ensurepath)' }}
