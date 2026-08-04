@@ -74,9 +74,9 @@ def _run(root: Path, *args: str, bw: Path | None = None, session: str | None = "
     )
 
 
-def _login_item(username: str = "", password: str = "", fields=None, notes=""):
+def _login_item(username: str = "", password: str = "", fields=None, notes="", totp=""):
     return {
-        "login": {"username": username, "password": password},
+        "login": {"username": username, "password": password, "totp": totp},
         "notes": notes,
         "fields": fields or [],
     }
@@ -206,6 +206,32 @@ def test_field_defaults_to_password(tmp_path):
     result = _run(root, "demo", bw=bw)
 
     assert json.loads(result.stdout) == {"DEMO_PASS": "pw"}
+
+
+def test_totp_field_yields_the_seed(tmp_path):
+    """A server behind 2FA needs the TOTP *seed*, not a code — a code would be
+    stale by the time it was used. See opskit #90: the WireGuard dashboard
+    rejects a password-only login with a message that blames the password, so a
+    server that cannot reach the seed fails in a way that misdirects the
+    operator entirely."""
+    root = _make_root(tmp_path, {"demo": {"DEMO_TOTP": {"item": "i1", "field": "totp"}}})
+    bw = _make_bw_stub(tmp_path, {
+        "i1": _login_item(password="pw", totp="JBSWY3DPEHPK3PXP")
+    })
+
+    result = _run(root, "demo", bw=bw)
+
+    assert json.loads(result.stdout) == {"DEMO_TOTP": "JBSWY3DPEHPK3PXP"}
+
+
+def test_totp_field_on_an_item_without_one_is_a_clear_error(tmp_path):
+    root = _make_root(tmp_path, {"demo": {"DEMO_TOTP": {"item": "i1", "field": "totp"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(password="pw")})
+
+    result = _run(root, "demo", bw=bw)
+
+    assert result.returncode != 0
+    assert "totp" in result.stderr.lower()
 
 
 def test_custom_field_is_resolved(tmp_path):

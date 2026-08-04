@@ -11,12 +11,18 @@
     "notes | <custom field name>, and defaults to password when omitted.",
     "",
     "Which variables a server expects is documented in its own module",
-    "docstring. Two examples:",
+    "docstring. Three examples:",
     "  technitium — one password per DNS server, named by that server's",
     "               'env_pass' key in tenants-technitium.local.json",
     "  erpnext    — ERPNEXT_API_KEY_<TENANT> and ERPNEXT_API_SECRET_<TENANT>",
     "               per tenant in tenants.local.json (token auth against a",
-    "               low-privilege service account — never an admin password)"
+    "               low-privilege service account — never an admin password)",
+    "  wireguard  — password + TOTP seed per environment, named by that",
+    "               environment's 'env_pass' / 'env_totp' keys in",
+    "               tenants-wireguard.local.json. Note field 'totp': it exports",
+    "               the item's TOTP *seed* so the server can derive a fresh code",
+    "               per request. A dashboard with 2FA rejects a password-only",
+    "               login with a message that blames the password (opskit #90)."
   ],
 
   "technitium": {
@@ -34,6 +40,17 @@
     "ERPNEXT_API_SECRET_CLIENT1": {
       "item": "00000000-0000-0000-0000-000000000000",
       "field": "password"
+    }
+  },
+
+  "wireguard": {
+    "WG_CLIENT1_PASS": {
+      "item": "00000000-0000-0000-0000-000000000000",
+      "field": "password"
+    },
+    "WG_CLIENT1_TOTP_SEED": {
+      "item": "00000000-0000-0000-0000-000000000000",
+      "field": "totp"
     }
   }
 }

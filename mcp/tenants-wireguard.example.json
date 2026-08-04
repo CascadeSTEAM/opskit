@@ -1,0 +1,47 @@
+{
+  "_comment": [
+    "Template for the gitignored mcp/tenants-wireguard.local.json used by",
+    "mcp/wireguard-mcp-server.py. Hostnames, addresses and environment names are",
+    "why the real file is gitignored (docs/client-data-policy.md) — keep this",
+    "template free of all three.",
+    "",
+    "Top-level key = environment key, passed as the `env` argument to every tool.",
+    "",
+    "  url             WGDashboard base URL, reachable from the workstation. In",
+    "                  normal operation this is the in-tunnel address; a",
+    "                  localhost:PORT form implies an SSH port-forward must be",
+    "                  open first, which is the fallback for when the VPN is down.",
+    "  configuration   WireGuard interface to manage, e.g. wg0.",
+    "  username        dashboard account. Use a least-privilege account if the",
+    "                  dashboard supports one.",
+    "  env_pass        env var holding the dashboard password.",
+    "  env_totp        env var holding the TOTP *seed* (not a code). Required if",
+    "                  the account has 2FA — and a password-only login fails with",
+    "                  a message that blames the password, so omitting this is a",
+    "                  confusing failure (opskit #90). Map it in",
+    "                  mcp/vault-map.local.json with {\"field\": \"totp\"}.",
+    "  reference_peer  existing peer whose access scope a new peer mirrors by",
+    "                  default, so a new user gets the same access the team has",
+    "                  rather than a hand-typed guess. Pick a peer that is",
+    "                  actually in use.",
+    "  dns             resolver handed to clients. Usually the internal resolver,",
+    "                  so users can reach services by name.",
+    "  mtu, keepalive  optional; default 1420 / 21. Match the existing peers.",
+    "",
+    "Peer addresses are allocated automatically from the server's own subnet —",
+    "there is no pool to configure here."
+  ],
+
+  "client1": {
+    "url": "http://192.0.2.9:10086",
+    "configuration": "wg0",
+    "username": "admin",
+    "env_pass": "WG_CLIENT1_PASS",
+    "env_totp": "WG_CLIENT1_TOTP_SEED",
+    "reference_peer": "someone_laptop",
+    "dns": "203.0.113.2",
+    "mtu": 1420,
+    "keepalive": 21,
+    "description": "Example environment — replace with your own."
+  }
+}
