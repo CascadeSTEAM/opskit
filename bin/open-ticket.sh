@@ -7,6 +7,14 @@
 #   bin/open-ticket.sh "Subject"          # create ticket on active env helpdesk
 #   bin/open-ticket.sh --local "Subject"  # local-only ticket (opt-in; skips helpdesk)
 #   bin/open-ticket.sh close              # clear active ticket
+#
+# Credentials (issue #91) — API token preferred, admin password as a fallback:
+#   ERPNEXT_API_KEY_<TENANT> + ERPNEXT_API_SECRET_<TENANT>   (least privilege)
+#   ERPNEXT_ADMIN_PASSWORD_<TENANT> [+ ERPNEXT_ADMIN_USER_<TENANT>]
+# <TENANT> is ticket.helpdesk_tenant from env.yml, uppercased; the un-suffixed
+# names are used when an env declares no tenant. Resolve the token pair from the
+# vault rather than exporting it by hand — see mcp/vault-map.local.json and
+# bin/mcp-run.sh. Creating a ticket needs helpdesk-agent rights, not site admin.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -124,26 +132,54 @@ TICKET_ID=$(HELPDESK_TENANT="$HELPDESK_TENANT" \
     python3 - <<'PYEOF'
 import os, sys
 
+# Auth preference: API token first, admin session login only as an explicit
+# fallback (issue #91). The repo provisions ERPNEXT_API_KEY_<TENANT> /
+# ERPNEXT_API_SECRET_<TENANT> through mcp/vault-map + bin/mcp-run.sh for a
+# least-privilege service account; it has never provisioned an admin password,
+# and the only Administrator credential in the vault is a retired one that 401s.
+# Creating a ticket needs helpdesk-agent rights, which the service account has,
+# so demanding full site admin for it was backwards.
 tenant = os.environ.get("HELPDESK_TENANT", "")
-var = f"ERPNEXT_ADMIN_PASSWORD_{tenant.upper()}" if tenant else "ERPNEXT_ADMIN_PASSWORD"
-password = os.environ.get(var, "")
+suffix = f"_{tenant.upper()}" if tenant else ""
+key_var, secret_var = f"ERPNEXT_API_KEY{suffix}", f"ERPNEXT_API_SECRET{suffix}"
+pw_var, user_var = f"ERPNEXT_ADMIN_PASSWORD{suffix}", f"ERPNEXT_ADMIN_USER{suffix}"
+
+api_key = os.environ.get(key_var) or os.environ.get("ERPNEXT_API_KEY", "")
+api_secret = os.environ.get(secret_var) or os.environ.get("ERPNEXT_API_SECRET", "")
+password = os.environ.get(pw_var) or os.environ.get("ERPNEXT_ADMIN_PASSWORD", "")
+# Never hardcode an administrative username; default only if a password path is
+# actually being used.
+admin_user = os.environ.get(user_var) or os.environ.get("ERPNEXT_ADMIN_USER", "Administrator")
 host = os.environ.get("HELPDESK_ENDPOINT", "")
 
+token_auth = bool(api_key and api_secret)
+
 # Validate config BEFORE importing requests, so a missing credential fails
-# fast with a clear, network-free error.
-if not password:
-    print(f"ERROR: helpdesk credential env var {var} is not set", file=sys.stderr)
+# fast with a clear, network-free error that names what was looked for.
+if not token_auth and not password:
+    print(
+        "ERROR: no helpdesk credential found. Tried token auth "
+        f"({key_var} + {secret_var}) then password auth ({pw_var}). "
+        "Token auth is preferred — resolve it from the vault with "
+        "`bin/mcp-run.sh erpnext` or export the pair.",
+        file=sys.stderr,
+    )
     sys.exit(1)
 if not host:
     print("ERROR: helpdesk_endpoint not set in env.yml", file=sys.stderr)
     sys.exit(1)
 
+method = "token" if token_auth else "password"
 try:
     import requests
     s = requests.Session()
-    resp = s.post(f"{host}/api/method/login",
-                  json={"usr": "Administrator", "pwd": password}, timeout=10)
-    resp.raise_for_status()
+    if token_auth:
+        # Frappe token auth: no session login, no CSRF handling.
+        s.headers["Authorization"] = f"token {api_key}:{api_secret}"
+    else:
+        resp = s.post(f"{host}/api/method/login",
+                      json={"usr": admin_user, "pwd": password}, timeout=10)
+        resp.raise_for_status()
     ticket = s.post(f"{host}/api/resource/HD Ticket",
                     json={"subject": os.environ.get("TICKET_SUBJECT", ""),
                           "description": os.environ.get("TICKET_DESCRIPTION", ""),
@@ -153,11 +189,11 @@ try:
     ticket.raise_for_status()
     tid = ticket.json().get("data", {}).get("name", "")
     if not tid:
-        print("ERROR: no ticket ID returned", file=sys.stderr)
+        print(f"ERROR: no ticket ID returned ({method} auth)", file=sys.stderr)
         sys.exit(1)
     print(tid)
 except Exception as e:
-    print(f"ERROR: {e}", file=sys.stderr)
+    print(f"ERROR: {method} auth against {host} failed: {e}", file=sys.stderr)
     sys.exit(1)
 PYEOF
 ) || TICKET_EXIT=$?
@@ -167,7 +203,9 @@ PYEOF
 if [ "$TICKET_EXIT" -ne 0 ] || [ -z "${TICKET_ID:-}" ]; then
     echo -e "${RED}Ticket creation failed on helpdesk '$HELPDESK'.${NC}" >&2
     echo "A configured helpdesk must record a real ticket — no automatic local fallback." >&2
-    echo "Likely cause: ERPNEXT_ADMIN_PASSWORD_<TENANT> (tenant='${HELPDESK_TENANT:-}') is not set." >&2
+    echo "The error above names which auth method was tried (tenant='${HELPDESK_TENANT:-}')." >&2
+    echo "Preferred credential: ERPNEXT_API_KEY_<TENANT> + ERPNEXT_API_SECRET_<TENANT>," >&2
+    echo "resolvable from the vault — see mcp/vault-map.local.json and bin/mcp-run.sh." >&2
     echo "Set the credential and retry, or deliberately use local tracking:" >&2
     echo "  bin/open-ticket.sh --local \"$SUBJECT\"" >&2
     exit 1
