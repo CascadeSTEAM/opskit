@@ -14,8 +14,12 @@
 #     -e expected_swap_mb=5128192 -e new_swap_mb=8192
 
 - name: Set LXC container swap allocation
-  hosts: "{{ target_host }}"
-  gather_facts: no
+  # target_host is supplied at run time with `-e target_host=<host>`; the
+  # linter cannot know that, and the assert below fails loudly if it is
+  # missing. A per-line ignore, never skip_list — syntax-check is unskippable
+  # and listing it there stops ansible-lint running at all (#83).
+  hosts: "{{ target_host }}"  # noqa: syntax-check[specific]
+  gather_facts: false
 
   tasks:
     - name: Require all parameters

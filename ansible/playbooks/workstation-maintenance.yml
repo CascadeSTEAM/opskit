@@ -17,8 +17,8 @@
 
 - name: Workstation OS maintenance (report by default, upgrade with -e do_upgrade=true)
   hosts: workstations
-  gather_facts: yes
-  become: yes
+  gather_facts: true
+  become: true
   vars:
     do_upgrade: false
 
@@ -32,7 +32,7 @@
 
     - name: Update apt cache
       ansible.builtin.apt:
-        update_cache: yes
+        update_cache: true
         cache_valid_time: 3600
 
     - name: List upgradable packages

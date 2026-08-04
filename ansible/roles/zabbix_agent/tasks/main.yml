@@ -22,18 +22,17 @@
     - /etc/apt/apt.conf.d/02proxy
     - /etc/apt/apt.conf.d/proxy
   when: is_debian
-  ignore_errors: yes
 
 - name: Install Zabbix repository (Debian/Ubuntu)
   apt:
-    deb: "https://repo.zabbix.com/zabbix/{{ zabbix_version }}/{{ ansible_distribution | lower }}/pool/main/z/zabbix-release/zabbix-release_latest_{{ zabbix_version }}+{{ ansible_distribution | lower }}{{ ansible_distribution_version if ansible_distribution == 'Ubuntu' else ansible_distribution_major_version }}_all.deb"
+    deb: "https://repo.zabbix.com/zabbix/{{ zabbix_version }}/{{ ansible_distribution | lower }}/pool/main/z/zabbix-release/zabbix-release_latest_{{ zabbix_version
+      }}+{{ ansible_distribution | lower }}{{ ansible_distribution_version if ansible_distribution == 'Ubuntu' else ansible_distribution_major_version }}_all.deb"
   when: is_debian
   register: repo_installed
 
-
 - name: Update apt cache (Debian/Ubuntu)
   apt:
-    update_cache: yes
+    update_cache: true
   when: is_debian
 
 - name: Install zabbix-agent2 (Debian/Ubuntu)
@@ -44,7 +43,7 @@
 
 # ── Alpine ──
 - name: Install zabbix-agent2 (Alpine)
-  apk:
+  community.general.apk:
     name: "{{ zabbix_agent_package }}"
     state: present
   when: is_alpine
@@ -56,7 +55,7 @@
     dest: "{{ zabbix_agent_conf }}"
     owner: zabbix
     group: zabbix
-    mode: '0644'
+    mode: "0644"
 
 - name: Create PSK file
   copy:
@@ -64,7 +63,7 @@
     dest: "{{ zabbix_agent_psk_file }}"
     owner: zabbix
     group: zabbix
-    mode: '0400'
+    mode: "0400"
   when: zabbix_psk_key is defined and zabbix_psk_key | length > 0
 
 # ── Service management ──
@@ -72,8 +71,8 @@
   systemd:
     name: "{{ zabbix_agent_service }}"
     state: restarted
-    enabled: yes
-    daemon_reload: yes
+    enabled: true
+    daemon_reload: true
   when: not is_alpine
 
 - name: Start and enable zabbix-agent2 (Alpine openrc)
@@ -87,8 +86,9 @@
   changed_when: false
 
 # ── Verification ──
-- name: Verify zabbix-agent2 is running
-  command: "systemctl is-active {{ zabbix_agent_service }}"
+- name: Verify zabbix-agent2 is running  # noqa: command-instead-of-module
+# A read-only status query, not a state change — see above.
+  ansible.builtin.command: "systemctl is-active {{ zabbix_agent_service }}"
   register: agent_status
   changed_when: false
   failed_when: agent_status.rc != 0

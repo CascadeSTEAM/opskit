@@ -14,7 +14,7 @@
 
 - name: Configure Technitium DNS zones and records
   hosts: dns_server
-  gather_facts: no
+  gather_facts: false
   vars:
     dns_api_base: "http://localhost:15380/api"
     dns_admin_username: "admin"
@@ -147,8 +147,7 @@
           Authorization: "Bearer {{ dns_session_token }}"
         status_code: [200]
       register: record_add_results
-      failed_when: record_add_results.json.status != "ok"
-                    and "record already exists" not in (record_add_results.json.errorMessage | default(""))
+      failed_when: record_add_results.json.status != "ok" and "record already exists" not in (record_add_results.json.errorMessage | default(""))
       loop: "{{ effective_dns_zones | subelements('records') }}"
       loop_control:
         label: "{{ item[1].name }}.{{ item[0].name }}"

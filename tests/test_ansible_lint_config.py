@@ -93,3 +93,31 @@ def test_ansible_lint_actually_runs(tmp_path):
     assert result.returncode == 0, (
         f"a minimal valid playbook should pass this config:\n{combined}"
     )
+
+
+def test_ci_ansible_lint_step_is_blocking():
+    """#87 made the CI ansible-lint step enforcing. `continue-on-error: true` is
+    how it hid a totally broken invocation for months (#83) — if it comes back,
+    the gate is decorative again and nobody will notice."""
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    start = ci.index("- name: ansible-lint")
+    # the step ends at the next step at the same indentation
+    rest = ci[start:]
+    end = rest.find("\n      - name:", 1)
+    step = rest if end == -1 else rest[:end]
+    assert "continue-on-error" not in step, (
+        "the ansible-lint CI step must stay blocking — tracked ansible/ has zero "
+        "failures and every remaining finding is a deliberate warn_list entry"
+    )
+
+
+def test_warn_list_entries_are_not_silent_skips():
+    """A rule in warn_list is a judged decision; one in skip_list disappears
+    entirely. Nothing this repo judged should be silently skipped instead."""
+    cfg = _config()
+    warn = {str(e) for e in (cfg.get("warn_list") or [])}
+    skip = {str(e) for e in (cfg.get("skip_list") or [])}
+    assert not (warn & skip), f"rules in both warn_list and skip_list: {warn & skip}"
+    # the decisions #87 recorded, which should not quietly become skips
+    for rule in ("yaml[line-length]", "var-naming[no-role-prefix]", "args[module]"):
+        assert rule not in skip, f"{rule} was judged as a warning, not a skip"

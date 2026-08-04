@@ -34,12 +34,12 @@ discovery:
 {% endfor %}
       # ── Cloud gateway via LiteLLM (Claude, Gemini) ────────────
       # Lower priority — used when local nodes are busy/down
-      - url: "{{ litellm_url }}"
+      - url: "{{ olla_litellm_url }}"
         name: "litellm-cloud"
         type: "litellm"
-        priority: {{ litellm_priority }}
-        check_interval: {{ litellm_check_interval }}
-        check_timeout: {{ litellm_check_timeout }}
+        priority: {{ olla_litellm_priority }}
+        check_interval: {{ olla_litellm_check_interval }}
+        check_timeout: {{ olla_litellm_check_timeout }}
 
   model_discovery:
     enabled: true

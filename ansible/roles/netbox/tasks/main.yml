@@ -6,13 +6,13 @@
     cmd: docker ps --filter name={{ netbox_container_name | default('netbox') }} --format "{{ '{{.Status}}' }}"
   register: netbox_status
   changed_when: false
-  ignore_errors: yes
+  ignore_errors: true
 
 - name: Deploy netbox via docker compose
   ansible.builtin.command:
     cmd: docker compose -f {{ netbox_compose_dir }}/docker-compose.yml up -d --wait netbox netbox-worker
-  register: compose_up
-  changed_when: "'Creating' in compose_up.stdout or 'Starting' in compose_up.stdout"
+  register: netbox_compose_up
+  changed_when: "'Creating' in netbox_compose_up.stdout or 'Starting' in netbox_compose_up.stdout"
 
 - name: Wait for netbox to respond
   ansible.builtin.uri:
