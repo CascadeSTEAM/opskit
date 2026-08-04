@@ -15,7 +15,9 @@
 #     }
 #   }
 #
-#   field: password | username | notes | <custom field name>   (default: password)
+#   field: password | username | totp | notes | <custom field name>
+#          (default: password; "totp" exports the item's TOTP *seed*, so a
+#           server can derive a fresh code per request)
 #
 # Usage:
 #   bin/mcp-run.sh <server>            # resolve secrets, exec the server (stdio MCP)
@@ -164,7 +166,11 @@ import json, sys
 d = json.load(sys.stdin)
 field = sys.argv[1]
 login = d.get("login") or {}
-if field in ("password", "username"):
+# NOTE: this block is inside a single-quoted shell string — no apostrophes.
+# "totp" yields the TOTP seed stored on the vault item, not a generated code:
+# a server needing 2FA must derive a fresh code per request, so the seed is
+# what gets exported (opskit #90, first needed by the WireGuard dashboard).
+if field in ("password", "username", "totp"):
     print(login.get(field) or "", end="")
 elif field == "notes":
     print(d.get("notes") or "", end="")
