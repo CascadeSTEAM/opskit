@@ -64,6 +64,11 @@ gitleaks-report.json
 # Claude Code machine-local settings (permission allowlists etc.) — never commit
 .claude/settings.local.json
 
+# Rendered subagent targets — generated from canonical agents/*.md by
+# `automation-ladder.py sync-agents`. Regenerate, never hand-edit or commit.
+.opencode/agent/
+.claude/agents/
+
 # Client-data isolation (docs/client-data-policy.md)
 .client-tokens
 .env-remotes
