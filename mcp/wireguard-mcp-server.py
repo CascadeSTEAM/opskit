@@ -8,6 +8,7 @@ Tools:
   wireguard_deliver_config  Hand the client config over as a one-time Bitwarden Send
   wireguard_revoke_peer     Delete a peer and verify it is gone from the running interface
   wireguard_audit           Report peers that look unowned, unused, or over-scoped
+  wireguard_verify          Drift between the live server, the inventory, and vault naming
 
 WHY THIS EXISTS
   Peer management was undocumented manual clicking in a web UI. The cost was not
@@ -83,11 +84,71 @@ except ImportError:  # pragma: no cover - dependency surfaced by mcp-run.sh --ch
     print("ERROR: mcp package not importable — run: make deps", file=sys.stderr)
     raise
 
+REPO_ROOT = Path(os.environ.get("OPSKIT_ROOT") or Path(__file__).resolve().parents[1])
+
 _TENANTS_FILE = (
     Path(os.environ["WIREGUARD_TENANTS_FILE"])
     if os.environ.get("WIREGUARD_TENANTS_FILE")
     else Path(__file__).parent / "tenants-wireguard.local.json"
 )
+
+
+def _inventory_path(env: str) -> Path:
+    """Where an environment's peer inventory lives.
+
+    The private, gitignored environment layer — an inventory names people and
+    devices, which never enters the public repo (docs/client-data-policy.md).
+    """
+    return REPO_ROOT / "environments" / env / "datasets" / "wireguard-peers.json"
+
+
+def _load_inventory(env: str) -> dict:
+    p = _inventory_path(env)
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text())
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _record_peer(env: str, name: str, entry: dict) -> tuple:
+    """Append an inventory entry. Returns (ok, detail).
+
+    Recording is best-effort and never fails a create: a peer that exists on the
+    server but is missing from the inventory is exactly what wireguard_verify
+    reports, so a write failure degrades to a visible finding rather than a
+    failed provisioning run.
+    """
+    p = _inventory_path(env)
+    try:
+        inv = _load_inventory(env)
+        inv[name] = entry
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(inv, indent=2, sort_keys=True) + "\n")
+        return True, str(p)
+    except OSError as exc:
+        return False, f"could not write {p}: {exc}"
+
+
+def _current_ticket() -> str:
+    """The session's active ticket, if bin/open-ticket.sh recorded one."""
+    f = REPO_ROOT / ".current-ticket"
+    try:
+        return f.read_text().strip()
+    except OSError:
+        return ""
+
+
+def vault_item_name(env: str, peer: str) -> str:
+    """The codified vault item name for a peer credential.
+
+    A convention in one operator's head is not a convention. Deriving it here
+    means a later session can find the item for a peer without searching free
+    text and guessing which of several similarly-named entries is authoritative.
+    """
+    return f"{env.upper()} WireGuard peer - {peer}"
 
 
 def _load_tenants() -> dict:
@@ -315,6 +376,7 @@ def wireguard_create_peer(
     mirror_peer: str = "",
     allowed_ips: str = "",
     dns: str = "",
+    owner_note: str = "",
 ) -> str:
     """Create a VPN peer.
 
@@ -334,6 +396,9 @@ def wireguard_create_peer(
         allowed_ips: explicit scope, overriding the mirror. 0.0.0.0/0 is a full
             tunnel and routes all of the user's traffic through this network.
         dns: explicit resolver, overriding the environment default.
+        owner_note: free text recorded in the peer inventory — who this is for
+            and why. Worth filling in: the inventory is what makes a peer
+            attributable a year later.
     """
     if not name or not re.fullmatch(r"[A-Za-z0-9._-]{2,64}", name):
         return _err(
@@ -409,17 +474,34 @@ def wireguard_create_peer(
     if not created:
         return _err("dashboard reported success but the peer is not present")
 
+    # Record who this is for. Without an inventory, a peer becomes unattributable
+    # the moment the session ends — which is exactly how wg0 acquired two
+    # full-tunnel credentials nobody can account for (#90).
+    ok, detail = _record_peer(env, name, {
+        "address": created.get("allowed_ip"),
+        "scope": created.get("endpoint_allowed_ip"),
+        "public_key": created.get("id") or public_key,
+        "vault_item": vault_item_name(env, name),
+        "ticket": os.environ.get("OPSKIT_TICKET") or _current_ticket(),
+        "granted_by": os.environ.get("OPSKIT_OPERATOR") or "",
+        "note": owner_note.strip(),
+    })
+    recorded = {"inventory": detail} if ok else {"inventory_error": detail}
+
     return _ok(
         created=_public(created),
         scope_source=source,
         full_tunnel=(scope.strip() == "0.0.0.0/0"),
+        recorded=recorded,
+        vault_item_name=vault_item_name(env, name),
         config_withheld=(
             "The client config contains a private key and is deliberately not "
             "returned here. Deliver it with wireguard_deliver_config."
         ),
         next_steps=[
             f"wireguard_deliver_config(env='{env}', name='{name}') — one-time Send link",
-            "record the peer owner in the environment's peer inventory",
+            f"store the config in a vault item named exactly: {vault_item_name(env, name)}",
+            f"wireguard_verify(env='{env}') — confirm nothing drifted",
         ],
     )
 
@@ -644,6 +726,73 @@ def wireguard_audit(env: str) -> str:
             "issued one. The peer that should worry you is the one that is "
             "over-scoped AND has no identifiable owner — confirm ownership "
             "before revoking anything."
+        ),
+    )
+
+
+@mcp.tool()
+def wireguard_verify(env: str) -> str:
+    """Report drift between the live server, the peer inventory, and the vault.
+
+    This is the check that answers "whose peer is this?" — the question
+    wireguard_audit cannot, because audit only compares peers against
+    themselves. Three directions of drift, each meaning something different:
+
+      untracked  — live on the server, absent from the inventory. Access nobody
+                   can attribute. This is what the two unowned full-tunnel peers
+                   on the first environment audited looked like.
+      stale      — in the inventory, gone from the server. Access already
+                   revoked; the inventory row should be closed out.
+      mismatched — present in both but the address or scope differs, so the
+                   record no longer describes the access actually granted.
+
+    Read-only. Reports; changes nothing.
+    """
+    peers, _info, cfg, _s, error = _peers_retrying(env)
+    if error:
+        return error
+
+    live = {p.get("name"): _public(p) for p in peers if p.get("name")}
+    inv = _load_inventory(env)
+
+    untracked, stale, mismatched = [], [], []
+    for name, pub in sorted(live.items()):
+        row = inv.get(name)
+        if not row:
+            untracked.append({
+                "peer": name, "address": pub["address"], "scope": pub["scope"],
+                "full_tunnel": (pub["scope"] or "").strip() == "0.0.0.0/0",
+            })
+            continue
+        deltas = {}
+        for field, key in (("address", "address"), ("scope", "scope")):
+            if row.get(key) and row[key] != pub[field]:
+                deltas[field] = {"inventory": row[key], "live": pub[field]}
+        if deltas:
+            mismatched.append({"peer": name, "differs": deltas})
+    for name, row in sorted(inv.items()):
+        if name not in live:
+            stale.append({"peer": name, "recorded_address": row.get("address"),
+                          "vault_item": row.get("vault_item")})
+
+    inv_path = _inventory_path(env)
+    return _ok(
+        environment=env,
+        inventory=str(inv_path),
+        inventory_exists=inv_path.exists(),
+        live_peers=len(live),
+        recorded_peers=len(inv),
+        untracked=untracked,
+        stale=stale,
+        mismatched=mismatched,
+        clean=not (untracked or stale or mismatched),
+        vault_item_convention=vault_item_name(env, "<peer>"),
+        note=(
+            "Untracked peers are the finding that matters: live access with no "
+            "recorded owner cannot be audited or safely revoked. Resolve one by "
+            "identifying the holder and adding an inventory row, or by revoking "
+            "it — not by deleting the row. Vault items are checked by name "
+            "convention only; this tool does not read the vault."
         ),
     )
 
