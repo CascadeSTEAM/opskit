@@ -3,6 +3,10 @@
 # Will be tightened in post-migration cleanup per GPA standards.
 
 exclude_paths:
+  # Local environment layer — gitignored real data, generated/imported rather
+  # than authored, and absent in CI. Linting it locally would make `make lint`
+  # disagree with CI (issue #19), and the findings are not repo code.
+  - environments/
   - ansible/roles/frappe-upgrade/
   - ansible/roles/frappe-bench/
   - ansible/roles/frappe-site/
@@ -10,7 +14,11 @@ exclude_paths:
   - ansible/roles/frappe-dependencies/
 
 skip_list:
-  - syntax-check[specific]
+  # NOTE: never add syntax-check (or any of its sub-rules) here — it is
+  # unskippable, and listing it makes ansible-lint refuse to run at all rather
+  # than skip that one rule. See #83: the entry silently prevented every
+  # playbook and role in this repo from ever being linted. Exclude a file via
+  # exclude_paths if it genuinely cannot pass.
   - schema[meta]
   - name[casing]
   - fqcn[action-core]
