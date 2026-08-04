@@ -13,6 +13,355 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-08-03 — Two guards that had never guarded anything
+
+PRs open: #88 (unbreak ansible-lint repo-wide + regression guard), #89 (make the
+workstation Ansible toolchain playbook actually run). Issues filed: #86 (Proxmox
+MCP wiring), #87 (ansible-lint backlog triage). Ledger row 22. This session
+touched live systems; operational detail is in the private environment layer.
+
+**Closed out yesterday's open question first: the parallel MCP entry namespaces
+correctly, no collision, nothing to disable.** Worth recording the method, since
+it cost more than it should have — per-server connect status and the server's
+own tool endpoints do *not* include MCP tools, so the only way to enumerate the
+resolved tool namespace is to run an actual agent session and ask it. Two
+runtime entries whose backing clones or config had never existed were removed.
+
+**`skip_list` contained a rule that cannot be skipped, and so nothing was ever
+linted.** `syntax-check` is unskippable; listing it makes ansible-lint abort on
+the config instead of skipping that one rule. 13 playbooks and 14 roles, never
+checked. The CI step carried the identical bug from a second direction — the
+same rule on the command line, with `continue-on-error` swallowing the abort.
+
+**What made it survive is worth generalising: the failure exited non-zero.**
+"Lint ran and found problems" and "lint never ran" are the same signal to anyone
+skimming, so the breakage was self-camouflaging in the one place a human would
+look. This is the same class as 2026-08-02's silent MCP launch failures, and the
+third instance in two sessions of *a guard whose own correctness nothing checks*.
+The response was a test that fails if the config ever disables linting again —
+and it was verified by reintroducing the exact breakage, because a guard that
+has never been seen to fail is indistinguishable from one that cannot.
+
+**The toolchain playbook failed twice over, and the second failure was only
+reachable by fixing the first.** The reported bug was a module requiring a
+newer pipx than the current LTS ships — on the bootstrap playbook, so the
+unsupported case was the normal case. Fixing it revealed the collections task
+pointed at a requirements path that has never existed in this repo's history.
+Both failures sat on the path a fresh workstation takes, which means the
+playbook had almost certainly never run to completion anywhere. A third defect
+found while reading it: the toolchain-state report's PATH warning was
+unreachable, because the check meant to feed it aborted the play first — the
+diagnostic was dead exactly when it was needed.
+
+**Pattern across all three:** code that was never executed on the path it exists
+to serve. The lint config, the CI lint step, and the bootstrap playbook each
+looked maintained and each had never done its job. Tests assert behaviour of
+things we run; nothing asserted these ran at all.
+
+Unblocked before triaging #87: local and CI ansible-lint disagree 128 findings
+to 2, because CI pins the action five majors behind what a provisioned
+workstation installs. Cleaning against one leaves the tree dirty against the
+other — a straight #19 parity problem, and the version needs settling first.
+
+---
+
+## 2026-08-02 — Installability, and the wiring nobody was checking
+
+Merged: #79 (workstation install guide + real dependency preflight),
+#81 (vault-resolving MCP launcher). Operational detail is in the private
+environment layer — this session touched live systems.
+
+**The question that started it was "what do I install on a second machine",
+and the honest answer turned out to be "more than this repo knows about".**
+A fresh clone passed `install.sh` and then failed at the first playbook run,
+the first commit, or the first agent tool call: collections are gitignored,
+`core.hooksPath` is per-clone, `gitleaks`/`shellcheck` degrade silently, and
+the servers backing the domain subagents are launched by absolute path from
+outside the repo. `docs/INSTALL.md` now states each layer and what its absence
+disables; `install.sh` checks ~20 dependencies instead of 4 and distinguishes
+required from optional-per-capability.
+
+**`AGENTS.md` has instructed every session since the hooks rule landed to run
+`bash bin/setup-hooks.sh`. The script did not exist.** Documentation asserted a
+tool into being and nothing ever checked. Written now, with a `--check` mode.
+Worth noticing as a class: the repo's guards check *content* thoroughly and
+*its own claims about itself* not at all.
+
+**The larger instance of the same class:** the agent runtime was launching
+older duplicate copies of two MCP servers from a sibling repo. Everything
+merged into `mcp/` — an entire expanded tool surface, plus an auth fix — had
+never once been reachable from an agent session. The code shipped; the wiring
+pointed elsewhere; no test, guard, or review step covers "is the thing we
+built the thing that runs". `bin/mcp-run.sh` makes the launch path a
+first-class, tested artifact of this repo rather than tribal configuration,
+and `--check` exists specifically because the failure is *silent* — a server
+that fails to start is indistinguishable from an agent declining to call it.
+
+**Decision (owner, mid-session): add alongside, never cut over.** A parallel
+runtime entry now serves the in-repo implementation while the pre-existing one
+stays untouched, so the new path can be proven on real work with no moment of
+downtime and a one-line revert. A repoint made earlier in the session was
+reverted to honour this; the runtime config was verified byte-identical to its
+pre-session state before anything was added.
+
+Also learned, generally: adding a parallel MCP entry needs its own permission
+rules. Tools are namespaced by server key, so a new entry does *not* inherit
+the deny that covers the entry it shadows — it would be more exposed, not
+equally exposed.
+
+Threads: retire the duplicate copies once proven; four ledger rows
+(#18–21) covering a wiring guard, the retirement, an unrecoverable-environment
+check, and credential-documentation drift.
+
+### Continuation, 2026-08-03 — #85, and what linting the new playbook exposed
+
+`uv` was missing, so every `uvx`-distributed MCP server had silently never
+started. Installing it turned into an IaC question rather than a one-liner:
+`workstation-ansible-toolchain.yml` already states the principle at the top of
+the file — *control-node software lands via playbook, not ad-hoc shell* — so
+the fix is `workstation-mcp-toolchain.yml`, not a curl-pipe in the docs.
+
+**The playbook takes a `target` override, and that is the interesting part.**
+A freshly-provisioned workstation belongs to no inventory group, which is
+precisely when a provisioning playbook needs to run. A play hard-bound to
+`hosts: workstations` cannot bootstrap the machine it exists to bootstrap.
+The first draft had exactly that defect and the documented invocation matched
+zero hosts — visible only because it was actually run.
+
+**Two latent defects surfaced while validating one small playbook**, which
+says something about how much of the Ansible layer is unexercised:
+
+- **#83 (urgent)** — `.ansible-lint.yml` skips `syntax-check[specific]`, which
+  is unskippable, so ansible-lint aborts before evaluating a single rule. *No
+  playbook or role in this repo has ever been linted.* It exits non-zero, so
+  the breakage reads as "lint found problems" rather than "lint never ran" —
+  the same silent-failure shape as the MCP wiring above, and as the
+  documented-but-nonexistent script. Third instance this session of a check
+  that appears to run and doesn't.
+- **#84 (high)** — `community.general.pipx` requires pipx ≥ 1.7.0; the current
+  Ubuntu LTS ships 1.4.3. The existing toolchain playbook therefore fails at
+  its first task on a stock workstation. The new playbook drives the pipx CLI
+  with explicit idempotency guards instead, rather than upgrading pipx as a
+  side effect of installing something else.
+
+Order matters: #83 before #84, since unbreaking the linter sweeps all 13
+playbooks and 14 roles at once and #84's file is in that sweep.
+
+Session totals: #79, #81, #85 merged; #83, #84 open.
+
+---
+
+## 2026-07-31 — Two execution paths for Frappe; one of them now sanctioned
+
+Session note: `docs/session-notes/2026-07-31-frappe-exec-path-b-wrapper.md`
+
+**Correction to how these defects were first framed.** They are *not* general
+Frappe traps. They belong specifically to the SSH + container-exec + `bench`
+path ("Path B"). The repo's existing HTTP/REST MCP server ("Path A") is
+**structurally immune to all three**, because it speaks JSON in and JSON out:
+
+- `bench execute` **suppresses falsy return values** — a call returning `0`
+  prints nothing. Empty output is neither an error nor reliably zero, so
+  reading it wrong yields a confidently false answer. A correctness defect,
+  not a cosmetic one. (Live contrast: the same count over HTTP returns
+  `{"message": 0}`.)
+- `bench console` mangles piped multi-line scripts (IPython auto-indent).
+- Frappe images exec as a **non-root** user while `docker cp` writes
+  **root-owned** files into a sticky `/tmp` — cleanup fails with "Operation not
+  permitted" and scripts persist in the container unless `docker exec -u 0` is
+  used. (This one bit: a cleanup step was reported done when it had not been.)
+
+**The real problem was that no rule said which path to use**, so the
+credential-free `bench` path kept being hand-rolled — six times in one session.
+Path A wasn't the default because it authenticated as `Administrator` with a
+password from a plaintext `.env`, contradicting
+`.opencode/rules/no-plaintext-creds.md`. That auth defect was the actual blocker.
+
+**What shipped:** `bin/frappe-exec.py` as the single sanctioned Path B route,
+engineering all three defects out structurally rather than documenting them
+again — never `bench console` (venv python over stdin), never `docker cp` (no
+file ever written in-container), always one JSON envelope
+`{"ok","result","error"}` so falsy and empty can never be confused. Path A's
+auth replaced with configurable API-key/secret token auth. New `frappe-access`
+skill carries the A-vs-B routing rule; the tools carry the behaviour.
+
+**A fresh adversarial critique before merge caught a high-severity defect the
+author pass missed:** `ssh` appends trailing argv into a *single string* that a
+remote shell parses, so unquoted interpolation of a container name achieved
+arbitrary remote command execution. Fixed with `shlex.quote` plus regression
+tests. Worth generalizing — anything building an `ssh` command from
+parameters needs quoting, and "it's passed as separate argv elements" is not
+protection.
+
+**Key decisions:**
+- A documented footgun is not a fixed footgun — make the trap-laden path
+  non-default and non-hand-rolled instead of adding footnotes to a skill.
+- Tool-placement rule split by *kind* of state: Ansible for system/deployment
+  state, MCP tool for application records. The old single rule was genuinely
+  ambiguous and stalled a decision twice in one session.
+- An "epic" in Frappe Helpdesk is expressed by subject-prefix convention plus
+  cross-referencing, not a doctype field — the app has no native parent/epic
+  concept and a schema change isn't warranted for grouping tickets.
+- `frappe.rename_doc` (the `frappe/__init__.py` wrapper) does **not** accept
+  `ignore_permissions`; only `frappe.model.rename_doc.rename_doc` does.
+
+**Path A's record surface was then extended too** (#74 / PR #75): full party
+management with a 1:1 invariant that the application cannot enforce itself,
+because the bridge between the two customer doctypes is a free-text field
+rather than a link — so the tooling owns the invariant, including a drift
+check that doubles as its regression test.
+
+**A defect CI structurally could not see.** After that merge, the suite failed
+locally while CI reported success on the byte-identical commit — not venv, not
+ordering. The server read a **gitignored local config file at import time**, so
+CI (which never has one) was permanently green while any developer holding real
+config saw 41 failures. Fixed in #76 / PR #77 by making the config path
+injectable. Worth internalizing: *"CI is green" is not "the suite passes"* — a
+suite that depends on the **absence** of gitignored config is green forever and
+wrong for everyone.
+
+**Method note that paid for itself:** every PR was built by one agent and then
+critiqued by a **fresh adversarial reviewer**, never the author. Two of three
+reviews found real high-severity defects, and in one case the reviewer also
+showed the feature's own test could not have caught its bug — a passing test
+that proved nothing. Author self-review would have missed both.
+
+**Completed:** issues #70, #71, #74, #76 closed via PRs #72, #73, #75, #77
+(all squash-merged). **191 tests green**, verified both with and without local
+config present.
+
+**Open threads:** live write-path validation of the party tooling is
+deliberately deferred pending a development instance (tracked privately) — the
+service account is read-only by design. Idea row 15 logged (site named for a
+superseded vhost, forcing a permanent reverse-proxy Host rewrite). A stray
+top-level `rules/iac-required.md` still carries pre-split wording — pre-existing
+dual-harness drift, tracked in #62. **Issue #69's in-progress worktree targets
+the same MCP server file that #73 and #75 substantially rewrote, so it needs
+rebase or reassessment before it resumes.**
+
+## 2026-07-27 — Helpdesk ticket tooling: skill + MCP server extension
+
+**Key decisions:** codified a recurring manual pattern (reading/commenting on
+live Frappe Helpdesk tickets via SSH + `bench execute`) as a new
+`helpdesk-ticket` skill — two footguns had bitten real sessions: trusting a
+stale post-migration host copy, and posting to the wrong comment doctype
+(invisible in the portal UI). Discovered an existing-but-unconnected
+`mcp/erpnext-mcp-server.py` already covered list/get/create/update/reply;
+decided to extend and connect it rather than write a parallel script.
+Scoped the extension to add true per-agent ticket assignment (Frappe's
+standard assign-to/ToDo mechanism, not just bulk agent-group), fix the same
+comment-doctype bug in the MCP server's reply tool, generalize the server to
+use a configurable low-privilege service-account login instead of a
+hardcoded Administrator user, and register the server so it's actually
+connected.
+
+**Completed:** issue #67 / PR #68 merged — `helpdesk-ticket` skill added,
+registered in AGENTS.md, 115/115 tests green.
+
+**Open threads:** issue #69 (MCP server extension) opened and scoped, work
+started in its linked worktree but not yet implemented/committed — pick up
+next session. Idea ledger row added for an unrelated small UX gap surfaced
+along the way (row referencing a live-helpdesk diagnosis, no client detail).
+
+---
+
+## 2026-07-27 — OpsKit 101 onboarding slide deck
+
+Session note: `docs/session-notes/2026-07-27-opskit-101-onboarding-deck.md`
+
+**Key decisions:** built a self-contained scroll-snap HTML slide deck
+(`docs/onboarding/opskit-101.html`) introducing OpsKit to new developers,
+styled from the actual Cascade STEAM brand assets rather than guessed colors;
+verified rendering with headless system Chrome via Playwright
+(`channel: 'chrome'`) since no project skill covers screenshotting a static
+page; PR opened without a linked issue (doc-only work, not issue-driven).
+
+**Completed:** PR #66 opened (`docs/opskit-101-onboarding-deck` branch,
+reviewer `CascadeSTEAM/technology-support`, self as assignee).
+
+**Open threads:** PR #66 awaiting review/merge; idea ledger row added for a
+reusable "screenshot a static/browser-driven page" recipe in the `run` skill.
+
+---
+
+## 2026-07-25 (cont. 2) — wiki-hook fix landed: live patch + image PR
+
+Infra session — operational note in the private env session-notes.
+
+**Key decisions:** kept the Wiki-User auto-role behavior (patched the hook to
+re-fetch the doc) instead of following upstream master's hook removal;
+validated the Containerfile patch step by building it as a layer on the
+current production image before opening the PR (images repo PR #8, closes
+issue #7). Patch step is guarded — skips cleanly when upstream drops the hook.
+
+**Open thread:** live containers carry the fix in their writable layers only —
+container recreation reverts it until a new image (with PR #8) is tagged,
+built, and deployed.
+
+---
+
+## 2026-07-25 (cont.) — ERP outgoing email restored
+
+Infra session — operational note in the private env session-notes.
+
+**Key finding:** the undecryptable-credential problem was NOT a changed site
+`encryption_key` — the credential had been migrated from a predecessor host
+and was still encrypted under *that* host's key. Fixed surgically by
+decrypting with the origin key and re-encrypting under the active site key
+(no config change). Lesson for restore/migration runbooks: after moving a
+Frappe site between benches, audit `__Auth` decryptability instead of
+assuming the key changed.
+
+**Open threads (tracked privately):** plaintext credential file found on the
+ERP host; stray half-configured email account; predecessor host still serving
+a live copy of the migrated site.
+
+---
+
+## 2026-07-25 — ERP user-creation failure traced to wiki app hook
+
+Infra session — operational note in the private env session-notes.
+
+**Key finding:** the Frappe `wiki` app's `User.after_insert` hook
+(`add_wiki_user_role`) re-saves a stale in-memory doc, so on multi-app images
+every new-User insert dies with `TimestampMismatchError` and rolls back. Filed
+issue #7 on the org's ERP-images repo with fix options (image patch / upstream
+bump / hook override); a console workaround unblocked the immediate request.
+
+**Open threads:** two restored-site/credential follow-ups tracked privately;
+idea row 11 — `ACTIVE_ENV` race when two concurrent sessions share one clone
+(observed live this session: `.env` flipped mid-task by another session).
+
+---
+
+## 2026-07-24 — missing Caddy vhosts for ERP client domain
+
+Infra session — note in private env session-notes.
+
+**Key decision:** Applied `upstream_host` rewrite pattern (apex/www/erp → the
+canonical Frappe site name) to Caddy vhost config, reusing the precedent from
+earlier host-alias work. Confirmed that the compose template uses
+`FRAPPE_SITE_NAME_HEADER: $$host`, requiring a Host-header rewrite to serve
+a single Frappe site under multiple hostnames.
+
+**Open thread:** No single Caddy route manifest exists — vhost omissions are
+invisible. Consider a route-inventory doc or validation that every DNS record
+has a matching Caddy vhost.
+
+---
+
+## 2026-07-24 — cluster-llm fallback plugin setup
+
+Session note: `docs/session-notes/2026-07-24.md`
+
+**Key decisions / completed:**
+- Installed `@smart-coders-hq/opencode-model-fallback` plugin for automatic
+  inference failover: cluster-llm → BigPickle free → Claude direct.
+- cluster-llm remains primary; never modified directly.
+- Auto-recovers to cluster-llm after 5-minute cooldown.
+
+---
+
 ## 2026-07-23 (cont.) — /gh workflow skill; tool fixes; trusted-tester bring-up
 
 Session note: `docs/session-notes/2026-07-23-gh-skill-and-tool-fixes.md`

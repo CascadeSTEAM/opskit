@@ -78,6 +78,9 @@ mcp/*.local.json
 *.bundle
 .ansible/
 
+# Notes
+NOTES.md
+
 # Mounted member repos — synced into projects/<name>/ by the orchestrator.
 # Real members never enter this public repo; only projects/example/ is tracked.
 projects/*

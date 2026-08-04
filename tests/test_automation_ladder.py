@@ -111,6 +111,27 @@ class TestSyncAgents:
         assert "DENY tool `relay-shell_*`" in text
         assert "advisory under Claude Code" in text
 
+    def test_flat_tool_deny_is_read(self, repo):
+        """Tool globs directly under `permission` are the shape OpenCode honours
+        in an agent file; a nested `permission.tool:` block is silently ignored
+        there. The Claude renderer must read the flat form, or the restriction
+        notice silently disappears for exactly the agents that need it."""
+        (repo / "agents" / "flat.md").write_text(
+            "---\n"
+            "description: Flat permission form\n"
+            "mode: subagent\n"
+            "triggers: flat\n"
+            "permission:\n"
+            '  "relay-shell_*": deny\n'
+            '  "mikromcp_*": allow\n'
+            "---\n\nBody.\n"
+        )
+        out = json.loads(run(repo, "sync-agents").stdout)
+        assert "flat" in out["soft_sandbox_warning"]
+        text = (repo / ".claude" / "agents" / "flat.md").read_text()
+        assert "DENY tool `relay-shell_*`" in text
+        assert "DENY tool `mikromcp_*`" not in text, "an allow must not be reported as a deny"
+
     def test_scalar_bash_deny_flagged(self, repo):
         out = json.loads(run(repo, "sync-agents").stdout)
         assert "lifecycle" in out["soft_sandbox_warning"]
@@ -137,3 +158,48 @@ class TestBackwardCompat:
         r = run(repo, "status")
         assert r.returncode == 0, r.stdout + r.stderr
         assert "thresholds" in r.stdout
+
+
+class TestCanonicalAgentsAreLoadable:
+    """Guards against the defect this feature shipped with: the two
+    domain-enforcement agents declared their tool globs under a nested
+    `permission.tool:` block, which OpenCode silently ignores in an agent file.
+    The global `mikromcp_*: deny` therefore stayed in force and the mikrotik
+    agent could not reach a single MikroTik device — while AGENTS.md advertised
+    the denies as runtime-enforced. Same class as the ansible-lint config in
+    #83: configuration in a shape the tool quietly disregards.
+    """
+
+    @staticmethod
+    def _frontmatter(path: Path) -> dict:
+        import re
+
+        import yaml
+
+        m = re.match(r"^---\n(.*?)\n---\n", path.read_text(), re.DOTALL)
+        assert m, f"{path.name} has no YAML frontmatter"
+        return yaml.safe_load(m.group(1)) or {}
+
+    def test_no_canonical_agent_nests_tool_permissions(self):
+        offenders = []
+        for src in sorted((ROOT / "agents").glob("*.md")):
+            perm = self._frontmatter(src).get("permission")
+            if isinstance(perm, dict) and isinstance(perm.get("tool"), dict):
+                offenders.append(src.name)
+        assert not offenders, (
+            f"{offenders} nest tool globs under `permission.tool:`. OpenCode "
+            f"ignores that in an agent file, so the rules never apply. Put the "
+            f"globs directly under `permission:` instead."
+        )
+
+    def test_domain_agents_still_declare_their_enforcement(self):
+        """AGENTS.md promises @mikrotik cannot reach relay-shell and @linux
+        cannot reach mikromcp. If those globs vanish, the docs become false."""
+        mikrotik = self._frontmatter(ROOT / "agents" / "mikrotik.md").get("permission") or {}
+        linux = self._frontmatter(ROOT / "agents" / "linux.md").get("permission") or {}
+        assert mikrotik.get("relay-shell_*") == "deny"
+        assert mikrotik.get("mikromcp_*") == "allow", (
+            "without an explicit allow the global mikromcp_* deny wins and this "
+            "agent cannot reach any MikroTik device"
+        )
+        assert linux.get("mikromcp_*") == "deny"
