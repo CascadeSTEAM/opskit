@@ -324,6 +324,39 @@ if [ -f "$REPO_ROOT/Makefile" ]; then
         fi
     fi
 
+    # Proxmox nodes present in a device dataset but not wired for the MCP
+    # launcher (#86). An unwired node means the agent silently has no Proxmox
+    # tools for that environment — the failure this repo keeps rediscovering.
+    # Environment names are counted, never printed (client-data policy).
+    PROXMOX_MAP="$REPO_ROOT/mcp/tenants-proxmox.local.json"
+    PVE_TOTAL=0
+    PVE_UNWIRED=0
+    if [ -d "$REPO_ROOT/environments" ]; then
+        for envdir in "$REPO_ROOT"/environments/*/; do
+            envname=$(basename "$envdir")
+            [ "$envname" = "example" ] && continue
+            [ -d "$envdir/datasets/devices" ] || continue
+            if grep -rilqE 'proxmox|pve' "$envdir/datasets/devices" 2>/dev/null; then
+                PVE_TOTAL=$((PVE_TOTAL + 1))
+                if ! { [ -f "$PROXMOX_MAP" ] && python3 -c "
+import json,sys
+try: sys.exit(0 if '$envname' in json.load(open('$PROXMOX_MAP')) else 1)
+except Exception: sys.exit(1)
+" 2>/dev/null; }; then
+                    PVE_UNWIRED=$((PVE_UNWIRED + 1))
+                fi
+            fi
+        done
+    fi
+    if [ "$PVE_TOTAL" -gt 0 ]; then
+        if [ "$PVE_UNWIRED" -eq 0 ]; then
+            note_ok "proxmox" "$PVE_TOTAL environment(s) with a node, all wired"
+        else
+            note_warn "proxmox" "$PVE_UNWIRED of $PVE_TOTAL environment(s) with a node are not wired — no Proxmox tools there" \
+                "mcp/tenants-proxmox.example.json, then bin/mcp-run.sh proxmox --check"
+        fi
+    fi
+
     if [ -d "$REPO_ROOT/.opencode/node_modules" ]; then
         note_ok ".opencode deps" "installed"
     elif [ -f "$REPO_ROOT/.opencode/package.json" ]; then
