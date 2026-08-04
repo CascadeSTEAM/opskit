@@ -685,3 +685,112 @@ class TestTenantConfigIsolation:
         assert "client1" not in module.TENANTS
         assert module.TENANTS["alpha"]["site"] == "helpdesk.alpha.example.org"
         assert module.TENANTS["beta"]["site"] == "helpdesk.beta.example.org"
+
+
+# ── ticket assignment + the Comment doctype bug (issue #69) ───────────────────
+
+class TestCommentDoctype:
+    """An internal note must be an `HD Ticket Comment`, not a Communication with
+    communication_type="Comment". The portal renders comments from its own
+    doctype, so a Communication is accepted, returns success, and is then
+    invisible to every agent viewing the ticket — a silently unread internal note
+    is worse than a failed one.
+    """
+
+    def test_comment_creates_hd_ticket_comment(self, mod, wire_client):
+        wire_client.post.return_value = {"data": {"name": "cmt-1"}}
+        out = json.loads(mod.erpnext_add_reply(
+            tenant=TENANT, ticket_id="0001", content="internal note",
+            reply_type="Comment"))
+        doctype, doc = wire_client.post.call_args[0]
+        assert doctype == "HD Ticket Comment", "a Communication would be invisible in the portal"
+        assert doc["reference_ticket"] == "0001"
+        assert doc["content"] == "internal note"
+        assert out["doctype"] == "HD Ticket Comment"
+        assert out["visible_in_portal"] is True
+
+    def test_comment_never_posts_a_communication(self, mod, wire_client):
+        wire_client.post.return_value = {"data": {}}
+        mod.erpnext_add_reply(tenant=TENANT, ticket_id="0001",
+                              content="x", reply_type="Comment")
+        posted = [c[0][0] for c in wire_client.post.call_args_list]
+        assert "Communication" not in posted
+
+    def test_comment_records_the_author_when_given(self, mod, wire_client):
+        wire_client.post.return_value = {"data": {}}
+        mod.erpnext_add_reply(tenant=TENANT, ticket_id="0001", content="x",
+                              reply_type="Comment", sender="agent@example.test")
+        _doctype, doc = wire_client.post.call_args[0]
+        assert doc["commented_by"] == "agent@example.test"
+
+    def test_reply_still_posts_a_communication(self, mod, wire_client):
+        """A customer-facing reply is genuinely a Communication — the fix must not
+        reroute both paths."""
+        wire_client.post.return_value = {"data": {"name": "comm-1"}}
+        out = json.loads(mod.erpnext_add_reply(
+            tenant=TENANT, ticket_id="0001", content="hello", reply_type="Reply"))
+        doctype, doc = wire_client.post.call_args[0]
+        assert doctype == "Communication"
+        assert doc["communication_type"] == "Communication"
+        assert doc["communication_medium"] == "Email"
+        assert out["doctype"] == "Communication"
+
+    def test_invalid_reply_type_refused(self, mod, wire_client):
+        out = json.loads(mod.erpnext_add_reply(
+            tenant=TENANT, ticket_id="0001", content="x", reply_type="Nope"))
+        assert "reply_type" in out["error"]
+        wire_client.post.assert_not_called()
+
+
+class TestAssignment:
+    """Per-agent assignment is not an HD Ticket field: Frappe models it with
+    _assign / ToDo, so it must go through frappe.desk.form.assign_to."""
+
+    def test_assign_uses_the_assign_to_method(self, mod, wire_client):
+        wire_client.run_method.return_value = {"message": "ok"}
+        out = json.loads(mod.erpnext_assign_ticket(
+            tenant=TENANT, ticket_id="0001", assign_to="agent@example.test"))
+        method, params = wire_client.run_method.call_args[0]
+        assert method == "frappe.desk.form.assign_to.add"
+        assert params["doctype"] == "HD Ticket"
+        assert params["name"] == "0001"
+        # Frappe expects a JSON-encoded list for assign_to
+        assert json.loads(params["assign_to"]) == ["agent@example.test"]
+        assert out["assigned_to"] == "agent@example.test"
+
+    def test_unassign_uses_the_remove_method(self, mod, wire_client):
+        wire_client.run_method.return_value = {"message": "ok"}
+        out = json.loads(mod.erpnext_unassign_ticket(
+            tenant=TENANT, ticket_id="0001", assign_to="agent@example.test"))
+        method, params = wire_client.run_method.call_args[0]
+        assert method == "frappe.desk.form.assign_to.remove"
+        assert params["assign_to"] == "agent@example.test"
+        assert out["unassigned"] == "agent@example.test"
+
+    def test_assignment_does_not_go_through_the_ticket_resource(self, mod, wire_client):
+        """Writing _assign as a plain field would appear to work and not create
+        the ToDo the Helpdesk UI reads."""
+        wire_client.run_method.return_value = {"message": "ok"}
+        mod.erpnext_assign_ticket(tenant=TENANT, ticket_id="0001",
+                                  assign_to="agent@example.test")
+        wire_client.put.assert_not_called()
+        wire_client.post.assert_not_called()
+
+    @pytest.mark.parametrize("bad", ["", "not-an-email", None])
+    def test_assign_requires_a_user_id(self, mod, wire_client, bad):
+        out = json.loads(mod.erpnext_assign_ticket(
+            tenant=TENANT, ticket_id="0001", assign_to=bad))
+        assert "assign_to" in out["error"]
+        wire_client.run_method.assert_not_called()
+
+    def test_unknown_tenant_refused_for_both(self, mod, wire_client):
+        for fn in (mod.erpnext_assign_ticket, mod.erpnext_unassign_ticket):
+            assert "Invalid tenant" in fn(
+                tenant="nope", ticket_id="0001", assign_to="a@example.test")
+        wire_client.run_method.assert_not_called()
+
+    def test_api_failure_is_reported_not_raised(self, mod, wire_client):
+        wire_client.run_method.side_effect = RuntimeError("boom")
+        out = json.loads(mod.erpnext_assign_ticket(
+            tenant=TENANT, ticket_id="0001", assign_to="a@example.test"))
+        assert "boom" in out["error"]
