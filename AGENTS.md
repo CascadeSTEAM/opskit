@@ -20,7 +20,12 @@ If you are NOT in a domain-specific subagent and the task matches one, switch. E
 ## Core Rules
 - **ALWAYS VERIFY** — never assume IPs, credentials, or roles are current.
 - **Data-driven everything** — environment config lives in `environments/<env>/env.yml`. Never hardcode environment names, hostnames, or subnets. Discover them at runtime.
-- **IaC mandatory** — every repeatable system-state operation → Ansible playbook. Local workstation maintenance too — target the `workstations` group (`ansible_connection: local`). See `.opencode/rules/iac-required.md`.
+- **IaC mandatory** — every repeatable *system/deployment*-state operation (provisioning,
+  packages, services, config files, baselines, reset procedures) → Ansible playbook. Local
+  workstation maintenance too — target the `workstations` group (`ansible_connection:
+  local`). *Application-record* state — API-driven CRUD/queries/relationships inside a
+  hosted app — is out of scope for this rule; see Development Principles #2. See
+  `.opencode/rules/iac-required.md`.
 - **One-off tasks prohibited** — all work flows through the document lifecycle.
 - **Multi-system repo** — never assume a specific host. Check connectivity before infra operations.
 - **Hooks auto-setup** — at session start, verify `core.hooksPath` is `.githooks`. If not, run `bash bin/setup-hooks.sh` to ensure consistent commit enforcement across all clones.
@@ -69,6 +74,9 @@ All scripts are data-driven — they read from `environments/$ACTIVE_ENV/env.yml
 | `bin/scan.py` | Nmap discovery, enrich YAML device datasets |
 | `bin/automation-ladder.py` | Track manual processes → escalate to scripts/playbooks |
 | `bin/lifecycle-processor.py` | Manage lifecycle transitions |
+| `bin/frappe-exec.py` | Sanctioned Path B Frappe/ERPNext exec (SSH + docker exec + bench venv python); see `frappe-access` skill |
+| `bin/mcp-run.sh` | Launch an `mcp/` server with secrets resolved from the vault (`--check` validates the launch path without fetching anything) |
+| `bin/setup-hooks.sh` | Point git at `.githooks` (`--check` for session-start verification) |
 
 ## Subagents (invoke with @name)
 - `@lifecycle` — lifecycle transitions, proposal→plan→completed
@@ -82,7 +90,7 @@ Always use `@skill-builder` for new skills — enforces 4-field frontmatter and 
 **Domain enforcement:** These agents have runtime-enforced tool permissions. `@mikrotik` has `relay-shell_*` denied at the OpenCode runtime level, and `@linux` has `mikromcp_*` denied.
 
 ## Skills (load with: opencode tool skill use <name>)
-`lifecycle` | `git` | `security` | `backup` | `infra` | `check-connectivity` | `templates` | `tools` | `endsession` | `idea-triage` | `baseline` | `gh`
+`lifecycle` | `git` | `security` | `backup` | `infra` | `check-connectivity` | `templates` | `tools` | `endsession` | `idea-triage` | `baseline` | `gh` | `helpdesk-ticket` | `frappe-access`
 
 Load the relevant skill before working in its domain.
 
@@ -101,11 +109,22 @@ Set by the project owner; they apply to every session, not per-task.
    `bin/automation-ladder.py` measures each rung:
    - A process done by hand **2–3 times** → offer to codify it as a **skill**
    - A skill invoked **more than ~3 times** → offer to replace its manual steps
-     with a codified tool. If the work changes system state, the tool IS an
-     **Ansible playbook/role** in `ansible/`. Plain scripts are only for
-     repo/dev workflow.
+     with a codified tool. Which vehicle depends on *what kind of state* the
+     tool changes:
+     - **System/deployment state** — provisioning, packages, services, config
+       files, baselines, reset procedures → the tool IS an **Ansible
+       playbook/role** in `ansible/` (e.g. `ansible/playbooks/deploy-erp-stack.yml`).
+       Plain scripts are only for repo/dev workflow.
+     - **Application record state** — API-driven CRUD, queries, relationships
+       inside a hosted app → the tool IS an **MCP tool** (e.g.
+       `mcp/erpnext-mcp-server.py`'s `erpnext_create_ticket`), or a codified
+       CLI where no agent surface is needed. These operations are interactive
+       and data-returning, not convergence-shaped, so Ansible models them
+       badly — an MCP tool is the correct rung here, not a downgrade to a
+       one-off script.
    - A playbook/script that earns heavy use → offer to expose it as a
-     **MCP tool**.
+     **MCP tool** (an agent-facing wrapper over the playbook, distinct from
+     the case above where the MCP tool is itself the codification target).
    State lives in `.local/` (gitignored, shared across worktrees).
 
 ## Client-Data Isolation (Hard Rule)

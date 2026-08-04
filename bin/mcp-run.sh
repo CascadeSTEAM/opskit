@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+# opskit mcp-run.sh — launch one of this repo's MCP servers with its secrets
+# resolved from the vault at runtime.
+#
+# Replaces the per-server wrapper scripts that used to live outside this repo
+# and exec'd their own, older copies of the servers (issue #80). One launcher,
+# data-driven, so the tracked script holds no vault identifiers, no tenant
+# names, and no environment names — those live in a gitignored map.
+#
+# Secret map: mcp/vault-map.local.json (gitignored — see mcp/vault-map.example.json)
+#
+#   {
+#     "<server>": {
+#       "<ENV_VAR>": {"item": "<vault item id or name>", "field": "password"}
+#     }
+#   }
+#
+#   field: password | username | totp | notes | <custom field name>
+#          (default: password; "totp" exports the item's TOTP *seed*, so a
+#           server can derive a fresh code per request)
+#
+# Usage:
+#   bin/mcp-run.sh <server>            # resolve secrets, exec the server (stdio MCP)
+#   bin/mcp-run.sh <server> --check    # validate the launch path, fetch nothing
+#   bin/mcp-run.sh --list              # servers present in this repo
+#
+# Requires an unlocked vault session:  export BW_SESSION=$(bw unlock --raw)
+set -euo pipefail
+
+REPO_ROOT="${OPSKIT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+cd "$REPO_ROOT"
+REPO_ROOT="$(pwd)"
+
+MCP_DIR="$REPO_ROOT/mcp"
+VAULT_MAP="${OPSKIT_VAULT_MAP:-$MCP_DIR/vault-map.local.json}"
+VENV_PYTHON="${OPSKIT_VENV_PYTHON:-$REPO_ROOT/.venv/bin/python3}"
+BW="${OPSKIT_BW:-bw}"
+
+GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
+
+die() { echo -e "${RED}ERROR${NC}: $*" >&2; exit 1; }
+
+list_servers() {
+    find "$MCP_DIR" -maxdepth 1 -name '*-mcp-server.py' -printf '%f\n' 2>/dev/null \
+        | sed 's/-mcp-server\.py$//' | sort
+}
+
+# ── Argument handling ─────────────────────────────────────────────────────────
+if [ "${1:-}" = "--list" ]; then
+    list_servers
+    exit 0
+fi
+
+SERVER="${1:-}"
+CHECK_ONLY=0
+case "${2:-}" in
+    --check) CHECK_ONLY=1 ;;
+    "")      ;;
+    *)       die "unknown argument '$2' (usage: mcp-run.sh <server> [--check])" ;;
+esac
+
+if [ -z "$SERVER" ]; then
+    echo "usage: mcp-run.sh <server> [--check]   |   mcp-run.sh --list" >&2
+    echo "servers: $(list_servers | tr '\n' ' ')" >&2
+    exit 2
+fi
+
+SERVER_PY="$MCP_DIR/${SERVER}-mcp-server.py"
+[ -f "$SERVER_PY" ] || die "no such server '$SERVER' — available: $(list_servers | tr '\n' ' ')"
+
+# ── Launch-path validation (runs in both modes) ───────────────────────────────
+# Every failure here is one that would otherwise surface as a *silent* MCP
+# startup failure — the tools just never appear in the agent session, which
+# reads like the agent declining to use them.
+PROBLEMS=0
+report() {
+    local ok="$1" label="$2" detail="$3"
+    if [ "$ok" = "1" ]; then
+        [ "$CHECK_ONLY" = "1" ] && printf "  ${GREEN}✓${NC} %-16s %s\n" "$label" "$detail"
+    else
+        PROBLEMS=$((PROBLEMS + 1))
+        printf "  ${RED}✗${NC} %-16s %s\n" "$label" "$detail" >&2
+    fi
+    return 0
+}
+
+if [ "$CHECK_ONLY" = "1" ]; then
+    echo "=== mcp-run: $SERVER ==="
+fi
+
+report 1 "server" "$SERVER_PY"
+
+if [ -x "$VENV_PYTHON" ]; then
+    report 1 "venv" "$VENV_PYTHON"
+else
+    report 0 "venv" "$VENV_PYTHON not found — run: make deps"
+fi
+
+if [ -x "$VENV_PYTHON" ] && ! "$VENV_PYTHON" -c 'import mcp' 2>/dev/null; then
+    report 0 "mcp package" "not importable in the venv — run: make deps"
+elif [ -x "$VENV_PYTHON" ]; then
+    report 1 "mcp package" "importable"
+fi
+
+if [ -f "$VAULT_MAP" ]; then
+    report 1 "vault map" "$VAULT_MAP"
+else
+    report 0 "vault map" "$VAULT_MAP not found — copy mcp/vault-map.example.json and fill it in"
+fi
+
+if command -v "$BW" >/dev/null 2>&1; then
+    report 1 "bw CLI" "$(command -v "$BW")"
+else
+    report 0 "bw CLI" "not found — npm install -g @bitwarden/cli"
+fi
+
+if [ -n "${BW_SESSION:-}" ]; then
+    report 1 "BW_SESSION" "set"
+else
+    report 0 "BW_SESSION" "not set — export BW_SESSION=\$(bw unlock --raw) before the agent runtime starts"
+fi
+
+# Which env vars this server expects, and whether the map covers them.
+ENTRIES=""
+if [ -f "$VAULT_MAP" ]; then
+    ENTRIES=$("$VENV_PYTHON" - "$VAULT_MAP" "$SERVER" <<'PY' 2>/dev/null || true
+import json, sys
+raw = json.load(open(sys.argv[1]))
+for var, spec in (raw.get(sys.argv[2]) or {}).items():
+    item = spec["item"] if isinstance(spec, dict) else spec
+    field = (spec.get("field") if isinstance(spec, dict) else None) or "password"
+    print(f"{var}\t{item}\t{field}")
+PY
+)
+    if [ -z "$ENTRIES" ]; then
+        report 0 "map entries" "no credentials declared for '$SERVER' in $(basename "$VAULT_MAP") — it would start with none and fail at first tool call"
+    else
+        report 1 "map entries" "$(echo "$ENTRIES" | wc -l) secret(s) declared"
+    fi
+fi
+
+if [ "$CHECK_ONLY" = "1" ]; then
+    echo ""
+    if [ "$PROBLEMS" -gt 0 ]; then
+        echo -e "  ${RED}${PROBLEMS} problem(s)${NC} — this server would fail to serve tools."
+        exit 1
+    fi
+    echo -e "  ${GREEN}Launch path OK.${NC} Secrets are resolved at launch, not checked here."
+    exit 0
+fi
+
+[ "$PROBLEMS" -eq 0 ] || die "launch path invalid — run: bin/mcp-run.sh $SERVER --check"
+
+# ── Resolve secrets ───────────────────────────────────────────────────────────
+# One `bw get item` per item, parsed in python3 — avoids a jq dependency and
+# handles custom fields, which `bw get password` cannot reach.
+while IFS=$'\t' read -r var item field; do
+    [ -n "$var" ] || continue
+    item_json=$("$BW" get item "$item" 2>/dev/null) \
+        || die "vault item '$item' (for $var) not found or the session is locked"
+    # JSON goes in over stdin, never interpolated into the script body — a
+    # quote or backslash in a secret must not be able to corrupt the parser
+    # (same reasoning as bin/frappe-exec.py's base64 embedding).
+    value=$(printf '%s' "$item_json" | "$VENV_PYTHON" -c '
+import json, sys
+d = json.load(sys.stdin)
+field = sys.argv[1]
+login = d.get("login") or {}
+# NOTE: this block is inside a single-quoted shell string — no apostrophes.
+# "totp" yields the TOTP seed stored on the vault item, not a generated code:
+# a server needing 2FA must derive a fresh code per request, so the seed is
+# what gets exported (opskit #90, first needed by the WireGuard dashboard).
+if field in ("password", "username", "totp"):
+    print(login.get(field) or "", end="")
+elif field == "notes":
+    print(d.get("notes") or "", end="")
+else:
+    for f in d.get("fields") or []:
+        if f.get("name") == field:
+            print(f.get("value") or "", end="")
+            break
+' "$field" || true)
+    [ -n "$value" ] || die "vault item '$item' has no '$field' value (needed for $var)"
+    export "$var=$value"
+done <<< "$ENTRIES"
+
+exec "$VENV_PYTHON" "$SERVER_PY"
