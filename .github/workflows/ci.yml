@@ -23,8 +23,12 @@ jobs:
       # carried `syntax-check`, which is unskippable: ansible-lint aborted on
       # the argument instead of linting, and continue-on-error hid it, so this
       # step reported nothing for as long as it was present (#83).
+      # Pinned to the same major the workstation toolchain installs via pipx, so
+      # CI and `make lint-ansible` evaluate the same rule set. At @v6 they did
+      # not: CI reported 2 findings where a developer saw 128, which would have
+      # meant triaging the #87 backlog twice, once per version.
       - name: ansible-lint (findings informational until the #87 backlog is triaged)
-        uses: ansible/ansible-lint@v6
+        uses: ansible/ansible-lint@v26
         continue-on-error: true
         with:
           args: "ansible/"
