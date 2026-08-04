@@ -413,12 +413,113 @@ def test_delivery_removes_the_temp_file(mod, wired, monkeypatch):
     assert not Path(seen["path"]).exists(), "temp config file was left behind"
 
 
+def test_delivery_parses_the_json_object_form(mod, wired, monkeypatch):
+    """`bw send --file` prints a JSON object, not a bare URL. Assuming the bare
+    form rejected a Send that had actually been created, leaving an orphaned
+    copy of the config in the vault — found by running it live."""
+    monkeypatch.setenv("BW_SESSION", "x")
+    wired(FakeSession([_peer("dana_laptop", "192.0.2.2/32")]))
+
+    class Done:
+        returncode = 0
+        stdout = json.dumps({
+            "object": "send", "id": "send-id-123",
+            "accessId": "abc", "accessUrl": "https://vault.example.test/#/send/abc/key",
+        })
+        stderr = ""
+
+    monkeypatch.setattr(mod.subprocess, "run", lambda cmd, **kw: Done())
+    out = json.loads(mod.wireguard_deliver_config(env=ENV, name="dana_laptop"))
+    assert out["ok"] is True
+    assert out["access_url"] == "https://vault.example.test/#/send/abc/key"
+    assert out["send_id"] == "send-id-123", "the id is needed to delete an orphan"
+
+
+def test_delivery_still_accepts_the_bare_url_form(mod, wired, monkeypatch):
+    """Text Sends print a bare URL; both forms must work."""
+    monkeypatch.setenv("BW_SESSION", "x")
+    wired(FakeSession([_peer("dana_laptop", "192.0.2.2/32")]))
+
+    class Done:
+        returncode = 0
+        stdout = "https://vault.example.test/#/send/xyz/key\n"
+        stderr = ""
+
+    monkeypatch.setattr(mod.subprocess, "run", lambda cmd, **kw: Done())
+    out = json.loads(mod.wireguard_deliver_config(env=ENV, name="dana_laptop"))
+    assert out["ok"] is True and out["access_url"].endswith("/xyz/key")
+
+
+def test_delivery_unparseable_output_warns_about_an_orphan(mod, wired, monkeypatch):
+    """If the URL cannot be found, a Send may exist anyway — say so, because the
+    orphan holds a copy of the private key."""
+    monkeypatch.setenv("BW_SESSION", "x")
+    wired(FakeSession([_peer("dana_laptop", "192.0.2.2/32")]))
+
+    class Done:
+        returncode = 0
+        stdout = "something unexpected"
+        stderr = ""
+
+    monkeypatch.setattr(mod.subprocess, "run", lambda cmd, **kw: Done())
+    out = json.loads(mod.wireguard_deliver_config(env=ENV, name="dana_laptop"))
+    assert out["ok"] is False
+    assert "may still have been created" in out["error"]
+    assert "bw send delete" in out["cleanup_hint"]
+
+
 def test_delivery_rejects_zero_access_count(mod, wired, monkeypatch):
     monkeypatch.setenv("BW_SESSION", "x")
     wired(FakeSession([_peer("dana_laptop", "192.0.2.2/32")]))
     out = json.loads(mod.wireguard_deliver_config(
         env=ENV, name="dana_laptop", max_access_count=0))
     assert out["ok"] is False
+
+
+# ── session caching ───────────────────────────────────────────────────────────
+def test_session_is_cached_across_calls(mod, wired):
+    """The dashboard is reached over plain HTTP inside the tunnel, so each login
+    puts the password on the wire again. One login per environment, not one per
+    call."""
+    s = wired(FakeSession([_peer("someone_laptop", "192.0.2.4/32")]))
+    mod.wireguard_list_peers(env=ENV)
+    mod.wireguard_list_peers(env=ENV)
+    mod.wireguard_audit(env=ENV)
+    logins = [url for url, _ in s.posts if "/api/authenticate" in url]
+    assert len(logins) == 1, f"expected a single login, got {len(logins)}"
+
+
+def test_stale_cookie_triggers_one_reauth_then_succeeds(mod, wired):
+    """A cached cookie can expire. That must self-heal rather than surfacing as
+    a confusing read error."""
+    s = wired(FakeSession([_peer("someone_laptop", "192.0.2.4/32")]))
+    mod.wireguard_list_peers(env=ENV)  # populates the cache
+
+    calls = {"n": 0}
+    real_get = s.get
+
+    def flaky_get(url, params=None, timeout=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("HTTP 401")
+        return real_get(url, params=params, timeout=timeout)
+
+    s.get = flaky_get
+    out = json.loads(mod.wireguard_list_peers(env=ENV))
+    assert out["ok"] is True, "a stale cookie should be retried, not reported"
+    logins = [url for url, _ in s.posts if "/api/authenticate" in url]
+    assert len(logins) == 2, "exactly one re-authentication"
+
+
+def test_persistent_read_failure_is_reported_after_one_retry(mod, wired):
+    s = wired(FakeSession([_peer("someone_laptop", "192.0.2.4/32")]))
+
+    def always_fail(url, params=None, timeout=None):
+        raise RuntimeError("connection refused")
+
+    s.get = always_fail
+    out = json.loads(mod.wireguard_list_peers(env=ENV))
+    assert out["ok"] is False and "re-authenticating" in out["error"]
 
 
 # ── audit ─────────────────────────────────────────────────────────────────────
@@ -437,6 +538,26 @@ def test_audit_flags_full_tunnel_and_unused(mod, wired):
     assert "no_transfer_recorded" in joined
     assert "name_carries_no_owner" in joined
     assert "someone_laptop" not in flagged
+
+
+def test_audit_zero_transfer_does_not_claim_never_used(mod, wired):
+    """A peer issued minutes ago also has zero transfer. Calling that 'never
+    used' would invite revoking somebody's brand-new access."""
+    wired(FakeSession([_peer("brand_new", "192.0.2.5/32", transfer=0)]))
+    out = json.loads(mod.wireguard_audit(env=ENV))
+    flags = " ".join(out["findings"][0]["flags"])
+    assert "issued recently" in flags
+    assert "vault item" in flags, "must point at where the issue date lives"
+
+
+def test_audit_handles_non_numeric_transfer(mod, wired):
+    """The dashboard's transfer field type is not guaranteed; a string must not
+    take the whole audit down."""
+    peer = _peer("odd", "192.0.2.6/32")
+    peer["total_data"] = "not-a-number"
+    wired(FakeSession([peer]))
+    out = json.loads(mod.wireguard_audit(env=ENV))
+    assert out["ok"] is True
 
 
 def test_audit_note_warns_handshake_is_weak_evidence(mod, wired):

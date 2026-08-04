@@ -146,8 +146,20 @@ def _cfg(env: str):
     return TENANTS[env], None
 
 
-def _session(env: str):
-    """Authenticated requests.Session, or (None, error-json)."""
+# Authenticated sessions are cached per environment. Two reasons, both real:
+# the dashboard is reached over plain HTTP inside the VPN tunnel, so every
+# login puts the password on the wire again; and a multi-step flow
+# (create -> deliver) would otherwise perform four separate logins. A cached
+# cookie can still go stale, so _fetch_peers_retrying re-authenticates once
+# before giving up.
+_SESSIONS: dict = {}
+
+
+def _session(env: str, fresh: bool = False):
+    """Authenticated requests.Session, or (None, error-json). Cached per env."""
+    if not fresh and env in _SESSIONS:
+        return _SESSIONS[env], None
+
     cfg, error = _cfg(env)
     if error:
         return None, error
@@ -196,7 +208,32 @@ def _session(env: str):
                 "the password or a clock skew over 30s before assuming the code."
             ),
         )
+    _SESSIONS[env] = (s, cfg)
     return (s, cfg), None
+
+
+def _peers_retrying(env: str):
+    """(peers, info, cfg, session, None) or (None, None, None, None, error-json).
+
+    Re-authenticates once if the first read fails, so a cached cookie that has
+    expired self-heals instead of surfacing as a confusing read error.
+    """
+    got, error = _session(env)
+    if error:
+        return None, None, None, None, error
+    for attempt in (1, 2):
+        s, cfg = got
+        try:
+            peers, info = _fetch_peers(s, cfg)
+            return peers, info, cfg, s, None
+        except Exception as exc:
+            if attempt == 2:
+                return None, None, None, None, _err(
+                    f"could not read peers after re-authenticating: {exc}")
+            _SESSIONS.pop(env, None)
+            got, error = _session(env, fresh=True)
+            if error:
+                return None, None, None, None, error
 
 
 def _fetch_peers(s, cfg) -> tuple:
@@ -260,14 +297,9 @@ def wireguard_list_peers(env: str) -> str:
     latest_handshake resets when the interface restarts, so "No Handshake"
     means "not since the last restart", not "never used".
     """
-    got, error = _session(env)
+    peers, _info, cfg, _s, error = _peers_retrying(env)
     if error:
         return error
-    s, cfg = got
-    try:
-        peers, _info = _fetch_peers(s, cfg)
-    except Exception as exc:
-        return _err(f"could not read peers: {exc}")
     return _ok(
         environment=env,
         configuration=cfg["configuration"],
@@ -303,21 +335,15 @@ def wireguard_create_peer(
             tunnel and routes all of the user's traffic through this network.
         dns: explicit resolver, overriding the environment default.
     """
-    got, error = _session(env)
-    if error:
-        return error
-    s, cfg = got
-
     if not name or not re.fullmatch(r"[A-Za-z0-9._-]{2,64}", name):
         return _err(
             "invalid peer name",
             hint="2-64 chars, letters/digits/dot/underscore/hyphen; convention is owner_device",
         )
 
-    try:
-        peers, info = _fetch_peers(s, cfg)
-    except Exception as exc:
-        return _err(f"could not read existing peers: {exc}")
+    peers, info, cfg, s, error = _peers_retrying(env)
+    if error:
+        return error
 
     if any(p.get("name") == name for p in peers):
         return _err(f"a peer named '{name}' already exists", hint="pick another name, or revoke the old one first")
@@ -415,11 +441,6 @@ def wireguard_deliver_config(
     Defaults to one-time access expiring in 2 days. Add send_password for a
     second factor you pass to the recipient out of band.
     """
-    got, error = _session(env)
-    if error:
-        return error
-    s, cfg = got
-
     if max_access_count < 1:
         return _err("max_access_count must be at least 1")
     if not os.environ.get("BW_SESSION"):
@@ -428,10 +449,9 @@ def wireguard_deliver_config(
             hint="export BW_SESSION=$(bw unlock --raw) before starting the runtime",
         )
 
-    try:
-        peers, _ = _fetch_peers(s, cfg)
-    except Exception as exc:
-        return _err(f"could not read peers: {exc}")
+    peers, _info, cfg, s, error = _peers_retrying(env)
+    if error:
+        return error
     peer = next((p for p in peers if p.get("name") == name), None)
     if not peer:
         return _err(f"no peer named '{name}'",
@@ -474,11 +494,35 @@ def wireguard_deliver_config(
     if out.returncode != 0:
         return _err("bw send failed", detail=(out.stderr or out.stdout).strip()[:400])
 
-    url = (out.stdout or "").strip().splitlines()[-1] if out.stdout.strip() else ""
-    if not url.startswith("http"):
-        return _err("bw send returned no access URL", detail=(out.stdout or "")[:200])
+    # `bw send` prints a bare access URL for text Sends but a full JSON object
+    # for --file Sends. Verified against the live CLI: assuming the bare-URL
+    # form rejected a Send that had in fact been created, orphaning an
+    # unreferenced copy of the config in the vault. Handle both, and always
+    # surface the Send id so an orphan can be deleted if anything downstream
+    # fails.
+    stdout = (out.stdout or "").strip()
+    url, send_id = "", ""
+    if stdout.startswith("{"):
+        try:
+            obj = json.loads(stdout)
+            url = obj.get("accessUrl") or ""
+            send_id = obj.get("id") or ""
+        except json.JSONDecodeError:
+            pass
+    if not url:
+        for line in reversed(stdout.splitlines()):
+            if line.strip().startswith("http"):
+                url = line.strip()
+                break
+    if not url:
+        return _err(
+            "bw send produced no access URL — a Send may still have been created",
+            detail=stdout[:300],
+            cleanup_hint="check `bw send list` and delete any orphan with `bw send delete <id>`",
+        )
 
     return _ok(
+        send_id=send_id or None,
         peer=name,
         access_url=url,
         expires_in_days=delete_in_days,
@@ -504,15 +548,9 @@ def wireguard_revoke_peer(env: str, name: str, confirm: bool = False) -> str:
     Requires confirm=True. Verifies the peer is gone from the running interface
     rather than trusting the delete response.
     """
-    got, error = _session(env)
+    peers, _info, cfg, s, error = _peers_retrying(env)
     if error:
         return error
-    s, cfg = got
-
-    try:
-        peers, _ = _fetch_peers(s, cfg)
-    except Exception as exc:
-        return _err(f"could not read peers: {exc}")
     peer = next((p for p in peers if p.get("name") == name), None)
     if not peer:
         return _err(f"no peer named '{name}'",
@@ -565,22 +603,28 @@ def wireguard_audit(env: str) -> str:
     credentials nobody can account for. Findings are advisory — a peer with no
     recent handshake may simply belong to someone on holiday.
     """
-    got, error = _session(env)
+    peers, _info, _cfg, _s, error = _peers_retrying(env)
     if error:
         return error
-    s, cfg = got
-    try:
-        peers, _ = _fetch_peers(s, cfg)
-    except Exception as exc:
-        return _err(f"could not read peers: {exc}")
 
     findings = []
     for p in peers:
         pub, flags = _public(p), []
         if (pub["scope"] or "").strip() == "0.0.0.0/0":
             flags.append("full_tunnel: routes all of this user's traffic through the network")
-        if not float(pub["total_transfer_gb"] or 0):
-            flags.append("no_transfer_recorded: cumulative transfer is zero — likely never used")
+        try:
+            transferred = float(pub["total_transfer_gb"] or 0)
+        except (TypeError, ValueError):
+            transferred = 0.0
+        if not transferred:
+            # A peer issued minutes ago has zero transfer too. Saying "never
+            # used" here would invite revoking somebody's brand-new access, so
+            # state what is actually known and where to resolve it.
+            flags.append(
+                "no_transfer_recorded: cumulative transfer is zero — either never "
+                "used, or issued recently and not yet connected. Check the issue "
+                "date in the vault item before concluding it is stale."
+            )
         if pub["latest_handshake"] == _NO_HANDSHAKE:
             flags.append("no_handshake_since_restart: weak signal on its own, see note")
         if not re.search(r"[._-]", pub["name"] or ""):
@@ -593,9 +637,13 @@ def wireguard_audit(env: str) -> str:
         peer_count=len(peers),
         findings=findings,
         note=(
+            "Findings are advisory and none of them alone justifies revocation. "
             "latest_handshake resets when the interface restarts, so it is never "
-            "proof a peer was never used. Cumulative transfer of zero is the "
-            "stronger signal. Confirm ownership before revoking anything."
+            "proof a peer went unused. Zero cumulative transfer is the stronger "
+            "signal but cannot distinguish an abandoned peer from a freshly "
+            "issued one. The peer that should worry you is the one that is "
+            "over-scoped AND has no identifiable owner — confirm ownership "
+            "before revoking anything."
         ),
     )
 
