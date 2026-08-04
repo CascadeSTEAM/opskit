@@ -26,7 +26,7 @@
     src: compose.yml.j2
     dest: "{{ erp_stack_compose_file }}"
     mode: "0600"
-  no_log: true   # rendered file embeds the MariaDB root password
+  no_log: true # rendered file embeds the MariaDB root password
   register: erp_stack_compose_rendered
 
 - name: Pull the stack images

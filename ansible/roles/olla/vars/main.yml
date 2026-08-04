@@ -35,13 +35,13 @@ olla_nodes:
     check_timeout: 10s
 
 # LiteLLM cloud gateway (deployed in Phase 2)
-litellm_url: "http://localhost:4000"
-litellm_priority: 50
-litellm_check_interval: 30s
-litellm_check_timeout: 10s
+olla_litellm_url: "http://localhost:4000"
+olla_litellm_priority: 50
+olla_litellm_check_interval: 30s
+olla_litellm_check_timeout: 10s
 
 # Olla configuration
-olla_engine: "sherpa"  # or "olla" for circuit breakers
+olla_engine: "sherpa" # or "olla" for circuit breakers
 olla_load_balancer: "least-connections"
 olla_request_logging: true
 olla_write_timeout: "600s"

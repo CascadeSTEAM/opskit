@@ -41,14 +41,14 @@
       --admin-password {{ semaphore_admin_password }}
       --admin-name {{ semaphore_admin_user }}
     creates: "{{ semaphore_config_path }}.initialized"
-  register: _setup
-  changed_when: _setup.rc == 0
+  register: semaphore_setup
+  changed_when: semaphore_setup.rc == 0
 
 - name: Mark semaphore initialized
   ansible.builtin.file:
     path: "{{ semaphore_config_path }}.initialized"
     state: touch
-  when: _setup.changed
+  when: semaphore_setup.changed
 
 - name: Install semaphore systemd service
   ansible.builtin.copy:

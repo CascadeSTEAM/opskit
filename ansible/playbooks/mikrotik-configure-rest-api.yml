@@ -21,7 +21,7 @@
 
 - name: Configure MikroTik REST API for Zabbix monitoring
   hosts: "{{ target | default('all') }}"
-  gather_facts: no
+  gather_facts: false
   vars:
     # Set these per-device in inventory or via vault
     # mikrotik_admin_user: "admin"
@@ -48,7 +48,7 @@
         hostname: "{{ ansible_host | default(inventory_hostname) }}"
         username: "{{ mikrotik_admin_user | default('admin') }}"
         password: "{{ mikrotik_admin_password }}"
-        validate_certs: no
+        validate_certs: false
         path: /ip/service
         operation: set
         attribute: "=enabled=yes"
@@ -60,12 +60,16 @@
         hostname: "{{ ansible_host | default(inventory_hostname) }}"
         username: "{{ mikrotik_admin_user | default('admin') }}"
         password: "{{ mikrotik_admin_password }}"
-        validate_certs: no
+        validate_certs: false
         path: /ip/service
         operation: set
         attribute: "=enabled=yes"
         where: "=name=api-ssl"
-      ignore_errors: yes
+      # This task is an alternative to the one above and is expected to fail
+      # on devices where api-ssl is absent, so its result is deliberately
+      # not fatal. failed_when states that intent explicitly instead of
+      # blanket-ignoring every possible error.
+      failed_when: false
 
     - name: Create Zabbix monitoring user group
       community.routeros.command:
@@ -73,7 +77,8 @@
         username: "{{ mikrotik_admin_user | default('admin') }}"
         password: "{{ mikrotik_admin_password }}"
         commands:
-          - /user group add name=zabbix-monitoring policy=read,api,!local,!telnet,!ssh,!ftp,!reboot,!policy,!test,!winbox,!password,!web,!sniff,!sensitive,!romon
+          - /user group add name=zabbix-monitoring
+            policy=read,api,!local,!telnet,!ssh,!ftp,!reboot,!policy,!test,!winbox,!password,!web,!sniff,!sensitive,!romon
       register: group_create
       failed_when: false
 
@@ -82,13 +87,9 @@
         hostname: "{{ ansible_host | default(inventory_hostname) }}"
         username: "{{ mikrotik_admin_user | default('admin') }}"
         password: "{{ mikrotik_admin_password }}"
-        validate_certs: no
+        validate_certs: false
         path: /user
-        add:
-          =name="{{ zabbix_api_user }}"
-          =group=zabbix-monitoring
-          =password="{{ zabbix_api_password }}"
-          =disabled=no
+        add: =name="{{ zabbix_api_user }}" =group=zabbix-monitoring =password="{{ zabbix_api_password }}" =disabled=no
       register: user_create
       failed_when: false
       no_log: true
@@ -98,7 +99,7 @@
         hostname: "{{ ansible_host | default(inventory_hostname) }}"
         username: "{{ mikrotik_admin_user | default('admin') }}"
         password: "{{ mikrotik_admin_password }}"
-        validate_certs: no
+        validate_certs: false
         path: /ip/firewall/filter
         operation: add
         attribute: "=chain=input=protocol=tcp=dst-port=443,8728,8729=src-address={{ zabbix_server_ip }}=comment=Allow Zabbix monitoring=disabled=no"
@@ -109,11 +110,11 @@
         url: "https://{{ ansible_host | default(inventory_hostname) }}/rest/system/identity"
         user: "{{ zabbix_api_user }}"
         password: "{{ zabbix_api_password }}"
-        force_basic_auth: yes
-        validate_certs: no
-        return_content: yes
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
       register: api_test
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: Report API status
       debug:

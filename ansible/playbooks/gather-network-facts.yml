@@ -4,7 +4,7 @@
   # ansible_connection=local (tasks would run on the control node).
   # Override with -e target_hosts=...
   hosts: "{{ target_hosts | default('all:!network_devices') }}"
-  gather_facts: yes
+  gather_facts: true
   tasks:
     # ------------------------------------------------------------------
     # System info
@@ -31,7 +31,7 @@
     # Network info
     # ------------------------------------------------------------------
     - name: Get DNS configuration
-      ansible.builtin.shell: cat /etc/resolv.conf
+      ansible.builtin.command: cat /etc/resolv.conf
       register: dns_config
       changed_when: false
 

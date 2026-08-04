@@ -1,7 +1,7 @@
 ---
 - name: Backup Zabbix PostgreSQL database
   hosts: zabbix
-  gather_facts: no
+  gather_facts: false
   vars:
     backup_dir: "/root/zabbix-backups"
     db_name: "zabbix"
@@ -22,6 +22,11 @@
       args:
         executable: /bin/bash
         creates: "{{ backup_dir }}/zabbix-db-*.sql.gz"
+      # `become_user` without `become` is what partial-become flags. The fix is
+      # to add `become`, NOT to drop the user: pg_dump must run as postgres to
+      # authenticate via peer auth. `ansible-lint --fix` removed the user
+      # instead, which would have silently dumped as the wrong account.
+      become: true
       become_user: postgres
       register: backup_result
       changed_when: backup_result.rc == 0
@@ -43,7 +48,7 @@
         msg: "Backup: {{ latest_backup.files[0].path | basename }} ({{ (latest_backup.files[0].size / 1024 / 1024) | round(1) }} MB)"
       when: latest_backup.files | length > 0
 
-    - name: Prune backups older than {{ retention_days }} days
+    - name: Prune backups past the retention window in days {{ retention_days }}
       find:
         paths: "{{ backup_dir }}"
         patterns: "zabbix-db-*.sql.gz"

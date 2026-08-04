@@ -31,7 +31,7 @@
   # ansible_connection=local (tasks would run on the control node).
   # Override with -e target_hosts=...
   hosts: "{{ target_hosts | default('all:!network_devices') }}"
-  gather_facts: yes
+  gather_facts: true
   vars:
     scan_timestamp: "{{ ansible_date_time.iso8601 | default('unknown') }}"
     _provenance:
@@ -41,7 +41,6 @@
       tags_used: "{{ ansible_run_tags | default(['all']) }}"
       commands: []
       corroborations: []
-
   tasks:
     # ==================================================================
     # Layer 2 — Ansible system facts (always gathered by setup module)
@@ -115,15 +114,19 @@
           serial: "{{ _raw | select('search', 'Serial Number:') | first | default('') | regex_replace('.*Serial Number:\\s+', '') | trim }}"
           uuid: "{{ _raw | select('search', 'UUID:') | first | default('') | regex_replace('.*UUID:\\s+', '') | trim }}"
           sku: "{{ _raw | select('search', 'SKU Number:') | first | default('') | regex_replace('.*SKU Number:\\s+', '') | trim }}"
-          chassis_type: "{{ _dmidecode_chassis.stdout_lines | default([]) | select('search', 'Type:') | first | default('') | regex_replace('.*Type:\\s+', '') | trim }}"
-          board_name: "{{ _dmidecode_baseboard.stdout_lines | default([]) | select('search', 'Product Name:') | first | default('') | regex_replace('.*Product Name:\\s+', '') | trim }}"
-          board_version: "{{ _dmidecode_baseboard.stdout_lines | default([]) | select('search', 'Version:') | first | default('') | regex_replace('.*Version:\\s+', '') | trim }}"
+          chassis_type: "{{ _dmidecode_chassis.stdout_lines | default([]) | select('search', 'Type:') | first | default('') | regex_replace('.*Type:\\s+', '') | trim
+            }}"
+          board_name: "{{ _dmidecode_baseboard.stdout_lines | default([]) | select('search', 'Product Name:') | first | default('') | regex_replace('.*Product Name:\\\
+            s+', '') | trim }}"
+          board_version: "{{ _dmidecode_baseboard.stdout_lines | default([]) | select('search', 'Version:') | first | default('') | regex_replace('.*Version:\\s+',
+            '') | trim }}"
       when: _dmidecode_system is defined
 
     - name: Parse processor summary
       tags: hardware
       ansible.builtin.set_fact:
-        _processor_summary: "{{ _dmidecode_processor.stdout_lines | default([]) | select('search', 'Version:|Core Count:|Thread Count:|Max Speed:|Current Speed:') | list }}"
+        _processor_summary: "{{ _dmidecode_processor.stdout_lines | default([]) | select('search', 'Version:|Core Count:|Thread Count:|Max Speed:|Current Speed:')
+          | list }}"
 
     - name: Parse memory summary
       tags: hardware
@@ -176,7 +179,8 @@
           available: "{{ _ipmitool_available.rc == 0 if _ipmitool_available is defined else false }}"
           ip: "{{ _lan_lines | select('search', 'IP Address\\s*:') | first | default('') | regex_replace('.*IP Address\\s*:\\s+', '') | trim }}"
           mac: "{{ _lan_lines | select('search', 'MAC Address\\s*:') | first | default('') | regex_replace('.*MAC Address\\s*:\\s+', '') | trim | upper }}"
-          gateway: "{{ _lan_lines | select('search', 'Default Gateway IP\\s*:') | first | default('') | regex_replace('.*Default Gateway IP\\s*:\\s+', '') | trim }}"
+          gateway: "{{ _lan_lines | select('search', 'Default Gateway IP\\s*:') | first | default('') | regex_replace('.*Default Gateway IP\\s*:\\s+', '') | trim
+            }}"
           subnet_mask: "{{ _lan_lines | select('search', 'Subnet Mask\\s*:') | first | default('') | regex_replace('.*Subnet Mask\\s*:\\s+', '') | trim }}"
           vlan: "{{ _lan_lines | select('search', '802.1q VLAN ID\\s*:') | first | default('') | regex_replace('.*802.1q VLAN ID\\s*:\\s+', '') | trim }}"
           firmware: "{{ _mc_lines | select('search', 'Firmware Revision') | first | default('') | regex_replace('.*Firmware Revision\\s*:\\s+', '') | trim }}"
@@ -184,8 +188,10 @@
           device_id: "{{ _mc_lines | select('search', 'Device ID') | first | default('') | regex_replace('.*Device ID\\s*:\\s+', '') | trim }}"
           fru_chassis_serial: "{{ _fru_lines | select('search', 'Chassis Serial') | first | default('') | regex_replace('.*Chassis Serial\\s*:\\s+', '') | trim }}"
           fru_board_serial: "{{ _fru_lines | select('search', 'Board Serial') | first | default('') | regex_replace('.*Board Serial\\s*:\\s+', '') | trim }}"
-          fru_board_part: "{{ _fru_lines | select('search', 'Board Part Number') | first | default('') | regex_replace('.*Board Part Number\\s*:\\s+', '') | trim }}"
-          fru_product_manufacturer: "{{ _fru_lines | select('search', 'Product Manufacturer') | first | default('') | regex_replace('.*Product Manufacturer\\s*:\\s+', '') | trim }}"
+          fru_board_part: "{{ _fru_lines | select('search', 'Board Part Number') | first | default('') | regex_replace('.*Board Part Number\\s*:\\s+', '') | trim
+            }}"
+          fru_product_manufacturer: "{{ _fru_lines | select('search', 'Product Manufacturer') | first | default('') | regex_replace('.*Product Manufacturer\\s*:\\\
+            s+', '') | trim }}"
           fru_product_serial: "{{ _fru_lines | select('search', 'Product Serial') | first | default('') | regex_replace('.*Product Serial\\s*:\\s+', '') | trim }}"
           _raw_lan: "{{ _ipmitool_lan.stdout | default('') }}"
           _raw_fru: "{{ _ipmitool_fru.stdout | default('') }}"

@@ -20,7 +20,7 @@
   loop_control:
     label: "{{ item.item }}"
   when: not item.stat.exists
-  no_log: true   # command line carries both vaulted passwords
+  no_log: true # command line carries both vaulted passwords
   register: erp_stack_new_sites
   changed_when: true
 

@@ -4,9 +4,14 @@ set -euo pipefail
 echo "=== opskit pre-commit ==="
 
 # Secret scan (fast grep-based, belt-and-suspenders with CI gitleaks)
+# `[^{]` on the first character mirrors the CI secret-scan pattern: a value
+# starting with a brace is a Jinja/template placeholder or JSON, not a literal
+# credential. Without it the hook fired on `password="{{ some_var }}"` while CI
+# passed — a false positive only the local gate produced, which is how people
+# learn to reach for --no-verify.
 PATTERNS=(
-    'password\s*=\s*"[^"]{8,}"'
-    'api[_-]?key\s*=\s*"[^"]{8,}"'
+    'password\s*=\s*"[^{][^"]{8,}"'
+    'api[_-]?key\s*=\s*"[^{][^"]{8,}"'
     '-----BEGIN (RSA|EC|DSA|OPENSSH) PRIVATE KEY-----'
     'ghp_[A-Za-z0-9]{36}'
     'AIza[0-9A-Za-z\-_]{35}'

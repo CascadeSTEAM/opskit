@@ -8,3 +8,4 @@ collections:
   - name: ansible.posix        # ansible.posix.profile_tasks callback + posix modules
   - name: community.general    # assorted general modules
   - name: community.routeros   # MikroTik / RouterOS management
+  - name: community.postgresql # postgresql_user etc. (zabbix_server role)

@@ -24,13 +24,13 @@ lint: lint-ansible  ## Shell syntax + shellcheck + ansible-lint over the repo
 	@if command -v shellcheck >/dev/null; then shellcheck bin/*.sh || echo "(shellcheck findings above are informational)"; else echo "(shellcheck not installed — syntax check only)"; fi
 
 .PHONY: lint-ansible
-lint-ansible:  ## ansible-lint over tracked playbooks/roles (findings informational — see #87)
+lint-ansible:  ## ansible-lint over tracked playbooks/roles (zero failures expected — #87)
 	@# Degrades like the shellcheck step above rather than failing, so `make lint`
 	@# stays usable on a machine without the Ansible toolchain installed.
 	@if ! command -v ansible-lint >/dev/null; then \
 		echo "(ansible-lint not installed — skipping; pipx install ansible-lint)"; \
 	else \
-		ansible-lint ansible/ || echo "(findings above are informational until #87 is triaged)"; \
+		ansible-lint ansible/; \
 	fi
 	@# Uses .ansible-lint.yml. Never pass --skip-list with an unskippable rule
 	@# (syntax-check, load-failure) — ansible-lint then aborts instead of

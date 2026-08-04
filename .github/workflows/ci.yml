@@ -27,9 +27,21 @@ jobs:
       # CI and `make lint-ansible` evaluate the same rule set. At @v6 they did
       # not: CI reported 2 findings where a developer saw 128, which would have
       # meant triaging the #87 backlog twice, once per version.
-      - name: ansible-lint (findings informational until the #87 backlog is triaged)
+      # ansible_collections/ is gitignored, so without this CI lints with the
+      # pinned collections absent and reports extra syntax-check[unknown-module]
+      # / args[module] findings that resolve fine on a developer's machine. That
+      # difference is the last thing that kept CI and `make lint-ansible` from
+      # agreeing (#19, #87).
+      - name: install pinned collections (so CI resolves modules like a workstation)
+        run: |
+          pip install --quiet ansible-core
+          ansible-galaxy collection install -r requirements.yml
+
+      # Blocking as of #87: the backlog is triaged, tracked ansible/ has zero
+      # failures, and every remaining finding is a deliberate warn_list entry
+      # documented in .ansible-lint.yml. A new failure is a regression.
+      - name: ansible-lint
         uses: ansible/ansible-lint@v26
-        continue-on-error: true
         with:
           args: "ansible/"
 
