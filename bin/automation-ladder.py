@@ -356,10 +356,19 @@ def _render_claude_agent(name: str, fm: dict, body: str) -> tuple[str, bool]:
     perm = fm.get("permission") if isinstance(fm.get("permission"), dict) else {}
     tool_perm = perm.get("tool") if isinstance(perm.get("tool"), dict) else {}
 
-    tool_denies = [g for g, v in tool_perm.items() if v == "deny"]
-    scalar_denies = [
-        k for k in ("bash", "edit", "write", "read") if perm.get(k) == "deny"
+    # Tool globs live directly under `permission` — that is the only shape
+    # OpenCode honours in an agent file. A nested `permission.tool:` block is
+    # silently ignored there, so it is read here only for backward
+    # compatibility with any agent still carrying the old form.
+    _SCALARS = ("bash", "edit", "write", "read")
+    flat_tools = {
+        g: v for g, v in perm.items()
+        if g not in _SCALARS and g != "tool" and isinstance(v, str)
+    }
+    tool_denies = [
+        g for g, v in {**tool_perm, **flat_tools}.items() if v == "deny"
     ]
+    scalar_denies = [k for k in _SCALARS if perm.get(k) == "deny"]
 
     # Trigger phrases must live in the description — that is the only signal
     # Claude Code routes on when auto-delegating to a subagent.
