@@ -9,6 +9,21 @@ Every system/deployment-state operation — DNS, packages, configs, network, cre
 monitoring, deployments, backups, SSH config — MUST be an Ansible playbook in
 `ansible/playbooks/`.
 
+## The objective this serves: rebuild from zero
+
+**Ansible must be able to rebuild the entire infrastructure at any time** —
+emergency restoration, standing up a development or test environment, onboarding a
+newly-received device. That is the point of the rule, not tidiness. At the same
+time, day-to-day changes and incident fixes have to stay fast.
+
+Two consequences follow, and they are the ones most often missed:
+
+- A playbook is judged by whether the thing it configures could be **reconstituted
+  from nothing** with it. "We can already do that another way" is not a reason to
+  delete one.
+- Every device that exists should have a path to being rebuilt. A device managed
+  only interactively is a device that cannot be restored.
+
 **This includes the local workstation.** OS/app/configuration maintenance of the machine
 you are on targets the `workstations` group (`ansible_connection: local`).
 
@@ -30,6 +45,29 @@ models it badly. For application record state, the codification target of the au
 ladder is an **MCP tool** directly (or a codified CLI where no agent surface is needed) —
 not a playbook, and not a hand-rolled one-off script. See AGENTS.md Development
 Principles #2.
+
+## When a domain has BOTH an Ansible path and an MCP tool
+
+Some domains are reachable two ways — RouterOS is the sharp case: `mikromcp` can
+enable IP services and manage local users over SSH, and `ansible/playbooks/` can
+too. The domain-routing rules in AGENTS.md (RouterOS → `@mikrotik`, Linux →
+`@linux`) say which tool an **agent** uses; they do **not** override this rule.
+Both exist, for different jobs:
+
+| | Purpose |
+|---|---|
+| **Ansible playbook** | declarative desired state, and the rebuild path. The source of truth for what a device should look like. |
+| **MCP tool / domain subagent** | diagnosis, inspection, and fast ad-hoc or emergency change against a device that already exists. |
+
+**The discipline that keeps this honest: a change made interactively must be
+reflected back into the playbook in the same session.** Otherwise the running
+device drifts from what Ansible would rebuild, and the rebuild path rots silently
+— you discover it during the restore, which is the worst possible time.
+
+**An MCP tool being able to perform an action is never a reason to retire the
+playbook.** One rebuilds from zero; the other operates on what is already there.
+(This was decided after nearly retiring a RouterOS playbook on exactly that
+faulty reasoning — see issue #94.)
 
 **If you find yourself doing something manually a second time, stop — write the playbook
 first** (and journal it: `python3 bin/automation-ladder.py log --task <slug>`).

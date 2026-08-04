@@ -11,7 +11,9 @@
 **Announce toolset before acting:** Before the first tool call on any task, state what tools you will use and why. Example: *"I'll use mikromcp_get_system_status to check the router, then mikromcp_create_backup before upgrading."* Wait for a go/no-go. This is not optional.
 
 **Tool selection by domain (enforced by subagents — see below):**
-- MikroTik/RouterOS → use `@mikrotik` subagent (relay-shell denied at runtime)
+- MikroTik/RouterOS → use `@mikrotik` subagent (relay-shell denied at runtime).
+  This says which tool an *agent* reaches for; it does not exempt RouterOS from
+  the IaC rule — device state still belongs in a playbook so it can be rebuilt.
 - Linux server ops → use `@linux` subagent (mikromcp tools denied at runtime)
 - Security audit / SOC2 / CVE / hardening → use `@security-auditor` subagent (bash gated; reads the mounted opencode-auditor member)
 - Default task → use `build` agent (full tool access, bash: ask)
@@ -21,12 +23,18 @@ If you are NOT in a domain-specific subagent and the task matches one, switch. E
 ## Core Rules
 - **ALWAYS VERIFY** — never assume IPs, credentials, or roles are current.
 - **Data-driven everything** — environment config lives in `environments/<env>/env.yml`. Never hardcode environment names, hostnames, or subnets. Discover them at runtime.
-- **IaC mandatory** — every repeatable *system/deployment*-state operation (provisioning,
-  packages, services, config files, baselines, reset procedures) → Ansible playbook. Local
-  workstation maintenance too — target the `workstations` group (`ansible_connection:
-  local`). *Application-record* state — API-driven CRUD/queries/relationships inside a
-  hosted app — is out of scope for this rule; see Development Principles #2. See
-  `.opencode/rules/iac-required.md`.
+- **IaC mandatory — Ansible must be able to rebuild the whole infrastructure from
+  zero.** That is the objective: emergency restoration, standing up a dev/test
+  environment, onboarding a new device — while day-to-day changes stay fast. Every
+  repeatable *system/deployment*-state operation (provisioning, packages, services,
+  config files, baselines, reset procedures) → Ansible playbook. Local workstation
+  maintenance too — target the `workstations` group (`ansible_connection: local`).
+  *Application-record* state — API-driven CRUD/queries/relationships inside a
+  hosted app — is out of scope; see Development Principles #2.
+  **A domain having an MCP tool does NOT replace its playbook** — the playbook is
+  the rebuild path, the MCP tool is for diagnosis and ad-hoc change, and an
+  interactive change must be reflected back into the playbook the same session or
+  the rebuild path rots. See `.opencode/rules/iac-required.md`.
 - **One-off tasks prohibited** — all work flows through the document lifecycle.
 - **Multi-system repo** — never assume a specific host. Check connectivity before infra operations.
 - **Hooks auto-setup** — at session start, verify `core.hooksPath` is `.githooks`. If not, run `bash bin/setup-hooks.sh` to ensure consistent commit enforcement across all clones.
