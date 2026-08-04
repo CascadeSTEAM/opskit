@@ -119,7 +119,7 @@ python3 bin/automation-ladder.py sync-agents   # then restart the agent session
   hook is the tighter follow-up.
 
 ## Skills (load with: opencode tool skill use <name>)
-`lifecycle` | `git` | `security` | `backup` | `infra` | `check-connectivity` | `templates` | `tools` | `endsession` | `idea-triage` | `baseline` | `gh` | `helpdesk-ticket` | `frappe-access`
+`lifecycle` | `git` | `security` | `backup` | `infra` | `check-connectivity` | `templates` | `tools` | `endsession` | `idea-triage` | `baseline` | `gh` | `helpdesk-ticket` | `frappe-access` | `dogfood-cycle`
 
 Load the relevant skill before working in its domain.
 
