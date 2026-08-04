@@ -130,6 +130,11 @@ def mod(tmp_path, monkeypatch):
     monkeypatch.setenv("WIREGUARD_TENANTS_FILE", str(fixture))
     monkeypatch.setenv("WG_TEST_PASS", "pw")
     monkeypatch.setenv("WG_TEST_TOTP", SEED)
+    # Set BEFORE load_module(): the module captures REPO_ROOT at import time, and
+    # without this the inventory writes land in the developer's real
+    # environments/ tree. Every test gets an isolated root, not only the ones
+    # that ask for one.
+    monkeypatch.setenv("OPSKIT_ROOT", str(tmp_path))
     return load_module()
 
 
@@ -211,6 +216,7 @@ def test_there_is_no_get_config_tool(mod):
     assert set(exported) == {
         "wireguard_list_peers", "wireguard_create_peer",
         "wireguard_deliver_config", "wireguard_revoke_peer", "wireguard_audit",
+        "wireguard_verify",
     }
 
 
@@ -566,3 +572,113 @@ def test_audit_note_warns_handshake_is_weak_evidence(mod, wired):
     wired(FakeSession([_peer("p", "192.0.2.2/32")]))
     out = json.loads(mod.wireguard_audit(env=ENV))
     assert "restart" in out["note"] and "never" in out["note"]
+
+
+# ── inventory + drift verification (issue #90) ────────────────────────────────
+# An audit can flag a suspicious peer but cannot say whose it is. The inventory
+# is what makes a peer attributable; wireguard_verify is what keeps the two
+# honest about each other.
+
+@pytest.fixture
+def repo(mod, tmp_path):
+    """The isolated repo root the `mod` fixture already established. Depends on
+    `mod` so the ordering cannot silently invert and write to the real tree."""
+    return tmp_path
+
+
+def test_vault_item_name_is_derived_not_invented(mod):
+    """A naming convention that lives in an operator's head is not a convention."""
+    assert mod.vault_item_name(ENV, "dana_laptop") == "CLIENT1 WireGuard peer - dana_laptop"
+
+
+def test_inventory_lives_in_the_private_environment_layer(mod, repo):
+    p = mod._inventory_path(ENV)
+    assert p == repo / "environments" / ENV / "datasets" / "wireguard-peers.json"
+    assert "environments" in str(p), "an inventory names people; it stays in the gitignored layer"
+
+
+def test_create_records_the_peer_in_the_inventory(mod, wired, repo):
+    wired(FakeSession([_peer("someone_laptop", "192.0.2.4/32")]))
+    out = json.loads(mod.wireguard_create_peer(
+        env=ENV, name="dana_laptop", owner_note="Dana, replacement laptop"))
+    assert out["ok"] is True
+    inv = json.loads(mod._inventory_path(ENV).read_text())
+    assert "dana_laptop" in inv
+    row = inv["dana_laptop"]
+    assert row["address"] == "192.0.2.2/32"
+    assert row["scope"] == "198.51.100.0/24"
+    assert row["vault_item"] == mod.vault_item_name(ENV, "dana_laptop")
+    assert row["note"] == "Dana, replacement laptop"
+    assert out["recorded"]["inventory"].endswith("wireguard-peers.json")
+
+
+def test_create_still_succeeds_when_the_inventory_cannot_be_written(mod, wired, monkeypatch):
+    """Recording is best-effort: a failed write must not fail provisioning, because
+    the resulting untracked peer is exactly what verify reports."""
+    wired(FakeSession([_peer("someone_laptop", "192.0.2.4/32")]))
+    monkeypatch.setattr(mod, "_record_peer", lambda *a, **k: (False, "disk on fire"))
+    out = json.loads(mod.wireguard_create_peer(env=ENV, name="dana_laptop"))
+    assert out["ok"] is True
+    assert out["recorded"]["inventory_error"] == "disk on fire"
+
+
+def test_verify_reports_untracked_live_peers(mod, wired, repo):
+    """The finding that matters: live access with no recorded owner."""
+    wired(FakeSession([
+        _peer("someone_laptop", "192.0.2.4/32"),
+        _peer("orphan", "192.0.2.2/32", scope="0.0.0.0/0"),
+    ]))
+    out = json.loads(mod.wireguard_verify(env=ENV))
+    assert out["ok"] is True and out["clean"] is False
+    names = {u["peer"] for u in out["untracked"]}
+    assert names == {"someone_laptop", "orphan"}
+    orphan = next(u for u in out["untracked"] if u["peer"] == "orphan")
+    assert orphan["full_tunnel"] is True
+
+
+def test_verify_is_clean_once_everything_is_recorded(mod, wired, repo):
+    wired(FakeSession([_peer("someone_laptop", "192.0.2.4/32")]))
+    mod._record_peer(ENV, "someone_laptop",
+                     {"address": "192.0.2.4/32", "scope": "198.51.100.0/24"})
+    out = json.loads(mod.wireguard_verify(env=ENV))
+    assert out["clean"] is True
+    assert out["untracked"] == [] and out["stale"] == [] and out["mismatched"] == []
+
+
+def test_verify_reports_stale_inventory_rows(mod, wired, repo):
+    """Recorded but gone from the server — access already revoked, row not closed."""
+    wired(FakeSession([_peer("someone_laptop", "192.0.2.4/32")]))
+    mod._record_peer(ENV, "someone_laptop", {"address": "192.0.2.4/32"})
+    mod._record_peer(ENV, "departed", {"address": "192.0.2.9/32",
+                                       "vault_item": "X WireGuard peer - departed"})
+    out = json.loads(mod.wireguard_verify(env=ENV))
+    assert [s["peer"] for s in out["stale"]] == ["departed"]
+    assert out["stale"][0]["vault_item"] == "X WireGuard peer - departed"
+
+
+def test_verify_reports_a_changed_scope(mod, wired, repo):
+    """The record no longer describes the access actually granted."""
+    wired(FakeSession([_peer("someone_laptop", "192.0.2.4/32", scope="0.0.0.0/0")]))
+    mod._record_peer(ENV, "someone_laptop",
+                     {"address": "192.0.2.4/32", "scope": "198.51.100.0/24"})
+    out = json.loads(mod.wireguard_verify(env=ENV))
+    assert len(out["mismatched"]) == 1
+    d = out["mismatched"][0]["differs"]["scope"]
+    assert d["inventory"] == "198.51.100.0/24" and d["live"] == "0.0.0.0/0"
+
+
+def test_verify_survives_a_corrupt_inventory(mod, wired, repo):
+    """A hand-edited file must degrade to 'nothing recorded', not crash."""
+    p = mod._inventory_path(ENV)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("{ not json")
+    wired(FakeSession([_peer("someone_laptop", "192.0.2.4/32")]))
+    out = json.loads(mod.wireguard_verify(env=ENV))
+    assert out["ok"] is True
+    assert [u["peer"] for u in out["untracked"]] == ["someone_laptop"]
+
+
+def test_verify_never_leaks_private_keys(mod, wired, repo):
+    wired(FakeSession([_peer("someone_laptop", "192.0.2.4/32")]))
+    raw = mod.wireguard_verify(env=ENV)
+    assert "PRIVATE-KEY-OF" not in raw and "private_key" not in raw
