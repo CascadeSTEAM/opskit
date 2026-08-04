@@ -87,7 +87,26 @@ All scripts are data-driven — they read from `environments/$ACTIVE_ENV/env.yml
 
 Always use `@skill-builder` for new skills — enforces 4-field frontmatter and 60-line limit.
 
-**Domain enforcement:** These agents have runtime-enforced tool permissions. `@mikrotik` has `relay-shell_*` denied at the OpenCode runtime level, and `@linux` has `mikromcp_*` denied.
+**Domain enforcement:** These agents have runtime-enforced tool permissions. `@mikrotik` has `relay-shell_*` denied and `mikromcp_*` explicitly allowed at the OpenCode runtime level; `@linux` has `mikromcp_*` denied.
+
+Enforcement only exists once the agents are rendered into each harness — the
+canonical files live in `agents/`, and both discovery locations
+(`.opencode/agent/`, `.claude/agents/`) are **generated and gitignored**:
+
+```bash
+python3 bin/automation-ladder.py sync-agents   # then restart the agent session
+```
+
+`install.sh` reports when they are missing or stale. Two things to know:
+
+- Tool globs go **directly** under `permission:` in an agent file. A nested
+  `permission.tool:` block is silently ignored by OpenCode, so the rules never
+  apply — `make test` guards against that shape.
+- `mikromcp_*` is denied globally, so an agent that needs it must **explicitly
+  allow** it or it gets nothing. Verify with `opencode debug agent <name>`.
+- Claude Code cannot hard-enforce deny globs; the rendered files carry the
+  intent as an advisory section plus a machine-readable comment. A `PreToolUse`
+  hook is the tighter follow-up.
 
 ## Skills (load with: opencode tool skill use <name>)
 `lifecycle` | `git` | `security` | `backup` | `infra` | `check-connectivity` | `templates` | `tools` | `endsession` | `idea-triage` | `baseline` | `gh` | `helpdesk-ticket` | `frappe-access`

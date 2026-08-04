@@ -3,10 +3,13 @@ description: Manages MikroTik RouterOS devices — switches, routers, WiFi APs, 
 tags: [mikrotik, routeros, capsman, wifi, switch, network]
 mode: subagent
 triggers: mikrotik,routeros,capsman,switch,wifi,RouterOS
+# Tool globs go DIRECTLY under `permission` — OpenCode silently ignores a
+# nested `permission.tool:` block in an agent file, which left the global
+# `mikromcp_*: deny` in force and this agent unable to reach any MikroTik
+# device. Verified with `opencode debug agent mikrotik`.
 permission:
-  tool:
-    "relay-shell_*": deny
-    "mikromcp_*": allow
+  "relay-shell_*": deny
+  "mikromcp_*": allow
 tools:
   skill: true
 ---

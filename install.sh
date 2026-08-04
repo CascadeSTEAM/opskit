@@ -257,6 +257,50 @@ if [ -f "$REPO_ROOT/Makefile" ]; then
         fi
     fi
 
+    # Rendered subagents live in .opencode/agent + .claude/agents, both
+    # gitignored — so a fresh clone has the canonical agents/*.md and neither
+    # harness can see them. AGENTS.md documents @mikrotik and @linux as
+    # available, which would be false until this is run. Staleness counts too:
+    # an edited canonical file does not reach Claude Code until re-rendered.
+    if [ -d "$REPO_ROOT/agents" ]; then
+        # Every find below runs only against a directory confirmed to exist:
+        # under `set -euo pipefail` a find that errors on a missing path fails
+        # the whole pipeline and aborts install.sh — on a fresh clone, which is
+        # exactly when these directories are absent.
+        CANON_COUNT=$(find "$REPO_ROOT/agents" -maxdepth 1 -name '*.md' | wc -l)
+        CC_COUNT=0
+        OC_COUNT=0
+        STALE=0
+        if [ -d "$REPO_ROOT/.claude/agents" ]; then
+            CC_COUNT=$(find "$REPO_ROOT/.claude/agents" -maxdepth 1 -name '*.md' | wc -l)
+            # Compare each canonical file against its own rendered counterpart.
+            # A directory mtime does not move when a file inside it is
+            # overwritten in place, so comparing against the directory reports
+            # everything as stale immediately after a successful render.
+            for src in "$REPO_ROOT"/agents/*.md; do
+                [ -f "$src" ] || continue
+                rendered="$REPO_ROOT/.claude/agents/$(basename "$src")"
+                # Only an existing-but-older counterpart is stale; a missing one
+                # usually means the doc is not a subagent and was skipped.
+                if [ -f "$rendered" ] && [ "$src" -nt "$rendered" ]; then
+                    STALE=$((STALE + 1))
+                fi
+            done
+        fi
+        if [ -d "$REPO_ROOT/.opencode/agent" ]; then
+            OC_COUNT=$(find "$REPO_ROOT/.opencode/agent" -maxdepth 1 -name '*.md' | wc -l)
+        fi
+        if [ "$CC_COUNT" -eq 0 ] || [ "$OC_COUNT" -eq 0 ]; then
+            note_warn "subagents" "canonical agents present ($CANON_COUNT) but not rendered — neither harness can discover them" \
+                "python3 bin/automation-ladder.py sync-agents"
+        elif [ "$STALE" -gt 0 ]; then
+            note_warn "subagents" "$STALE canonical agent(s) edited since the last render — harnesses are stale" \
+                "python3 bin/automation-ladder.py sync-agents"
+        else
+            note_ok "subagents" "$CANON_COUNT rendered into both harnesses"
+        fi
+    fi
+
     if [ -d "$REPO_ROOT/.opencode/node_modules" ]; then
         note_ok ".opencode deps" "installed"
     elif [ -f "$REPO_ROOT/.opencode/package.json" ]; then

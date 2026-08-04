@@ -3,9 +3,10 @@ description: Manages Linux servers — administration, troubleshooting, configur
 tags: [linux, server, ubuntu, debian, administration, ssh, ansible, proxmox, docker]
 mode: subagent
 triggers: linux,server,ubuntu,debian,ssh,ansible,pve,proxmox,docker
+# Tool globs go DIRECTLY under `permission` — a nested `permission.tool:`
+# block is silently ignored in an agent file (see agents/mikrotik.md).
 permission:
-  tool:
-    "mikromcp_*": deny
+  "mikromcp_*": deny
 tools:
   skill: true
 ---
