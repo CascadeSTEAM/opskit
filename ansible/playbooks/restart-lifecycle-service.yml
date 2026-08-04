@@ -61,15 +61,16 @@
         mode: "0755"
       when: not restart_only
 
+    # src is a Jinja template inside this repo, resolved relative to the
+    # playbook. It previously pointed at "{{ repo_root }}/scripts/…", a path that
+    # has never existed in this repository's history, so the play always failed
+    # here (#95) — the same phantom-path defect as #84. The old `vars` block
+    # passed `__REPO_ROOT__`-style names, which Jinja never substitutes anyway.
     - name: Install service unit file
       ansible.builtin.template:
-        src: "{{ repo_root }}/scripts/lifecycle-processor.service"
+        src: lifecycle-processor.service.j2
         dest: "{{ systemd_user_dir }}/{{ service_name }}.service"
         mode: "0644"
-      vars:
-        # Inline the substitutions that install-lifecycle-service.sh does via sed
-        template_repo_root: "{{ repo_root }}"
-        template_python: "{{ venv_python }}"
       when: not restart_only
       register: service_file
 
