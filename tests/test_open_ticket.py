@@ -34,11 +34,69 @@ def _root(tmp_path: Path, ticket_yaml: str) -> Path:
     return root
 
 
-def _run(root: Path, *args: str) -> subprocess.CompletedProcess:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("ERPNEXT_ADMIN_PASSWORD")}
+def _run(root: Path, *args: str, extra_env: dict | None = None,
+         pythonpath: str | None = None) -> subprocess.CompletedProcess:
+    # Strip every credential this script might read so a developer's exported
+    # environment cannot make a test pass (or fail) by accident.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ERPNEXT_")}
     env["OPSKIT_ROOT"] = str(root)
     env["PATH"] = VENV_BIN + ":" + env["PATH"]
+    if pythonpath:
+        env["PYTHONPATH"] = pythonpath
+    env.update(extra_env or {})
     return subprocess.run(["bash", str(SCRIPT), *args], capture_output=True, text=True, env=env)
+
+
+# A stub `requests` module placed on PYTHONPATH, so the script's own
+# `import requests` picks it up. Lets the success paths — which auth method was
+# used, what headers went out — be asserted with no network and no helpdesk.
+STUB_REQUESTS = '''
+import json as _json, os
+
+_LOG = os.environ["STUB_LOG"]
+
+
+def _record(entry):
+    with open(_LOG, "a") as fh:
+        fh.write(_json.dumps(entry) + "\\n")
+
+
+class _Resp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+class Session:
+    def __init__(self):
+        self.headers = {}
+
+    def post(self, url, json=None, timeout=None):
+        _record({"url": url, "json": json, "headers": dict(self.headers)})
+        if "/api/method/login" in url:
+            return _Resp({"message": "Logged In"})
+        return _Resp({"data": {"name": "0123"}})
+'''
+
+
+def _stub(tmp_path: Path):
+    """(pythonpath, log_path) for a stubbed requests module."""
+    libdir = tmp_path / "stublib"
+    libdir.mkdir()
+    (libdir / "requests.py").write_text(STUB_REQUESTS)
+    return str(libdir), tmp_path / "calls.jsonl"
+
+
+def _calls(log: Path) -> list:
+    import json as _json
+    if not log.exists():
+        return []
+    return [_json.loads(line) for line in log.read_text().splitlines() if line.strip()]
 
 
 def _ticket(root: Path):
@@ -89,3 +147,99 @@ def test_close_clears_ticket(tmp_path):
     r = _run(root, "close")
     assert r.returncode == 0, r.stderr
     assert _ticket(root) is None
+
+
+# ── auth method selection (issue #91) ─────────────────────────────────────────
+# The script used to hardcode a full-admin session login against a credential
+# the repo never provisions, so the mandatory ticket gate could not be satisfied
+# on a correctly configured workstation. Token auth for a least-privilege
+# service account is now preferred; the password path is an explicit fallback.
+
+TOKEN_ENV = {
+    "ERPNEXT_API_KEY_TESTTENANT": "key123",
+    "ERPNEXT_API_SECRET_TESTTENANT": "secret456",
+}
+
+
+def test_token_auth_is_used_and_creates_the_ticket(tmp_path):
+    root = _root(tmp_path, CONFIGURED)
+    pp, log = _stub(tmp_path)
+    r = _run(root, "some work", pythonpath=pp,
+             extra_env={**TOKEN_ENV, "STUB_LOG": str(log)})
+    assert r.returncode == 0, r.stderr
+    assert _ticket(root) == "TS-0123"
+    calls = _calls(log)
+    assert not any("/api/method/login" in c["url"] for c in calls), \
+        "token auth must not perform a session login"
+    ticket_call = next(c for c in calls if "HD Ticket" in c["url"])
+    assert ticket_call["headers"]["Authorization"] == "token key123:secret456"
+
+
+def test_token_auth_preferred_over_password(tmp_path):
+    root = _root(tmp_path, CONFIGURED)
+    pp, log = _stub(tmp_path)
+    r = _run(root, "some work", pythonpath=pp, extra_env={
+        **TOKEN_ENV,
+        "ERPNEXT_ADMIN_PASSWORD_TESTTENANT": "adminpw",
+        "STUB_LOG": str(log),
+    })
+    assert r.returncode == 0, r.stderr
+    assert not any("/api/method/login" in c["url"] for c in _calls(log)), \
+        "with both available, the least-privilege token must win"
+
+
+def test_password_fallback_still_works(tmp_path):
+    root = _root(tmp_path, CONFIGURED)
+    pp, log = _stub(tmp_path)
+    r = _run(root, "some work", pythonpath=pp, extra_env={
+        "ERPNEXT_ADMIN_PASSWORD_TESTTENANT": "adminpw",
+        "STUB_LOG": str(log),
+    })
+    assert r.returncode == 0, r.stderr
+    login = next(c for c in _calls(log) if "/api/method/login" in c["url"])
+    assert login["json"]["pwd"] == "adminpw"
+    ticket_call = next(c for c in _calls(log) if "HD Ticket" in c["url"])
+    assert "Authorization" not in ticket_call["headers"]
+
+
+def test_admin_username_is_not_hardcoded(tmp_path):
+    """Requiring the `Administrator` account for a routine write is backwards;
+    the username must be overridable."""
+    root = _root(tmp_path, CONFIGURED)
+    pp, log = _stub(tmp_path)
+    r = _run(root, "some work", pythonpath=pp, extra_env={
+        "ERPNEXT_ADMIN_PASSWORD_TESTTENANT": "adminpw",
+        "ERPNEXT_ADMIN_USER_TESTTENANT": "svc@example.test",
+        "STUB_LOG": str(log),
+    })
+    assert r.returncode == 0, r.stderr
+    login = next(c for c in _calls(log) if "/api/method/login" in c["url"])
+    assert login["json"]["usr"] == "svc@example.test"
+
+
+def test_missing_credential_names_both_methods(tmp_path):
+    """The old message named only the password variable, pointing the operator
+    at the wrong credential entirely."""
+    root = _root(tmp_path, CONFIGURED)
+    r = _run(root, "some work")
+    assert r.returncode == 1
+    assert "ERPNEXT_API_KEY_TESTTENANT" in r.stderr
+    assert "ERPNEXT_API_SECRET_TESTTENANT" in r.stderr
+    assert "ERPNEXT_ADMIN_PASSWORD_TESTTENANT" in r.stderr
+    assert _ticket(root) is None
+
+
+def test_untenanted_vars_are_accepted(tmp_path):
+    """An env with no helpdesk_tenant should still authenticate."""
+    root = _root(tmp_path, (
+        "ticket:\n"
+        "  prefix: TS\n"
+        "  helpdesk: erpnext\n"
+        "  helpdesk_endpoint: http://127.0.0.1:9\n"
+    ))
+    pp, log = _stub(tmp_path)
+    r = _run(root, "some work", pythonpath=pp, extra_env={
+        "ERPNEXT_API_KEY": "k", "ERPNEXT_API_SECRET": "s", "STUB_LOG": str(log),
+    })
+    assert r.returncode == 0, r.stderr
+    assert _ticket(root) == "TS-0123"
