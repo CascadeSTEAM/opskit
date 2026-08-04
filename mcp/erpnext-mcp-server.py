@@ -8,6 +8,8 @@ Tools -- tickets:
   erpnext_create_ticket      Create a new support ticket
   erpnext_update_ticket      Update ticket fields (status, priority, assigned_to)
   erpnext_add_reply          Add a reply or internal comment to a ticket
+  erpnext_assign_ticket      Assign a ticket to a specific agent (_assign/ToDo)
+  erpnext_unassign_ticket    Remove an agent's assignment from a ticket
   erpnext_get_communications Get communication history for a ticket
 
 Tools -- party management (Customer/Supplier/Contact/Address/Customer Group/
@@ -409,11 +411,33 @@ def erpnext_add_reply(
 
     try:
         client = get_client(tenant)
+
+        if reply_type == "Comment":
+            # An internal note must be an `HD Ticket Comment`, NOT a
+            # Communication with communication_type="Comment". The Helpdesk
+            # portal renders comments from its own doctype, so a Communication
+            # is accepted by the API, returns success, and is then invisible to
+            # every agent viewing the ticket (issue #69). A silently unread
+            # internal note is worse than a failed one.
+            doc = {"reference_ticket": ticket_id, "content": content}
+            if sender:
+                doc["commented_by"] = sender
+            result = client.post("HD Ticket Comment", doc)
+            created = result.get("data", {}) or {}
+            return json.dumps({
+                "tenant": tenant,
+                "ticket_id": ticket_id,
+                "doctype": "HD Ticket Comment",
+                "message": f"Internal comment added to ticket {ticket_id}",
+                "visible_in_portal": True,
+                "comment": created,
+            }, indent=2)
+
         comm = {
             "reference_doctype": "HD Ticket",
             "reference_name": ticket_id,
-            "communication_type": "Communication" if reply_type == "Reply" else "Comment",
-            "communication_medium": "Email" if reply_type == "Reply" else "Chat",
+            "communication_type": "Communication",
+            "communication_medium": "Email",
             "content": content,
             "subject": f"Re: {ticket_id}",
             "sent_or_received": "Sent",
@@ -425,8 +449,86 @@ def erpnext_add_reply(
         return json.dumps({
             "tenant": tenant,
             "ticket_id": ticket_id,
-            "message": f"{reply_type} added to ticket {ticket_id}",
+            "doctype": "Communication",
+            "message": f"Reply added to ticket {ticket_id}",
             "communication": result.get("data", {}),
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def erpnext_assign_ticket(tenant: str, ticket_id: str, assign_to: str) -> str:
+    """
+    Assign a ticket to a specific agent.
+
+    Per-agent assignment is not an HD Ticket field — Frappe models it with the
+    standard `_assign` / ToDo mechanism, so it goes through
+    `frappe.desk.form.assign_to.add`. Setting `agent_group` via
+    erpnext_update_ticket assigns to a bulk category, not a person, which is why
+    that tool cannot do this.
+
+    Args:
+        tenant: Tenant name (e.g. 'client1'; see erpnext_list_tenants).
+        ticket_id: Ticket ID to assign.
+        assign_to: Agent's user id (an email address in Frappe).
+    """
+    if tenant not in TENANTS:
+        return f"Invalid tenant '{tenant}'. Choose: {', '.join(TENANTS.keys())}"
+    if not assign_to or "@" not in assign_to:
+        return json.dumps({
+            "error": f"assign_to must be a Frappe user id (an email); got {assign_to!r}"
+        })
+    try:
+        client = get_client(tenant)
+        result = client.run_method("frappe.desk.form.assign_to.add", {
+            "doctype": "HD Ticket",
+            "name": ticket_id,
+            "assign_to": json.dumps([assign_to]),
+        })
+        return json.dumps({
+            "tenant": tenant,
+            "ticket_id": ticket_id,
+            "assigned_to": assign_to,
+            "message": f"Ticket {ticket_id} assigned to {assign_to}",
+            "result": result.get("message", result),
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def erpnext_unassign_ticket(tenant: str, ticket_id: str, assign_to: str) -> str:
+    """
+    Remove an agent's assignment from a ticket.
+
+    Symmetric with erpnext_assign_ticket — a grant with no matching removal is
+    how stale assignments accumulate.
+
+    Args:
+        tenant: Tenant name (e.g. 'client1'; see erpnext_list_tenants).
+        ticket_id: Ticket ID to unassign.
+        assign_to: Agent's user id to remove.
+    """
+    if tenant not in TENANTS:
+        return f"Invalid tenant '{tenant}'. Choose: {', '.join(TENANTS.keys())}"
+    if not assign_to or "@" not in assign_to:
+        return json.dumps({
+            "error": f"assign_to must be a Frappe user id (an email); got {assign_to!r}"
+        })
+    try:
+        client = get_client(tenant)
+        result = client.run_method("frappe.desk.form.assign_to.remove", {
+            "doctype": "HD Ticket",
+            "name": ticket_id,
+            "assign_to": assign_to,
+        })
+        return json.dumps({
+            "tenant": tenant,
+            "ticket_id": ticket_id,
+            "unassigned": assign_to,
+            "message": f"Assignment of {ticket_id} to {assign_to} removed",
+            "result": result.get("message", result),
         }, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
