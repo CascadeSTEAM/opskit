@@ -1,0 +1,44 @@
+{
+  "_comment": [
+    "Template for the gitignored mcp/tenants-proxmox.local.json used by",
+    "mcp/proxmox-mcp-server.py. Hostnames, addresses and environment names are",
+    "why the real file is gitignored (docs/client-data-policy.md) — keep this",
+    "template free of all three.",
+    "",
+    "Top-level key = environment key, matched against ACTIVE_ENV (or PROXMOX_ENV).",
+    "Add an entry for every environment that has a Proxmox node; the launcher",
+    "refuses with the configured list if the active environment has none.",
+    "",
+    "  host                 Proxmox node hostname or address, reachable from the",
+    "                       workstation (usually in-tunnel). Topology, not a",
+    "                       secret, which is why it lives here and not in the",
+    "                       vault map.",
+    "  port                 optional, default 8006.",
+    "  verify_ssl           optional, default false. Proxmox ships a self-signed",
+    "                       certificate; set true only where a trusted cert is",
+    "                       installed.",
+    "  env_token_identity   env var holding the FULL token identity as the vault",
+    "                       records it: user@realm!tokenname. The launcher splits",
+    "                       it into PROXMOX_USER and PROXMOX_TOKEN_NAME — passing",
+    "                       the combined value straight through produces a",
+    "                       malformed PVEAPIToken header and a 401 that reads as",
+    "                       a wrong credential.",
+    "  env_token_value      env var holding the token secret.",
+    "",
+    "Map both env vars in mcp/vault-map.local.json so bin/mcp-run.sh resolves",
+    "them at launch: identity from the item's `username`, value from `password`.",
+    "",
+    "Use an API TOKEN scoped to what the agent needs, never a root password.",
+    "PVEAuditor on / is enough for read-only inspection; grant write roles",
+    "deliberately."
+  ],
+
+  "client1": {
+    "host": "192.0.2.10",
+    "port": 8006,
+    "verify_ssl": false,
+    "env_token_identity": "PROXMOX_CLIENT1_TOKEN_IDENTITY",
+    "env_token_value": "PROXMOX_CLIENT1_TOKEN_VALUE",
+    "description": "Example environment — replace with your own."
+  }
+}
