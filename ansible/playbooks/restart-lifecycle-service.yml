@@ -15,7 +15,7 @@
 - name: Redeploy lifecycle-processor service
   hosts: "{{ target_host | default('localhost') }}"
   connection: "{{ 'local' if (target_host | default('localhost')) == 'localhost' else 'ssh' }}"
-  gather_facts: yes
+  gather_facts: true
 
   vars:
     # Override with -e opskit_repo_root=/path/to/checkout if the repo lives elsewhere
@@ -58,24 +58,24 @@
       ansible.builtin.file:
         path: "{{ systemd_user_dir }}"
         state: directory
-        mode: '0755'
+        mode: "0755"
       when: not restart_only
 
     - name: Install service unit file
       ansible.builtin.template:
         src: "{{ repo_root }}/scripts/lifecycle-processor.service"
         dest: "{{ systemd_user_dir }}/{{ service_name }}.service"
-        mode: '0644'
+        mode: "0644"
       vars:
         # Inline the substitutions that install-lifecycle-service.sh does via sed
-        __REPO_ROOT__: "{{ repo_root }}"
-        __PYTHON__: "{{ venv_python }}"
+        template_repo_root: "{{ repo_root }}"
+        template_python: "{{ venv_python }}"
       when: not restart_only
       register: service_file
 
     - name: Reload systemd user daemon
       ansible.builtin.systemd:
-        daemon_reload: yes
+        daemon_reload: true
         scope: user
       when: not restart_only and service_file.changed
 
@@ -84,13 +84,16 @@
         name: "{{ service_name }}"
         state: restarted
         scope: user
-        enabled: yes
+        enabled: true
 
     - name: Wait for service to stabilize
       ansible.builtin.pause:
         seconds: 3
 
-    - name: Check service is active
+    - name: Check service is active  # noqa: command-instead-of-module
+      # A read-only status query, not a state change. The systemd module
+      # would ENFORCE state rather than report it, which is wrong for a
+      # verification step — hence a documented per-line ignore.
       ansible.builtin.command:
         cmd: systemctl --user is-active {{ service_name }}
       register: svc_status

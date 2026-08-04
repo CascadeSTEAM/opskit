@@ -32,4 +32,4 @@ litellm_models:
     api_key_env: "GEMINI_API_KEY"
 
 # VaultWarden paths for API keys
-vault_litellm_path: "ai-cluster/services/litellm"
+litellm_vault_path: "ai-cluster/services/litellm"

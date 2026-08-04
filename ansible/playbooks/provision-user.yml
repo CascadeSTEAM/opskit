@@ -15,8 +15,12 @@
 #     -e sudo_nopasswd=true
 
 - name: Provision local user account
-  hosts: "{{ target_host }}"
-  gather_facts: no
+  # target_host is supplied at run time with `-e target_host=<host>`; the
+  # linter cannot know that, and the assert below fails loudly if it is
+  # missing. A per-line ignore, never skip_list — syntax-check is unskippable
+  # and listing it there stops ansible-lint running at all (#83).
+  hosts: "{{ target_host }}"  # noqa: syntax-check[specific]
+  gather_facts: false
 
   vars:
     sudo_nopasswd: false
@@ -38,7 +42,7 @@
         name: "{{ new_user }}"
         password: "{{ user_password | password_hash('sha512') }}"
         shell: "{{ user_shell }}"
-        create_home: yes
+        create_home: true
         state: present
       no_log: true
 
@@ -48,7 +52,7 @@
       ansible.builtin.apt:
         name: sudo
         state: present
-        update_cache: yes
+        update_cache: true
         cache_valid_time: 3600
       when: sudo_nopasswd | bool
 

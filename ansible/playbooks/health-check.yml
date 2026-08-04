@@ -1,17 +1,19 @@
 ---
 - name: Health check all AI cluster nodes
   hosts: ollama_spokes
-  gather_facts: yes
+  gather_facts: true
 
   tasks:
     - name: Check SSH connectivity
       ansible.builtin.ping:
       register: ping_result
-      ignore_errors: yes
+      # failed_when: false rather than ignore_errors — the next task
+      # inspects the result and ends the host deliberately.
+      failed_when: false
 
     - name: Skip unreachable nodes
       meta: end_host
-      when: ping_result.ping is not defined or ping_result.ping == false
+      when: ping_result.ping is not defined or not ping_result.ping
 
     - name: Check Ollama service status (systemd)
       ansible.builtin.systemd:
@@ -20,10 +22,10 @@
       when: not (ollama_docker | default(false))
 
     - name: Check Ollama service status (docker)
-      ansible.builtin.shell: "docker inspect --format '{% raw %}{{.State.Running}}{% endraw %}' {{ ollama_container_name | default('ollama') }}"
+      ansible.builtin.command: "docker inspect --format '{% raw %}{{.State.Running}}{% endraw %}' {{ ollama_container_name | default('ollama') }}"
       register: ollama_docker_status
       changed_when: false
-      ignore_errors: yes
+      ignore_errors: true
       check_mode: false
       when: ollama_docker | default(false)
 
@@ -40,15 +42,15 @@
       ansible.builtin.command: ollama list
       register: ollama_models
       changed_when: false
-      ignore_errors: yes
+      ignore_errors: true
       check_mode: false
       when: not (ollama_docker | default(false))
 
     - name: Get model list (docker)
-      ansible.builtin.shell: docker exec {{ ollama_container_name | default('ollama') }} ollama list
+      ansible.builtin.command: docker exec {{ ollama_container_name | default('ollama') }} ollama list
       register: ollama_models
       changed_when: false
-      ignore_errors: yes
+      ignore_errors: true
       check_mode: false
       when: ollama_docker | default(false)
 
@@ -81,14 +83,14 @@
       check_mode: false
 
     - name: Check DNS resolution
-      ansible.builtin.shell: nslookup google.com
+      ansible.builtin.command: nslookup google.com
       register: dns_check
       failed_when: dns_check.rc != 0
       changed_when: false
       check_mode: false
 
     - name: Check gateway reachability
-      ansible.builtin.shell: ping -c 1 {{ ansible_default_ipv4.gateway }}
+      ansible.builtin.command: ping -c 1 {{ ansible_default_ipv4.gateway }}
       register: gw_check
       failed_when: gw_check.rc != 0
       changed_when: false

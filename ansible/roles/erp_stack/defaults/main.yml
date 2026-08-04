@@ -26,10 +26,9 @@ erp_stack_http_port: 8080
 # Sites served by this bench, e.g. [erp.example.org].
 # Used for bench migrate, site creation, and HTTP verification.
 erp_stack_sites: []
-
 # Create any missing sites (bench new-site) and install these apps into them.
 erp_stack_create_sites: false
-erp_stack_site_apps: []        # e.g. [erpnext, builder, raven]
+erp_stack_site_apps: [] # e.g. [erpnext, builder, raven]
 
 # Run bench migrate after deploy — the safe default for image upgrades.
 erp_stack_run_migrate: true
