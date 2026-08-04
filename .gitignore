@@ -72,6 +72,7 @@ gitleaks-report.json
 # Client-data isolation (docs/client-data-policy.md)
 .client-tokens
 .env-remotes
+.project-remotes
 mcp/*.local.json
 .current-ticket
 *.bundle
@@ -79,3 +80,8 @@ mcp/*.local.json
 
 # Notes
 NOTES.md
+
+# Mounted member repos — synced into projects/<name>/ by the orchestrator.
+# Real members never enter this public repo; only projects/example/ is tracked.
+projects/*
+!projects/example/

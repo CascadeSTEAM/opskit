@@ -301,6 +301,29 @@ if [ -f "$REPO_ROOT/Makefile" ]; then
         fi
     fi
 
+    # Mounted member repos — subagents read their domain knowledge from
+    # projects/<name>/ at runtime, and that tree is gitignored. An agent whose
+    # member is missing has no knowledge to work from, so surface it here rather
+    # than letting the agent discover it mid-task.
+    MEMBER_REFS=$(grep -rhoE 'projects/[a-zA-Z0-9._-]+/' "$REPO_ROOT"/agents/*.md 2>/dev/null \
+        | sed -E 's#projects/([^/]+)/#\1#' | sort -u | grep -v '^example$' || true)
+    if [ -n "$MEMBER_REFS" ]; then
+        MISSING_MEMBERS=""
+        MEMBER_COUNT=0
+        for member in $MEMBER_REFS; do
+            MEMBER_COUNT=$((MEMBER_COUNT + 1))
+            if [ ! -e "$REPO_ROOT/projects/$member" ]; then
+                MISSING_MEMBERS="$MISSING_MEMBERS $member"
+            fi
+        done
+        if [ -z "$MISSING_MEMBERS" ]; then
+            note_ok "members" "$MEMBER_COUNT mounted"
+        else
+            note_warn "members" "not mounted:$MISSING_MEMBERS — the subagents reading them have no knowledge base" \
+                "see projects/example/README.md for the mount step"
+        fi
+    fi
+
     if [ -d "$REPO_ROOT/.opencode/node_modules" ]; then
         note_ok ".opencode deps" "installed"
     elif [ -f "$REPO_ROOT/.opencode/package.json" ]; then
