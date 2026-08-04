@@ -13,6 +13,76 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-08-04 — Eleven PRs, and a class of defect that kept reappearing
+
+Merged: #88, #89, #92, #63, #65, #93, #96, #97, #98, #99, #100. Every open issue
+closed except one, which needs an owner decision and a device (#94). Six ledger
+rows. This session touched live systems; operational detail is in the private
+environment layer.
+
+**One defect class accounted for most of the work: code that had never executed
+on the path it exists to serve.** Not bugs in logic — bugs in *reachability*, all
+invisible because the thing that would have noticed was itself broken.
+
+- `skip_list` held an unskippable rule, so ansible-lint aborted rather than
+  linting. 13 playbooks, 14 roles, never checked. CI had the same bug from a
+  second direction with `continue-on-error` hiding it.
+- Two subagents documented as having runtime-enforced tool permissions declared
+  them under a nested key OpenCode silently ignores — so the MikroTik agent had
+  MikroTik tools *denied*, and neither agent existed in either harness at all.
+- A playbook templated a unit file that has never existed in git history; another
+  pointed at a `requirements.yml` that never existed. Both failed at those tasks,
+  so nothing after them had ever run.
+- `open-ticket.sh` demanded a credential the repo never provisions, making the
+  mandatory ticket gate unsatisfiable — so sessions fell back to `--local`, which
+  records a marker and no helpdesk record. The audit trail degraded quietly.
+- An internal-comment tool wrote to a doctype the Helpdesk portal does not render.
+  The API returned success; agents saw nothing.
+
+**The pattern in all of them is a success signal that means nothing.** A non-zero
+exit that reads as "found problems" rather than "never ran". A 200 for a write
+nobody will see. A config key accepted and discarded. The remedy that actually
+worked was cheap and repeatable: *run the thing, then check reality rather than
+the return value* — diff the parsed YAML rather than the text, re-read the server
+after a mutation, assert the doctype rather than the status.
+
+**Adopted as a standing practice mid-session (owner's instruction): critique →
+research → improve, per component, before calling anything done.** It paid for
+itself immediately and repeatedly:
+
+- `ansible-lint --fix` "resolved" a `partial-become` finding by **deleting
+  `become_user: postgres` from a pg_dump task**. Caught only by comparing parsed
+  YAML before and after — 6 of 24 auto-fixed files had changed *meaning*. Three
+  more tasks had the same defect.
+- A `bw send --file` parser assumed a bare URL where the CLI returns JSON, so it
+  rejected a Send it had just created — orphaning a config, private key included,
+  in the vault. Found by running it, not reading it.
+- An `install.sh` addition aborted the script under `set -euo pipefail` on a fresh
+  clone, the one place it must never fail.
+- Test fixtures wrote into the real `environments/` tree because a module
+  captured its root at import, before the isolating fixture ran.
+
+**Two corrections worth recording, because being wrong loudly is cheaper than
+being wrong quietly.** A published issue blamed credential drift for a login
+failure whose real cause was TOTP — the seed was in the vault the whole time, and
+the wrong diagnosis pointed at a destructive fix on a live container. And a claim
+that two orphan VPN peers had "never been used" rested on a handshake counter that
+resets on interface restart. Both are corrected in place, and the second is now
+encoded in the tool so nobody repeats it.
+
+**Where guards were added, they were verified by breaking them.** Every regression
+test in this session was run against the defect it guards and observed to fail
+first. A guard that has never been seen to fail is indistinguishable from one that
+cannot.
+
+Threads: #94 needs a decision (retire the RouterOS playbook, or keep it and
+document why it is exempt from the `@mikrotik` routing rule) plus a lab device.
+Ledger rows cover the lifecycle-processor cutover, `mcp-run.sh --check` accepting
+a locked vault as "set", `opskit lint` ignoring the env's declared record format,
+and scan-time Proxmox enrolment.
+
+---
+
 ## 2026-08-03 — Two guards that had never guarded anything
 
 PRs open: #88 (unbreak ansible-lint repo-wide + regression guard), #89 (make the
