@@ -1,0 +1,33 @@
+{#
+  systemd --user unit for the lifecycle processor.
+
+  A Jinja template, not a file with __PLACEHOLDER__ tokens: the playbook used to
+  pass vars named `__REPO_ROOT__` / `__PYTHON__` to ansible.builtin.template,
+  mirroring sed substitutions from a shell installer. Jinja substitutes
+  `{{ '{{ name }}' }}` expressions, not bare tokens, so that approach could never
+  have worked even with a source file present (issue #95).
+
+  Paths come from the playbook's own vars, so the unit always points at the
+  checkout it was installed from — never a sibling repo's copy.
+#}
+[Unit]
+Description=Lifecycle Processor — watches proposals/ and plans/ for automated transitions
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={{ repo_root }}
+ExecStart={{ venv_python }} {{ repo_root }}/bin/lifecycle-processor.py --watch
+
+# Auto-restart on crash
+Restart=on-failure
+RestartSec=5
+MemoryMax=512M
+
+# Logging goes to the journal: journalctl --user -u {{ service_name }} -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
