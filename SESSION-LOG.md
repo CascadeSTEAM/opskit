@@ -13,6 +13,53 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-08-04, continued — a doctrine gap, and being wrong twice about the same file
+
+Merged #101. Filed #103, #104, #105. Ledger row 28.
+
+**The session's most useful correction was to a rule, not to code.** I recommended
+retiring `mikrotik-configure-rest-api.yml` because an interactive tool already
+covers every step it performs. The owner's correction: Ansible has to be able to
+rebuild the infrastructure from zero, so an interactive tool is never a substitute
+for a playbook — they do different jobs.
+
+The repo mandated IaC and separately routed RouterOS work through a subagent, and
+**never arbitrated between them.** With both documented and neither deferring, a
+wrong conclusion was reachable by correctly applying one rule and forgetting the
+other. #101 states the rebuild objective, states that an MCP tool does not replace a
+playbook, and adds the discipline that keeps it honest: an interactive change must be
+reflected back into the playbook the same session, or the rebuild path rots and you
+discover it during a restore.
+
+**Then I was wrong about the same file a second time, in the opposite direction.**
+I reported that the interactive tool reaches RouterOS over SSH, so there was no
+bootstrap dependency. Reading further: its primary transport is the REST API
+(`/rest`, Basic auth, via undici); SSH is a secondary channel for a few tools, and
+the diagnostic that misled me names exactly those tools. So RouterOS management does
+depend on an HTTP service, and the playbook is what enables it — specifically the
+**TLS** variants, making it a hardening step with a live motivation (#105).
+
+**Both errors came from stopping at the first plausible reading.** The first
+applied one rule and forgot another; the second took a grep hit as a conclusion
+instead of reading the adapter. The improvement cycle catches the second kind
+reliably; the first kind needs the doctrine to be written down, which it now is.
+
+**A third correction, from the owner, worth keeping:** I claimed I could not read a
+router's version because "the MCP tool namespace isn't loaded in this session". The
+tool is also a CLI and was installed the whole time. Conflating "namespace not
+loaded" with "capability unavailable" is a habit to break — and the fix, when a
+capability really is missing, is to make it work rather than hand the task back.
+That is a large part of what #104 exists for.
+
+Threads: #94 (fix the module arguments; needs a test target — a RouterOS CHR VM in
+the new lab pool is the agreed approach, pending the production version number),
+#103 (codify token provisioning/tracking/revocation, and decide the vault ↔
+ansible-vault direction of truth), #104 (CLI parity — settle the architecture and
+port one capability), #105 (RouterOS on TLS, vault-resolved credentials, and one
+unconfigured router).
+
+---
+
 ## 2026-08-04 — Eleven PRs, and a class of defect that kept reappearing
 
 Merged: #88, #89, #92, #63, #65, #93, #96, #97, #98, #99, #100. Every open issue
