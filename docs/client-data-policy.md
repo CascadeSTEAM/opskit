@@ -72,6 +72,11 @@ misconfigured", it was never an engineering issue — it was inventory.
 
 ## Active enforcement
 
+- **`.githooks/pre-push`** blocks a push whose branch name contains a client
+  token. Push time is the only moment that matters: a local branch publishes
+  nothing, while a pushed one appears in the remote branch list, CI logs and
+  notifications before any review, and survives in forks and clones after
+  deletion. Nothing else in the chain sees the branch name.
 - **`.githooks/pre-commit`** blocks staged additions containing:
   - RFC1918 addresses (use RFC 5737 documentation ranges in examples)
   - client tokens: every local environment name under `environments/`
