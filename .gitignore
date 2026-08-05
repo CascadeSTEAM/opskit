@@ -70,7 +70,7 @@ gitleaks-report.json
 .claude/agents/
 
 # Client-data isolation (docs/client-data-policy.md)
-.client-tokens
+.client-tokens*
 .env-remotes
 .project-remotes
 mcp/*.local.json
