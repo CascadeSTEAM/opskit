@@ -89,7 +89,12 @@ misconfigured", it was never an engineering issue — it was inventory.
 - **CI gitleaks** covers credential-shaped strings.
 
 Maintain `.client-tokens` as clients are added: names, abbreviations,
-domains, and ticket prefixes. The hooks fail open only when the file and the
+domains, and ticket prefixes. **One entry per spelling** — matching is on word
+boundaries, so a short form does not cover a long form. `bin/suggest-client-tokens.py`
+derives candidates from the private layers and reports what is unguarded; it never
+writes the file, because a self-growing list would start blocking innocuous words and
+the reflex answer to a noisy guard is `ALLOW_CLIENT_TOKENS=1`, which disables all of
+them at once. Its own output is a list of client identifiers — keep it local. The hooks fail open only when the file and the
 environments directory are both absent (fresh clone building the tool).
 
 ## When using opskit for real work
