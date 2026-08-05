@@ -84,7 +84,8 @@ All scripts are data-driven — they read from `environments/$ACTIVE_ENV/env.yml
 | `bin/automation-ladder.py` | Track manual processes → escalate to scripts/playbooks |
 | `bin/lifecycle-processor.py` | Manage lifecycle transitions |
 | `bin/frappe-exec.py` | Sanctioned Path B Frappe/ERPNext exec (SSH + docker exec + bench venv python); see `frappe-access` skill |
-| `bin/mcp-run.sh` | Launch an `mcp/` server with secrets resolved from the vault (`--check` validates the launch path without fetching anything) |
+| `bin/mcp-run.sh` | Launch an `mcp/` server — or an external one declared in `mcp/external-servers.json` — with secrets resolved from the vault (`--check` validates the launch path without fetching anything) |
+| `bin/gen-mikromcp-config.py` | Generate mikromcp's `routers.yaml` from device datasets (`--check` fails on drift, `--env-prefixes` lists the vault-map variables) |
 | `bin/setup-hooks.sh` | Point git at `.githooks` (`--check` for session-start verification) |
 
 ## Subagents (invoke with @name)

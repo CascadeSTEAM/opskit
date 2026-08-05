@@ -6,7 +6,9 @@
     "file is gitignored (docs/client-data-policy.md) \u2014 keep this template free",
     "of both.",
     "",
-    "Top-level key = server name, i.e. mcp/<server>-mcp-server.py.",
+    "Top-level key = server name: either mcp/<server>-mcp-server.py in this",
+    "repo, or an entry in mcp/external-servers.json for a server installed",
+    "outside it.",
     "Value = {ENV_VAR: {item, field}}. 'field' is one of password | username |",
     "notes | <custom field name>, and defaults to password when omitted.",
     "",
@@ -26,7 +28,15 @@
     "  proxmox    \u2014 the FULL token identity (user@realm!tokenname) from the",
     "               item's username, plus the token value from its password.",
     "               mcp/proxmox-mcp-server.py splits the identity, so the map",
-    "               stays one-field-to-one-variable with no transforms."
+    "               stays one-field-to-one-variable with no transforms.",
+    "  mikromcp   \u2014 external (mcp/external-servers.json). One <PREFIX>_USER /",
+    "               <PREFIX>_PASS pair per router, where <PREFIX> is that",
+    "               router's 'envPrefix' in ~/.mikromcp/routers.yaml. mikromcp",
+    "               declares a credentials.source of \"vault\" in its schema but",
+    "               does not implement it (VAULT_NOT_SUPPORTED), which is why",
+    "               resolution happens in the launcher instead. Prefer a scoped",
+    "               read-only RouterOS API user over a router admin account \u2014",
+    "               REST is plaintext HTTP until www-ssl is enabled (opskit #94)."
   ],
   "technitium": {
     "TECHNITIUM_CLIENT1_PASS": {
@@ -60,6 +70,16 @@
       "field": "username"
     },
     "PROXMOX_CLIENT1_TOKEN_VALUE": {
+      "item": "00000000-0000-0000-0000-000000000000",
+      "field": "password"
+    }
+  },
+  "mikromcp": {
+    "MIKROTIK_SITE1_USER": {
+      "item": "00000000-0000-0000-0000-000000000000",
+      "field": "username"
+    },
+    "MIKROTIK_SITE1_PASS": {
       "item": "00000000-0000-0000-0000-000000000000",
       "field": "password"
     }

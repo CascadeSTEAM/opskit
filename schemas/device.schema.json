@@ -71,6 +71,31 @@
         "snmp": {"type": "boolean"}
       }
     },
+    "mikromcp": {
+      "type": "object",
+      "description": "Transport overrides for the generated mikromcp router config (bin/gen-mikromcp-config.py). Only for what convention cannot derive; the id, envPrefix, host and rosVersion always come from this record's other fields. Ignored unless os is RouterOS.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Set false to keep a RouterOS device out of the generated config. It is then listed, with 'reason', in a comment block in the generated file rather than silently dropped."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why the device is excluded. Required in practice when enabled is false."
+        },
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "tls": {
+          "type": "boolean",
+          "description": "Use HTTPS. Defaults the port to 443 and turns on certificate verification, since claiming TLS while skipping verification is worse than plain HTTP."
+        },
+        "reject_unauthorized": {
+          "type": "boolean",
+          "description": "Verify the certificate. Set false only for an explicitly pinned self-signed cert, and say so in the record body."
+        },
+        "ssh_port": {"type": "integer", "minimum": 1, "maximum": 65535}
+      },
+      "additionalProperties": false
+    },
     "bmc": {
       "type": "object",
       "properties": {

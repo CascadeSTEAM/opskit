@@ -19,10 +19,20 @@
 #          (default: password; "totp" exports the item's TOTP *seed*, so a
 #           server can derive a fresh code per request)
 #
+# Two kinds of server can be launched:
+#
+#   in-repo   mcp/<server>-mcp-server.py, run under this repo's venv
+#   external  a server installed outside this repo (a global npm binary, a uvx
+#             package), declared in mcp/external-servers.json. Same vault
+#             resolution, different exec line — so a third-party server stops
+#             needing its secrets pasted into an agent runtime's config file
+#             (opskit #105: router admin passwords were sitting in cleartext in
+#             ~/.config/opencode/opencode.json because no launcher covered them).
+#
 # Usage:
 #   bin/mcp-run.sh <server>            # resolve secrets, exec the server (stdio MCP)
 #   bin/mcp-run.sh <server> --check    # validate the launch path, fetch nothing
-#   bin/mcp-run.sh --list              # servers present in this repo
+#   bin/mcp-run.sh --list              # servers this repo can launch
 #
 # Requires an unlocked vault session:  export BW_SESSION=$(bw unlock --raw)
 set -euo pipefail
@@ -33,6 +43,7 @@ REPO_ROOT="$(pwd)"
 
 MCP_DIR="$REPO_ROOT/mcp"
 VAULT_MAP="${OPSKIT_VAULT_MAP:-$MCP_DIR/vault-map.local.json}"
+EXTERNAL_MAP="${OPSKIT_EXTERNAL_MAP:-$MCP_DIR/external-servers.json}"
 VENV_PYTHON="${OPSKIT_VENV_PYTHON:-$REPO_ROOT/.venv/bin/python3}"
 BW="${OPSKIT_BW:-bw}"
 
@@ -40,9 +51,38 @@ GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 
 die() { echo -e "${RED}ERROR${NC}: $*" >&2; exit 1; }
 
+# Any python3 will do for reading JSON. The repo venv is preferred so secret
+# parsing stays on one interpreter, but --list must work before `make deps`.
+json_python() {
+    if [ -x "$VENV_PYTHON" ]; then echo "$VENV_PYTHON"; else echo "python3"; fi
+}
+
+list_external_servers() {
+    [ -f "$EXTERNAL_MAP" ] || return 0
+    "$(json_python)" - "$EXTERNAL_MAP" <<'PY' 2>/dev/null || true
+import json, sys
+for name in json.load(open(sys.argv[1])):
+    if not name.startswith("_"):
+        print(name)
+PY
+}
+
+# The command an external server is launched with, one argv element per line.
+external_command() {
+    "$(json_python)" - "$EXTERNAL_MAP" "$1" <<'PY' 2>/dev/null || true
+import json, sys
+entry = json.load(open(sys.argv[1])).get(sys.argv[2]) or {}
+for part in entry.get("command") or []:
+    print(part)
+PY
+}
+
 list_servers() {
-    find "$MCP_DIR" -maxdepth 1 -name '*-mcp-server.py' -printf '%f\n' 2>/dev/null \
-        | sed 's/-mcp-server\.py$//' | sort
+    {
+        find "$MCP_DIR" -maxdepth 1 -name '*-mcp-server.py' -printf '%f\n' 2>/dev/null \
+            | sed 's/-mcp-server\.py$//'
+        list_external_servers
+    } | sort -u
 }
 
 # ── Argument handling ─────────────────────────────────────────────────────────
@@ -65,8 +105,20 @@ if [ -z "$SERVER" ]; then
     exit 2
 fi
 
+# ── Which kind of server is this ──────────────────────────────────────────────
 SERVER_PY="$MCP_DIR/${SERVER}-mcp-server.py"
-[ -f "$SERVER_PY" ] || die "no such server '$SERVER' — available: $(list_servers | tr '\n' ' ')"
+SERVER_KIND="in-repo"
+EXTERNAL_ARGV=()
+if [ ! -f "$SERVER_PY" ]; then
+    mapfile -t EXTERNAL_ARGV < <(external_command "$SERVER")
+    if [ "${#EXTERNAL_ARGV[@]}" -gt 0 ]; then
+        SERVER_KIND="external"
+    elif list_external_servers | grep -qxF "$SERVER"; then
+        die "external server '$SERVER' declares no 'command' in $(basename "$EXTERNAL_MAP")"
+    else
+        die "no such server '$SERVER' — available: $(list_servers | tr '\n' ' ')"
+    fi
+fi
 
 # ── Launch-path validation (runs in both modes) ───────────────────────────────
 # Every failure here is one that would otherwise surface as a *silent* MCP
@@ -88,18 +140,31 @@ if [ "$CHECK_ONLY" = "1" ]; then
     echo "=== mcp-run: $SERVER ==="
 fi
 
-report 1 "server" "$SERVER_PY"
+if [ "$SERVER_KIND" = "external" ]; then
+    report 1 "server" "external: ${EXTERNAL_ARGV[*]}"
 
-if [ -x "$VENV_PYTHON" ]; then
-    report 1 "venv" "$VENV_PYTHON"
+    # An external server that is not installed is the silent-failure case this
+    # whole validation block exists for — the binary is outside the repo, so
+    # nothing else would catch it.
+    if command -v "${EXTERNAL_ARGV[0]}" >/dev/null 2>&1; then
+        report 1 "command" "$(command -v "${EXTERNAL_ARGV[0]}")"
+    else
+        report 0 "command" "${EXTERNAL_ARGV[0]} not found on PATH — install it (see $(basename "$EXTERNAL_MAP"))"
+    fi
 else
-    report 0 "venv" "$VENV_PYTHON not found — run: make deps"
-fi
+    report 1 "server" "$SERVER_PY"
 
-if [ -x "$VENV_PYTHON" ] && ! "$VENV_PYTHON" -c 'import mcp' 2>/dev/null; then
-    report 0 "mcp package" "not importable in the venv — run: make deps"
-elif [ -x "$VENV_PYTHON" ]; then
-    report 1 "mcp package" "importable"
+    if [ -x "$VENV_PYTHON" ]; then
+        report 1 "venv" "$VENV_PYTHON"
+    else
+        report 0 "venv" "$VENV_PYTHON not found — run: make deps"
+    fi
+
+    if [ -x "$VENV_PYTHON" ] && ! "$VENV_PYTHON" -c 'import mcp' 2>/dev/null; then
+        report 0 "mcp package" "not importable in the venv — run: make deps"
+    elif [ -x "$VENV_PYTHON" ]; then
+        report 1 "mcp package" "importable"
+    fi
 fi
 
 if [ -f "$VAULT_MAP" ]; then
@@ -123,7 +188,7 @@ fi
 # Which env vars this server expects, and whether the map covers them.
 ENTRIES=""
 if [ -f "$VAULT_MAP" ]; then
-    ENTRIES=$("$VENV_PYTHON" - "$VAULT_MAP" "$SERVER" <<'PY' 2>/dev/null || true
+    ENTRIES=$("$(json_python)" - "$VAULT_MAP" "$SERVER" <<'PY' 2>/dev/null || true
 import json, sys
 raw = json.load(open(sys.argv[1]))
 for var, spec in (raw.get(sys.argv[2]) or {}).items():
@@ -161,7 +226,7 @@ while IFS=$'\t' read -r var item field; do
     # JSON goes in over stdin, never interpolated into the script body — a
     # quote or backslash in a secret must not be able to corrupt the parser
     # (same reasoning as bin/frappe-exec.py's base64 embedding).
-    value=$(printf '%s' "$item_json" | "$VENV_PYTHON" -c '
+    value=$(printf '%s' "$item_json" | "$(json_python)" -c '
 import json, sys
 d = json.load(sys.stdin)
 field = sys.argv[1]
@@ -184,4 +249,7 @@ else:
     export "$var=$value"
 done <<< "$ENTRIES"
 
+if [ "$SERVER_KIND" = "external" ]; then
+    exec "${EXTERNAL_ARGV[@]}"
+fi
 exec "$VENV_PYTHON" "$SERVER_PY"
