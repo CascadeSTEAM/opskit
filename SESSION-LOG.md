@@ -13,6 +13,40 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-08-04, continued (2) — the launcher learns about servers it does not contain
+
+Started #105 (branch open, not finished). Operational detail is in the private
+layer. Ledger rows 29, 30.
+
+**Key decisions:**
+- `bin/mcp-run.sh` now launches **external** MCP servers — ones installed
+  outside this repo — declared in a new tracked `mcp/external-servers.json`,
+  with the same vault resolution as the in-repo servers. The alternative was a
+  second wrapper script, which is precisely the shape #80 deleted.
+- A third-party server that cannot resolve vault secrets itself does not get an
+  exemption from the credential rule; the launcher resolves them and the server
+  is handed an already-populated environment. Applied here because the server in
+  question accepts a `vault` credential source in its config schema but raises
+  `VAULT_NOT_SUPPORTED` from the implementation — a capability that exists only
+  as validation.
+- The launcher's JSON parsing moved off the repo venv onto any `python3`, so an
+  external server no longer inherits a Python dependency it has no use for.
+  `--check` gained a PATH probe, because "installed outside the repo" is a new
+  way for the launch path to be silently wrong.
+- `os_version` on a device record is treated as canonical, with the external
+  tool's copy reconciled to it rather than the reverse (ledger row 28).
+
+**Completed:** 9 tests added to `tests/test_mcp_run.py` (341 passed);
+shellcheck clean.
+
+**Open threads:** #105 items 1 and 3 remain (TLS blocked on #94; one router's
+credential has no vault item, so one cleartext value could not be removed);
+generating the external tool's device config from this repo's datasets is still
+unbuilt; ledger row 29 (a playbook credited in a vault note that exists nowhere)
+blocks doing least-privilege API users properly.
+
+---
+
 ## 2026-08-04, continued — a doctrine gap, and being wrong twice about the same file
 
 Merged #101. Filed #103, #104, #105. Ledger row 28.
