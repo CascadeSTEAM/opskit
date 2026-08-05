@@ -55,12 +55,49 @@ absence of signal read as success.
 - **Environment layers are single-branch.** One had 26 commits of operational record
   on an unmerged branch, invisible to every other clone.
 
-**Completed:** 512 tests, up from 341. Nine PRs, 9/9 CI checks green on each.
+**Completed:** 566 tests, up from 341. Twelve PRs merged, 9/9 CI checks green on
+each. Merged #108, #111, #113, #115, #117, #119, #121, #123, #125, #127, #129, #132.
+Closed #105, #110, #112, #114, #116, #118, #120, #122, #124, #126, #128, #130. Split
+#106; filed #131. Ledger rows 7, 10, 11, 16, 17, 18, 20, 23, 25, 28, 29, 30, 31, 32,
+33, 34, 35 resolved.
 
-**Open threads:** #94 needs a lab device; #106 waits on it; #103, #104 untouched.
-~14 ledger rows remain untriaged. A tool self-review found and fixed a latent hang
-and a credential-exposure path in code merged the same day, which argues for the
-review step staying adversarial rather than confirmatory.
+**Later decisions in the same session:**
+- **A published surface is any surface.** A client-named branch was found on the
+  public remote — caught by an audit, not by a guard, because the token list did not
+  contain that name. The guard chain now covers branch names at push time, but the
+  lesson is the list: a guard is only as good as it, and nothing can verify the list
+  is complete. Twice in one day it was the weak link rather than the check.
+- **Report the consequence, not the condition.** A backup check said "no remote",
+  which the operator correctly read as "host unreachable" and dismissed. A check
+  understood as something else produces false reassurance — worse than no check. Every
+  message now names its subject and disclaims the likely misreading.
+- **An exported override beats a file, so a session can pin itself.** Two sessions
+  sharing a clone shared one mutable global and could change each other's environment
+  mid-task. A lock was rejected as serialising work that is legitimately parallel.
+- **One implementation of a precedence rule.** Six readers had each reimplemented the
+  same parse, and had already drifted. Guards now fail on a second implementation
+  appearing, not just on the first one being wrong.
+- **Freeze a known mess, prevent growth.** Two tracked skill trees had diverged in
+  every shared skill. Rather than pick a winner and silently discard the loser's
+  improvements, the one unambiguous case was fixed and the rest grandfathered in a
+  visible allowlist that fails if it names a pair which now agrees.
+- **Code root is not data root.** The same conflation broke 22 tests and then
+  reappeared as importing a module from a caller-controlled path. Worth naming because
+  it will recur in any shared helper.
+
+**Process:** the operator set the full per-issue cycle — propose, critique, research,
+improve, resolve, implement, check completeness, PR, critique, resolve, merge — and a
+standing rule to land in-flight work before starting anything new. Both earned their
+keep: the critique step caught that honouring an environment variable would
+reintroduce a bug fixed hours earlier; the completeness step caught a design flaw
+review would have missed; and self-review found a latent hang, a credential-exposure
+path, and a 300-line reformatting diff hiding two real changes — all in code merged
+the same day.
+
+**Open threads:** #94 needs a lab device and #106 waits on it; #131 needs three
+decisions from the owner before the skill trees can be reconciled; #103, #104
+untouched. 13 ledger rows remain untriaged. Two helpdesk actions are prepared but
+unposted, pending a vault session.
 
 ---
 
