@@ -13,6 +13,53 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-08-04, continued (3) — the config becomes a build artifact
+
+#105 finished as far as it can go; split #106 (TLS) and #107 (an unmanaged AP,
+and a core switch with no automated path) for the parts with external
+dependencies. Ledger rows 31, 32, 33; rows 28, 29, 32 marked accepted.
+
+**Key decisions:**
+- The external tool's device config is now **generated** from device datasets
+  (`bin/gen-mikromcp-config.py`), not hand-maintained outside the repo. Datasets
+  are canonical; the config is a build artifact with `--check` for drift.
+- Everything is **derived by convention** from fields already on the device
+  record — id, credential variable names, host, version, tags. Adding an
+  environment means adding device records and editing nothing else. That was the
+  deciding criterion over a per-device mapping table, which is one more thing to
+  keep in sync.
+- A record may override only what convention cannot know (port, TLS,
+  verification, ssh port). This is how devices move to 443 one at a time as
+  #94 lands, rather than in one flip.
+- **Verification follows TLS by default.** Claiming TLS while skipping
+  certificate checks is worse than plain HTTP — it looks secure and is not.
+  Turning it off requires a pinned cert and a written reason.
+- **Nothing is dropped silently.** A device that cannot be wired is named, with
+  its reason, in the generated file. Omission leaving no trace is precisely how a
+  device stayed missing long enough to become an issue.
+- **A missing version is a refusal, not a guess** — the field selects an API
+  path, so a wrong value silently targets the wrong endpoint.
+- Corrected an earlier decision from the same session: a credential mapping
+  justified as "behaviour-preserving" on the strength of a hash match turned out
+  to preserve a 401. A hash proves two strings are equal, not that either works.
+  Live verification is now the standard for a credential change.
+- Documented a device the tooling deliberately **cannot** manage (different
+  firmware family, no REST API) in its own record, so the exclusion reads as a
+  decision rather than an oversight — and named the consequence nobody had
+  stated: it has no rebuild path at all.
+
+**Completed:** 24 generator tests, 9 launcher tests, 8 playbook tests; suite
+373 passed. All device credentials now resolve from the vault — zero secrets
+remain in any agent runtime config.
+
+**Open threads:** #106, #107; ledger row 30 (datasets never validated against
+their schema) and row 33 (environments should declare a schema version) both
+point at the same missing validation layer; row 31 (no shell path to the
+external tool's own tools) is the prerequisite for anything else generating
+from live device state.
+
+---
+
 ## 2026-08-04, continued (2) — the launcher learns about servers it does not contain
 
 Started #105 (branch open, not finished). Operational detail is in the private
