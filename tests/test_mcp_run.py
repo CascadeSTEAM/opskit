@@ -57,16 +57,30 @@ def _make_external_binary(tmp_path: Path, name: str = "demoext") -> Path:
     return bin_dir
 
 
-def _make_bw_stub(tmp_path: Path, items: dict) -> Path:
-    """A fake `bw` that returns canned item JSON keyed by item id."""
+def _make_bw_stub(tmp_path: Path, items: dict, state: str = "unlocked") -> Path:
+    """A fake `bw` answering both `status` and `get item`.
+
+    `status` matters as much as item retrieval now: --check validates that the
+    vault is actually unlocked rather than that BW_SESSION is merely non-empty
+    (opskit #112, ledger row 25).
+    """
     stub_dir = tmp_path / "stub"
     stub_dir.mkdir(exist_ok=True)
     (stub_dir / "items.json").write_text(json.dumps(items))
+    (stub_dir / "state").write_text(state)
     bw = stub_dir / "bw"
     bw.write_text(
         "#!/usr/bin/env python3\n"
         "import json, sys, pathlib\n"
-        "items = json.loads((pathlib.Path(__file__).parent / 'items.json').read_text())\n"
+        "here = pathlib.Path(__file__).parent\n"
+        "state = (here / 'state').read_text().strip()\n"
+        "if sys.argv[1:2] == ['status']:\n"
+        "    if state == 'crash':\n"
+        "        sys.exit(1)\n"
+        "    if state == 'garbage':\n"
+        "        print('not json'); sys.exit(0)\n"
+        "    print(json.dumps({'status': state})); sys.exit(0)\n"
+        "items = json.loads((here / 'items.json').read_text())\n"
         "if sys.argv[1:3] != ['get', 'item']:\n"
         "    sys.exit(2)\n"
         "item = items.get(sys.argv[3])\n"
@@ -428,3 +442,73 @@ def test_the_repos_own_external_map_is_valid(tmp_path):
         assert not (ROOT / "mcp" / f"{name}-mcp-server.py").exists(), (
             f"{name} shadows an in-repo server"
         )
+
+
+# ── vault-session validity (issue #112, ledger row 25) ────────────────────────
+# A non-empty BW_SESSION proves nothing. A token from a vault that has since
+# auto-locked passes a non-emptiness test, then every secret resolution fails at
+# launch — the exact silent startup failure this script exists to prevent.
+
+def test_check_passes_when_the_vault_is_unlocked(tmp_path):
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(password="x")}, state="unlocked")
+
+    result = _run(root, "demo", "--check", bw=bw)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "unlocked" in result.stdout
+
+
+def test_check_flags_a_locked_vault_distinctly_from_an_unset_session(tmp_path):
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(password="x")}, state="locked")
+
+    result = _run(root, "demo", "--check", bw=bw)
+
+    assert result.returncode == 1
+    assert "LOCKED" in result.stderr
+    # The two states need different remedies, so they must not read alike.
+    assert "not set" not in result.stderr
+
+
+def test_check_flags_an_unauthenticated_cli(tmp_path):
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {}, state="unauthenticated")
+
+    result = _run(root, "demo", "--check", bw=bw)
+
+    assert result.returncode == 1
+    assert "bw login" in result.stderr
+
+
+def test_unreadable_vault_state_is_reported_not_assumed_healthy(tmp_path):
+    """Fail closed: an unparseable status must not read as unlocked."""
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {}, state="garbage")
+
+    result = _run(root, "demo", "--check", bw=bw)
+
+    assert result.returncode == 1
+    assert "could not be read" in result.stderr
+
+
+def test_a_crashing_bw_status_is_reported_not_assumed_healthy(tmp_path):
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {}, state="crash")
+
+    result = _run(root, "demo", "--check", bw=bw)
+
+    assert result.returncode == 1
+    assert "BW_SESSION" in result.stderr
+
+
+def test_validating_the_session_still_fetches_no_secrets(tmp_path):
+    """--check's guarantee is load-bearing: it must stay safe to run anywhere.
+    Reading vault *state* is allowed; reading a vault *item* is not."""
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(password="s3cret")})
+
+    result = _run(root, "demo", "--check", bw=bw)
+
+    assert "s3cret" not in result.stdout
+    assert "s3cret" not in result.stderr

@@ -15,6 +15,8 @@ were both about.
 
 Usage:
   bin/mcp-call.py --servers                     # what can be called
+  bin/mcp-call.py --probe                       # can each server actually serve?
+  bin/mcp-call.py <server> --probe              # just this one
   bin/mcp-call.py <server> --list               # that server's tools
   bin/mcp-call.py <server> <tool>               # call with no arguments
   bin/mcp-call.py <server> <tool> '<json>'      # call with arguments
@@ -59,6 +61,7 @@ class StdioClient:
 
     def __init__(self, argv: list[str], timeout: int = DEFAULT_TIMEOUT):
         self.timeout = timeout
+        self.timed_out = False
         self._next_id = 0
         self.proc = subprocess.Popen(
             argv,
@@ -85,9 +88,35 @@ class StdioClient:
 
     def _read_response(self, req_id: int) -> dict:
         assert self.proc.stdout is not None
+        # A server that starts and then never answers would otherwise block here
+        # forever — readline on a pipe does not honour the socket-style timeout.
+        # Killing the process on the deadline makes readline return '' and fall
+        # into the reporting path below, so a hang becomes a legible error.
+        watchdog = threading.Timer(self.timeout, self._kill_after_timeout)
+        watchdog.daemon = True
+        watchdog.start()
+        try:
+            return self._read_loop(req_id)
+        finally:
+            watchdog.cancel()
+
+    def _kill_after_timeout(self) -> None:
+        self.timed_out = True
+        try:
+            self.proc.kill()
+        except Exception:
+            pass
+
+    def _read_loop(self, req_id: int) -> dict:
+        assert self.proc.stdout is not None
         while True:
             line = self.proc.stdout.readline()
             if not line:
+                if self.timed_out:
+                    raise McpError(
+                        f"the server did not respond within {self.timeout}s.\n"
+                        + self._stderr_report()
+                    )
                 raise McpError(
                     "the server exited without responding.\n"
                     + self._stderr_report()
@@ -181,6 +210,53 @@ def parse_arguments(raw_json: str | None, pairs: list[str],
     return args
 
 
+def probe(server: str, timeout: int) -> tuple[bool, str]:
+    """Start a server for real and confirm it can serve tools.
+
+    This is the check that `mcp-run.sh --check` structurally cannot do. A server
+    that parses its config and then rejects it — as the Proxmox one does — looks
+    identical to a healthy one from the outside: launch path valid, tools absent.
+    Absent tools read as an agent declining to help, which is why this went
+    unnoticed for so long (opskit #112).
+    """
+    client = None
+    try:
+        client = StdioClient(["bash", str(MCP_RUN), server], timeout=timeout)
+        client.initialize()
+        tools = client.request("tools/list", {}).get("tools", [])
+        if not tools:
+            return False, "started but exposes no tools"
+        return True, f"{len(tools)} tools"
+    except McpError as exc:
+        return False, str(exc)
+    except Exception as exc:                    # a launcher that cannot even exec
+        return False, f"{type(exc).__name__}: {exc}"
+    finally:
+        if client is not None:
+            client.close()
+
+
+def run_probes(servers: list[str], timeout: int) -> int:
+    failures = 0
+    for name in servers:
+        ok, detail = probe(name, timeout)
+        if ok:
+            print(f"  OK    {name:<12} {detail}")
+        else:
+            failures += 1
+            first, _, rest = detail.partition("\n")
+            print(f"  FAIL  {name:<12} {first}")
+            for line in rest.splitlines():
+                print(f"        {line}")
+    print()
+    if failures:
+        print(f"{failures} of {len(servers)} server(s) cannot serve tools.",
+              file=sys.stderr)
+        return 1
+    print(f"All {len(servers)} server(s) serve tools.")
+    return 0
+
+
 def render(result: dict, raw: bool) -> str:
     if raw:
         return json.dumps(result, indent=2)
@@ -208,6 +284,9 @@ def main() -> int:
                          "use for ids that look numeric (ticket_id=68)")
     ap.add_argument("--list", action="store_true", help="list the server's tools")
     ap.add_argument("--servers", action="store_true", help="list callable servers")
+    ap.add_argument("--probe", action="store_true",
+                    help="start each server and report whether it can serve "
+                         "tools; all servers if none named")
     ap.add_argument("--raw", action="store_true", help="print the whole MCP response")
     ap.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     args = ap.parse_args()
@@ -215,6 +294,15 @@ def main() -> int:
     if args.servers:
         print("\n".join(known_servers()))
         return 0
+
+    if args.probe:
+        targets = [args.server] if args.server else known_servers()
+        if not targets:
+            print("error: no servers to probe", file=sys.stderr)
+            return 2
+        # Probing is a diagnostic, so it uses a shorter deadline than a tool call:
+        # a server worth reporting on answers initialize quickly or not at all.
+        return run_probes(targets, min(args.timeout, 30))
 
     if not args.server:
         ap.print_usage(sys.stderr)
