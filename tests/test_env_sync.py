@@ -294,8 +294,8 @@ class TestCoverage:
         result = run_sync(cloned_root, "coverage")
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert "pushed" in result.stdout
-        assert "have a remote and are pushed" in result.stdout
+        assert "backed up and pushed" in result.stdout
+        assert "backed up to a git remote and pushed" in result.stdout
 
     def test_an_unmapped_layer_is_named_with_its_consequence(self, cloned_root):
         d = cloned_root / "environments" / "orphan"
@@ -305,9 +305,11 @@ class TestCoverage:
         result = run_sync(cloned_root, "coverage")
 
         assert "orphan" in result.stdout
-        assert "no remote" in result.stdout
+        assert "NOT BACKED UP" in result.stdout
         # Stating the consequence is the point — "unmapped" alone means nothing.
-        assert "this machine only" in result.stdout
+        assert "only on this machine" in result.stdout
+        # And it must name the LAYER, not a bare "remote" (#128).
+        assert "environments/orphan/" in result.stdout
 
     def test_a_mapped_directory_that_is_not_a_repo_is_flagged(self, cloned_root):
         d = cloned_root / "environments" / "notrepo"
@@ -318,7 +320,7 @@ class TestCoverage:
 
         result = run_sync(cloned_root, "coverage")
 
-        assert "nothing is committed" in result.stdout
+        assert "not a git repo" in result.stdout
 
     def test_unpushed_commits_are_reported_with_a_count(self, cloned_root):
         """Being in the map is necessary, not sufficient: commits that exist on
@@ -330,7 +332,7 @@ class TestCoverage:
 
         result = run_sync(cloned_root, "coverage")
 
-        assert "1 commit(s) exist on no remote" in result.stdout
+        assert "1 commit(s) are on no git remote" in result.stdout
 
     def test_unmapped_and_unpushed_are_reported_distinctly(self, cloned_root):
         """They need different fixes, so they must not read alike."""
@@ -343,9 +345,9 @@ class TestCoverage:
 
         result = run_sync(cloned_root, "coverage")
 
-        assert "no remote" in result.stdout
-        assert "exist on no remote" in result.stdout
-        assert "add them to" in result.stdout
+        assert "NOT BACKED UP" in result.stdout
+        assert "on no git remote" in result.stdout
+        assert "Add an entry to" in result.stdout
         assert "push" in result.stdout
 
     def test_example_and_dotted_directories_are_excluded(self, cloned_root):
@@ -384,3 +386,49 @@ class TestCoverage:
 
         assert result.returncode == 0
         assert "No environments" in result.stdout
+
+
+class TestCoverageWording:
+    """Output must not be readable as a connectivity report (issue #128).
+
+    "remote" means two things here: the git remote of an environment LAYER, and the
+    remote HOSTS that layer describes. The operator read "no remote" as "host
+    unreachable", said so, and was right about the hosts — which is exactly how a
+    real backup gap gets dismissed as a false alarm. A check understood as something
+    else is worse than one nobody runs, because it produces false reassurance.
+    """
+
+    def test_it_never_says_a_bare_no_remote(self, cloned_root):
+        (cloned_root / "environments" / "orphan").mkdir(parents=True)
+
+        out = run_sync(cloned_root, "coverage").stdout
+
+        assert "no remote in" not in out, (
+            "the phrase that caused the misreading is back"
+        )
+
+    def test_it_names_the_layer_and_the_git_remote(self, cloned_root):
+        (cloned_root / "environments" / "orphan").mkdir(parents=True)
+
+        out = run_sync(cloned_root, "coverage").stdout
+
+        assert "layer" in out.lower()
+        assert "git remote" in out
+        assert "environments/orphan/" in out
+
+    def test_it_disclaims_host_reachability_where_the_confusion_lands(self, cloned_root):
+        (cloned_root / "environments" / "orphan").mkdir(parents=True)
+
+        out = run_sync(cloned_root, "coverage").stdout
+
+        assert "reachab" in out.lower(), (
+            "the one thing an operator will assume this means must be denied outright"
+        )
+
+    def test_the_usage_text_says_what_coverage_is_about(self, cloned_root):
+        """Someone reading only the usage line must not think it probes hosts."""
+        result = run_sync(cloned_root)          # no args prints usage
+        out = result.stdout + result.stderr
+
+        assert "coverage" in out
+        assert "reachability" in out
