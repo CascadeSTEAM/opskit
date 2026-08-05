@@ -5,3 +5,4 @@ pyyaml>=6,<7
 jsonschema>=4,<5
 requests>=2,<3
 mcp>=1,<2
+watchdog>=4,<7  # lifecycle-processor --watch (systemd unit ExecStart)
