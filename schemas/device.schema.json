@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/CascadeSTEAM/opskit/schemas/device.schema.json",
+  "x-opskit-schema-version": 1,
   "title": "opskit Device Schema",
   "description": "Schema for environments/<env>/datasets/devices/*.yml — a single device record.",
   "type": "object",

@@ -6,7 +6,7 @@ opskit — unified CLI for network operations.
   opskit env my-env                                switch to environment
   opskit scan                                      full scan pipeline
   opskit status                                    inventory summary
-  opskit lint                                      inventory vs device YAML check
+  opskit lint                                      inventory vs device record check
   opskit setup-completion bash                     install tab completion
 
 Every command reads from environments/<env>/env.yml.  No hardcoded hostnames.
@@ -216,7 +216,7 @@ def cmd_init(args):
     print(f"  Created environments/{name}/")
     print(f"    env.yml             — environment config (edit subnets, probes, etc.)")
     print(f"    ansible/inventory.yml — Ansible host inventory")
-    print(f"    datasets/devices/    — device YAMLs go here")
+    print(f"    datasets/devices/    — device records go here (.yml or .md front matter)")
     print(f"    datasets/network.yml — network CIDR config")
     print(f"    playbooks/           — env-specific Ansible playbooks")
     print()
@@ -489,19 +489,34 @@ def cmd_lint(args):
 
     inventory = yaml.safe_load(inventory_file.read_text()) or {}
     hosts = _inventory_hosts(inventory)
-    device_yamls = {p.stem for p in devices_dir.glob('*.yml')} if devices_dir.exists() else set()
+
+    # Accept every extension a device record can legitimately have. The old code
+    # globbed '*.yml' only, while env.yml declares the real one via
+    # source_of_truth.format — so for a layer storing devices as .md with YAML
+    # front matter the set came back empty, every inventory host was reported
+    # missing, and lint exited 1. It had never passed there, and a check whose
+    # output is always wrong is worse than no check: it teaches people to ignore
+    # the output (opskit #114, ledger row 23).
+    #
+    # Both extensions are accepted regardless of what is declared. The declared
+    # format says what the layer is converging on; failing a half-migrated layer
+    # for containing both would break the check exactly when it is most useful.
+    device_yamls = set()
+    if devices_dir.exists():
+        for pattern in ('*.yml', '*.yaml', '*.md'):
+            device_yamls |= {p.stem for p in devices_dir.glob(pattern)}
 
     missing = sorted(hosts - device_yamls)
     orphans = sorted(device_yamls - hosts)
 
     for host in missing:
-        print(f"  \033[0;31m✗\033[0m {host}: in inventory but no datasets/devices/{host}.yml")
+        print(f"  \033[0;31m✗\033[0m {host}: in inventory but no datasets/devices/{host}.{{yml,yaml,md}}")
     for name in orphans:
-        print(f"  \033[1;33m⚠\033[0m {name}: datasets/devices/{name}.yml has no inventory host")
+        print(f"  \033[1;33m⚠\033[0m {name}: datasets/devices/{name}.* has no inventory host")
 
     covered = len(hosts) - len(missing)
-    print(f"\n  {covered}/{len(hosts)} inventory hosts have device YAML"
-          f"; {len(orphans)} orphan device YAML(s)")
+    print(f"\n  {covered}/{len(hosts)} inventory hosts have a device record"
+          f"; {len(orphans)} orphan device record(s)")
     if missing:
         sys.exit(1)
 
@@ -539,7 +554,7 @@ COMPLETION_ZSH = """\
 #compdef opskit
 _opskit() {{
     local -a commands
-    commands=(init:'scaffold new environment' scan:'full network scan' status:'inventory summary' lint:'inventory vs device YAML check' env:'switch environment' setup-completion:'install tab completion')
+    commands=(init:'scaffold new environment' scan:'full network scan' status:'inventory summary' lint:'inventory vs device record check' env:'switch environment' setup-completion:'install tab completion')
     _describe 'command' commands
     _arguments '--env[environment name]:env:'
 }}
