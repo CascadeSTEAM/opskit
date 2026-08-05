@@ -159,12 +159,14 @@ def collect(repo_root: Path) -> tuple[dict, list[tuple[str, str]]]:
 
 
 def render(routers: dict, skipped: list[tuple[str, str]]) -> str:
-    today = datetime.date.today().isoformat()
+    # No timestamp in the output, deliberately. A generation date would make
+    # --check report drift every day after the file was written, with no dataset
+    # change — and a drift detector that cries wolf is one people stop reading.
+    # "When was it generated" is git history and the file's mtime.
     lines = [
         "# GENERATED FILE — do not edit by hand.",
         "#",
         "# Built from opskit device datasets by bin/gen-mikromcp-config.py.",
-        f"# Regenerated: {today}",
         "#",
         "# Edit the device record in environments/<env>/datasets/devices/ and",
         "# regenerate. Hand edits are lost, and drift here caused opskit #105:",

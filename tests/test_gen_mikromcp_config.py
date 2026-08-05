@@ -10,6 +10,7 @@ quietly dropped, a guessed version, or a config that claims TLS while skipping
 certificate verification.
 """
 
+import re
 import subprocess
 import sys
 import textwrap
@@ -269,3 +270,27 @@ def test_output_is_deterministic(tmp_path):
     _device(tmp_path, "site1", "a", **_routeros(ip_address="192.0.2.5"))
 
     assert _run(tmp_path, "--print").stdout == _run(tmp_path, "--print").stdout
+
+
+def test_output_embeds_no_timestamp(tmp_path):
+    """Regression: the header used to carry a generation date, so --check
+    reported drift every day after the file was written even though no dataset
+    had changed. A drift detector that cries wolf daily is one people stop
+    reading. 'When' is git history and the file mtime, not file content."""
+    _device(tmp_path, "site1", "gw", **_routeros())
+    out = _run(tmp_path, "--print").stdout
+
+    assert not re.search(r"\d{4}-\d{2}-\d{2}", out), "generated output contains a date"
+
+
+def test_check_still_passes_when_the_file_was_generated_earlier(tmp_path):
+    """The same regression, from the angle that actually bit: a file written on
+    a previous day must still verify as matching."""
+    _device(tmp_path, "site1", "gw", **_routeros())
+    target = tmp_path / "routers.yaml"
+    _run(tmp_path, "--write", target=target)
+
+    # Nothing about the passage of time may change the rendering, so a
+    # byte-identical re-render is the whole test.
+    assert _run(tmp_path, "--print").stdout == target.read_text()
+    assert _run(tmp_path, "--check", target=target).returncode == 0

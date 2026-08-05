@@ -100,6 +100,52 @@ def test_the_user_creation_task_does_not_log_its_password():
         assert task.get("no_log") is True
 
 
+def test_every_referenced_variable_is_defined_or_passed_in():
+    """Regression: a rename left `when: not mikrotik_tls` behind, referencing a
+    variable that no longer existed — an error only a live run would surface."""
+    body = PLAYBOOK.read_text()
+    declared = set(_play()["vars"])
+    # Supplied with -e at run time, per the usage block.
+    external = {"mikrotik_host", "mikrotik_admin_user", "mikrotik_admin_password",
+                "mcp_user_password", "ansible_check_mode"}
+    referenced = set(re.findall(r"\b(mikrotik_[a-z_]+|mcp_[a-z_]+)\b", body))
+
+    undefined = referenced - declared - external
+    assert not undefined, f"referenced but never defined: {sorted(undefined)}"
+
+
+def test_binary_api_and_rest_have_separate_tls_switches():
+    """The api/api_info modules speak librouteros on 8728/8729; the verification
+    task speaks REST on 80/443. They are different services with different
+    enablement (api vs www-ssl), so one switch driving both is wrong."""
+    play = _play()
+    assert "mikrotik_api_tls" in play["vars"]
+    assert "mikrotik_rest_tls" in play["vars"]
+    assert "mikrotik_tls" not in play["vars"], "the conflated switch is back"
+
+    for task in _tasks():
+        for module in ("community.routeros.api", "community.routeros.api_info"):
+            if module in task:
+                assert task[module].get("tls") == "{{ mikrotik_api_tls }}", (
+                    f"{task['name']} must use the binary-API switch"
+                )
+        if "ansible.builtin.uri" in task:
+            assert "mikrotik_rest_tls" in task["ansible.builtin.uri"]["url"]
+
+
+def test_the_rest_verification_cannot_fail_silently():
+    """no_log hides the password but also hides why a failure happened, so the
+    task must not fail on its own — the status code is reported explicitly."""
+    uri = [t for t in _tasks() if "ansible.builtin.uri" in t]
+    assert len(uri) == 1
+    assert uri[0].get("no_log") is True
+    assert uri[0].get("failed_when") is False, "a censored failure explains nothing"
+
+    fails = [t for t in _tasks() if "ansible.builtin.fail" in t]
+    assert fails, "nothing reports the failure the uri task no longer raises"
+    assert any("status" in str(t.get("when", "")) for t in fails)
+
+
 def test_playbook_refuses_to_invent_a_password():
     """no-plaintext-creds: a generated password would need persisting somewhere."""
     body = PLAYBOOK.read_text()

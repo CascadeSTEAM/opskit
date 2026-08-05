@@ -33,6 +33,22 @@
 # not invented: it was read off that live router with mikromcp list_user_groups,
 # so a rebuild reproduces what is actually deployed.
 #
+# ── Prerequisite: this uses a DIFFERENT service than mikromcp ─────────────────
+#
+# community.routeros.api and api_info speak the RouterOS **binary API** via
+# librouteros — TCP 8728, or 8729 with api-ssl. They do NOT use REST. mikromcp
+# uses REST over the `www` service (80, or 443 with www-ssl).
+#
+# So the `api` service must be enabled on the device for this playbook to connect
+# at all, and enabling www-ssl (#94) does nothing for it. Two independent
+# services, two independent TLS switches — hence the two variables below. A
+# device serving only `www` will fail here with a connection error that says
+# nothing about the cause, which is the sort of thing worth reading twice.
+#
+# The group created below grants both `api` and `rest-api` precisely because the
+# two paths need different policies: `api` for this playbook's own module calls,
+# `rest-api` for mikromcp afterwards.
+#
 # ── Verification status ───────────────────────────────────────────────────────
 #
 # Module argument shapes here are NOT yet verified against hardware. The sibling
@@ -76,9 +92,14 @@
       read,api,rest-api,!local,!telnet,!ssh,!ftp,!reboot,!write,!policy,
       !test,!winbox,!password,!web,!sniff,!sensitive,!romon
 
-    # REST is plaintext HTTP until www-ssl is enabled (#94, #105 item 1). When
-    # that lands, flip this and the credential stops crossing the wire in clear.
-    mikrotik_tls: false
+    # Binary API transport for the module calls below: false = 8728 plaintext,
+    # true = 8729 api-ssl. Independent of REST, and NOT what #94 enables.
+    mikrotik_api_tls: false
+
+    # REST transport for the final verification only: false = http/80,
+    # true = https/443. This is the one #94 (www-ssl) unblocks, and the one
+    # #105 item 1 / #106 moves the fleet onto.
+    mikrotik_rest_tls: false
 
   tasks:
     - name: Require the credentials this playbook refuses to invent
@@ -94,21 +115,22 @@
           first and pass it with -e; this playbook does not generate or persist
           credentials.
 
-    - name: Warn when the admin credential will cross the network in clear
+    - name: Warn when a credential will cross the network in clear
       ansible.builtin.debug:
         msg: >-
-          TLS is off, so this run sends the router admin password over plaintext
-          HTTP. Acceptable only on a trusted segment. Track #94 (www-ssl) and
-          #105 item 1.
-      when: not mikrotik_tls
+          Plaintext transport in use — admin credential on the binary API
+          (8728){{ '' if mikrotik_rest_tls else ', and the new account over REST
+          (http)' }}. Acceptable only on a trusted segment. api-ssl is separate
+          from www-ssl: #94 enables the latter, #106 moves REST onto it.
+      when: not (mikrotik_api_tls and mikrotik_rest_tls)
 
     - name: Read the existing user groups
       community.routeros.api_info:
         hostname: "{{ mikrotik_host }}"
         username: "{{ mikrotik_admin_user | default('admin') }}"
         password: "{{ mikrotik_admin_password }}"
-        tls: "{{ mikrotik_tls }}"
-        validate_certs: "{{ mikrotik_tls }}"
+        tls: "{{ mikrotik_api_tls }}"
+        validate_certs: "{{ mikrotik_api_tls }}"
         path: user group
       register: existing_groups
       check_mode: false
@@ -118,8 +140,8 @@
         hostname: "{{ mikrotik_host }}"
         username: "{{ mikrotik_admin_user | default('admin') }}"
         password: "{{ mikrotik_admin_password }}"
-        tls: "{{ mikrotik_tls }}"
-        validate_certs: "{{ mikrotik_tls }}"
+        tls: "{{ mikrotik_api_tls }}"
+        validate_certs: "{{ mikrotik_api_tls }}"
         path: user group
         add: >-
           name={{ mcp_group }}
@@ -134,8 +156,8 @@
         hostname: "{{ mikrotik_host }}"
         username: "{{ mikrotik_admin_user | default('admin') }}"
         password: "{{ mikrotik_admin_password }}"
-        tls: "{{ mikrotik_tls }}"
-        validate_certs: "{{ mikrotik_tls }}"
+        tls: "{{ mikrotik_api_tls }}"
+        validate_certs: "{{ mikrotik_api_tls }}"
         path: user
       register: existing_users
       check_mode: false
@@ -145,8 +167,8 @@
         hostname: "{{ mikrotik_host }}"
         username: "{{ mikrotik_admin_user | default('admin') }}"
         password: "{{ mikrotik_admin_password }}"
-        tls: "{{ mikrotik_tls }}"
-        validate_certs: "{{ mikrotik_tls }}"
+        tls: "{{ mikrotik_api_tls }}"
+        validate_certs: "{{ mikrotik_api_tls }}"
         path: user
         add: >-
           name={{ mcp_user }}
@@ -162,15 +184,32 @@
 
     - name: Verify the new account can reach the REST API
       ansible.builtin.uri:
-        url: "{{ 'https' if mikrotik_tls else 'http' }}://{{ mikrotik_host }}/rest/system/resource"
+        url: "{{ 'https' if mikrotik_rest_tls else 'http' }}://{{ mikrotik_host }}/rest/system/resource"
         user: "{{ mcp_user }}"
         password: "{{ mcp_user_password }}"
         force_basic_auth: true
-        validate_certs: "{{ mikrotik_tls }}"
+        validate_certs: "{{ mikrotik_rest_tls }}"
         return_content: true
       register: rest_check
       when: not ansible_check_mode
+      # no_log hides the password, but it also hides WHY a failure happened.
+      # So never fail here: capture the result, then report the status code
+      # explicitly below. A silent 401 with censored output is the worst
+      # possible ending for a provisioning run.
       no_log: true
+      failed_when: false
+
+    - name: Fail with the status code when the new account cannot reach REST
+      ansible.builtin.fail:
+        msg: >-
+          {{ mcp_user }} was provisioned but could not authenticate over REST
+          (HTTP {{ rest_check.status | default('no response') }}). The account
+          exists — check that the `www` service is enabled and that the group
+          grants rest-api. Note this is a different service from the binary API
+          this playbook just used, so reaching one proves nothing about the other.
+      when:
+        - not ansible_check_mode
+        - rest_check.status | default(0) != 200
 
     - name: Report the provisioned account
       ansible.builtin.debug:
