@@ -12,10 +12,6 @@ here instead of recurring a fourth time.
 import re
 from pathlib import Path
 
-import pytest
-
-yaml = pytest.importorskip("yaml")
-
 ROOT = Path(__file__).resolve().parents[1]
 PLAYBOOK = ROOT / "ansible" / "playbooks" / "restart-lifecycle-service.yml"
 UNIT_TEMPLATE = (
