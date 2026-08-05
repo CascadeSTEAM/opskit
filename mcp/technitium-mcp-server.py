@@ -61,7 +61,15 @@ except ImportError:
 
 REPO_ROOT = Path(__file__).parent.parent.resolve()
 
-_SERVERS_FILE = Path(__file__).parent / "tenants-technitium.local.json"
+# Overridable, like every sibling server. Without this the path was an
+# import-time constant, so the test suite read whatever real config the developer
+# happened to have: CI (which never has the file) stayed permanently green while
+# an operator's machine failed on the identical commit (opskit #122, ledger row 16).
+_SERVERS_FILE = (
+    Path(os.environ["TECHNITIUM_SERVERS_FILE"])
+    if os.environ.get("TECHNITIUM_SERVERS_FILE")
+    else Path(__file__).parent / "tenants-technitium.local.json"
+)
 
 
 def _load_servers() -> dict:
