@@ -56,10 +56,49 @@ set_ticket() {
     echo -e "${GREEN}Active ticket: $1${NC}"
 }
 
+usage() {
+    sed -n '4,9p' "$0" | sed 's/^# \{0,3\}//'
+}
+
+# --help BEFORE any side effect. The first argument is otherwise taken as the
+# ticket subject unconditionally, so `open-ticket.sh --help` used to ATTEMPT A
+# LIVE CREATE titled "--help" against the client helpdesk. It only failed when
+# found because credentials happened to be absent (opskit #120, ledger row 34).
+#
+# A flag that acts instead of describing is a trap in any tool; in one whose side
+# effect lands on someone else's system it is worse — a junk ticket on a client
+# helpdesk is visible to the client and may not be deletable from here.
+case "${1:-}" in
+    --help|-h)
+        usage
+        exit 0
+        ;;
+esac
+
 # --local: deliberately use local-only tracking instead of the helpdesk
 # (opt-in; a configured helpdesk otherwise fails loud — see issue #47).
 LOCAL_MODE=0
 if [ "${1:-}" = "--local" ]; then LOCAL_MODE=1; shift; fi
+
+# `--` ends option parsing, so a genuinely dash-leading subject stays possible.
+EXPLICIT_SUBJECT=0
+if [ "${1:-}" = "--" ]; then EXPLICIT_SUBJECT=1; shift; fi
+
+# The general fix, of which --help was one instance: never let an unrecognised
+# flag become a ticket subject. A typo should not file anything.
+if [ "$EXPLICIT_SUBJECT" -eq 0 ] && [ $# -gt 0 ]; then
+    case "$1" in
+        -*)
+            echo -e "${RED}Refusing to treat '$1' as a ticket subject.${NC}" >&2
+            echo "  Unrecognised option, or a subject that begins with '-'." >&2
+            echo "  For a subject that really starts with a dash, end the options first:" >&2
+            echo "    bin/open-ticket.sh -- \"$1\"" >&2
+            echo "" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+fi
 
 if [ $# -eq 0 ]; then
     if [ "$LOCAL_MODE" -eq 1 ]; then
