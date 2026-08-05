@@ -179,10 +179,35 @@ else
     report 0 "bw CLI" "not found — npm install -g @bitwarden/cli"
 fi
 
-if [ -n "${BW_SESSION:-}" ]; then
-    report 1 "BW_SESSION" "set"
-else
+# A non-empty BW_SESSION proves nothing: a token from a vault that has since
+# auto-locked passes that test, and then every secret resolution fails at launch —
+# exactly the silent startup failure this script exists to prevent. So ask the
+# vault what state it is actually in. This reads vault *state*, never a secret, so
+# the guarantee that --check fetches nothing still holds.
+#
+# stdin is closed for every bw call: against a locked vault bw otherwise blocks on
+# a hidden master-password prompt, which presents as a hang rather than an error.
+if [ -z "${BW_SESSION:-}" ]; then
     report 0 "BW_SESSION" "not set — export BW_SESSION=\$(bw unlock --raw) before the agent runtime starts"
+elif ! command -v "$BW" >/dev/null 2>&1; then
+    report 0 "BW_SESSION" "set, but the bw CLI is missing so it cannot be validated"
+else
+    BW_STATE=$("$BW" status </dev/null 2>/dev/null \
+        | "$(json_python)" -c 'import json,sys
+try:
+    print((json.load(sys.stdin) or {}).get("status") or "unknown")
+except Exception:
+    print("unreadable")' 2>/dev/null || echo "unreadable")
+    case "$BW_STATE" in
+        unlocked)
+            report 1 "BW_SESSION" "unlocked" ;;
+        locked)
+            report 0 "BW_SESSION" "set but the vault is LOCKED — the token is stale; re-run: export BW_SESSION=\$(bw unlock --raw)" ;;
+        unauthenticated)
+            report 0 "BW_SESSION" "set but the CLI is not logged in — run: bw login" ;;
+        *)
+            report 0 "BW_SESSION" "set but the vault state could not be read ($BW_STATE)" ;;
+    esac
 fi
 
 # Which env vars this server expects, and whether the map covers them.
