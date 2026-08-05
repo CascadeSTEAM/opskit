@@ -56,6 +56,15 @@ python3 bin/baseline.py rebuild <env> <host>
 - Modify system state during capture — read-only operations only
 - Skip the diff step before applying changes — always compare first
 
+## Quoting remote commands (non-negotiable)
+
+`ssh` joins its trailing arguments into **one string** that the remote shell
+parses, so passing values as separate argv elements protects nothing. Every value
+interpolated into a remote command must be `shlex.quote`d — especially values read
+*off* the target, like a filename from `ls` output. This tool is pointed at hosts
+in unknown states by design, so "we control that filesystem" is the wrong
+assumption. Enforced by `tests/test_shell_interpolation_guard.py` (opskit #124).
+
 ## Related
 
 - `check-connectivity` skill — verify reachability before capture

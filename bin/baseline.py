@@ -13,6 +13,7 @@ Baselines capture known-good system state for troubleshooting and rebuild.
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 from datetime import datetime
@@ -25,7 +26,18 @@ ENVS_DIR = REPO_ROOT / "environments"
 
 
 def ssh_cmd(host: str, user: str, port: int, command: str, local: bool = False) -> str:
-    """Execute a command locally or via SSH."""
+    """Execute a command locally or via SSH.
+
+    `command` is SHELL-PARSED in both branches: locally by `shell=True`, remotely
+    because ssh joins its trailing arguments into one string that a shell on the
+    far end interprets. Passing values as separate argv elements gives no
+    protection whatsoever.
+
+    So every value interpolated into `command` must be `shlex.quote`d. That matters
+    most for values read off the remote host — a filename from `ls` output is
+    attacker-controlled if anyone can create files there, and this tool is pointed
+    at hosts in unknown states by design (opskit #124, ledger row 17).
+    """
     if local:
         result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=120)
     else:
@@ -123,16 +135,16 @@ def capture_all(host: str, user: str, port: int) -> dict:
     # KScreen configs - search specific user directories, not entire /home
     home_dir = run("echo $HOME") or "/root"
     kscreen_path = f"{home_dir}/.local/share/kscreen/outputs"
-    kscreen_exists = run(f"test -d {kscreen_path} && echo yes")
+    kscreen_exists = run(f"test -d {shlex.quote(kscreen_path)} && echo yes")
     display_data["kscreen_outputs"] = {}
     
     if kscreen_exists == "yes":
-        files = run(f"ls {kscreen_path}/ 2>/dev/null")
+        files = run(f"ls {shlex.quote(kscreen_path)}/ 2>/dev/null")
         for f in files.splitlines():
             f = f.strip()
             if not f:
                 continue
-            content = run(f"cat {kscreen_path}/{f}")
+            content = run(f"cat {shlex.quote(f'{kscreen_path}/{f}')}")
             if content:
                 try:
                     parsed = json.loads(content)
@@ -152,7 +164,7 @@ def capture_all(host: str, user: str, port: int) -> dict:
         for f in xorg_d.splitlines():
             f = f.strip()
             if f and not f.endswith('.swp'):
-                content = run(f"cat /etc/X11/xorg.conf.d/{f}")
+                content = run(f"cat {shlex.quote(f'/etc/X11/xorg.conf.d/{f}')}")
                 if content:
                     display_data["xorg_conf_d"][f] = content
     
