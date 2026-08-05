@@ -39,6 +39,37 @@ environment layer; its SESSION-LOG entry (if any) stays terse, generic, and
 state-free. When in doubt, ask: "would this sentence help someone attack or
 case a network?" — if maybe, it goes in the env layer.
 
+### The same rule binds GitHub issues and the idea ledger (2026-08-05)
+
+The rule above named session notes, and was read too narrowly. It applies to
+**every published surface**: GitHub issues and PR bodies in the public repo, and
+`docs/ideas.md`, which is tracked and therefore public.
+
+This was learned the hard way. Two issues were filed publicly describing an
+environment's device inventory — hardware models, addresses, MAC addresses,
+uptimes, topology, which credentials failed and how. They contained no guarded
+token, so every automated check passed. They were still a site survey, and the
+operator caught it, not the tooling. Both were **deleted** (not closed — a closed
+issue stays public and indexed) and refiled in the environment's own private repo.
+
+Routing, for anything that is really about a device or a network:
+
+| Where it goes | What belongs there |
+|---|---|
+| `CascadeSTEAM/env-<name>` issues (private) | the device, its addresses, its credential state, its history |
+| That environment's helpdesk | anything the client should see or be billed for |
+| Public opskit issues | the *engineering* problem: a tool that cannot express X, a guard that misses Y |
+| `docs/ideas.md` | the generic gap only — never the device that revealed it |
+
+A finding usually splits into both halves. "This AP has no working credential" is
+private. "The tool treats an empty password as a missing credential, so a
+factory-default device cannot be probed at all" is public, and is the more useful
+half anyway, because it generalises.
+
+Practical test before filing publicly: **strip every identifier and ask whether
+the issue still says anything.** If what remains is only "a device somewhere is
+misconfigured", it was never an engineering issue — it was inventory.
+
 ## Active enforcement
 
 - **`.githooks/pre-commit`** blocks staged additions containing:
