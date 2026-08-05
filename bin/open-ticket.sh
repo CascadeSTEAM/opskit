@@ -23,7 +23,10 @@ REPO_ROOT="${OPSKIT_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 TICKET_FILE="$REPO_ROOT/.current-ticket"
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
 
-ACTIVE_ENV=$(grep '^ACTIVE_ENV=' "$REPO_ROOT/.env" 2>/dev/null | cut -d= -f2 | tr -d '"' | xargs || true)
+# ACTIVE_ENV precedence lives in one place (opskit #126): an exported ACTIVE_ENV
+# pins this session and wins over .env, so a concurrent session running
+# switch-env.sh cannot change the environment out from under us mid-task.
+ACTIVE_ENV=$(python3 "$SCRIPT_DIR/active_env.py" 2>/dev/null || true)
 ENV_YML="$REPO_ROOT/environments/$ACTIVE_ENV/env.yml"
 
 read_env_field() {

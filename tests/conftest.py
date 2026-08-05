@@ -32,6 +32,12 @@ CONFIG_PATH_VARS = (
     "WIREGUARD_TENANTS_FILE",
 )
 
+# ACTIVE_ENV is now honoured as a session pin (opskit #126), which makes it exactly
+# the kind of ambient state #122 was about: a developer with an environment pinned
+# would otherwise get different test results from CI. Stripped for the session;
+# tests that need a specific environment pass it explicitly.
+AMBIENT_STATE = ("ACTIVE_ENV",)
+
 # Credentials a server might read. A developer's exported secrets must not be able
 # to make a test pass — or fail — by accident.
 CREDENTIAL_PREFIXES = ("ERPNEXT_", "PROXMOX_", "TECHNITIUM_", "WG_", "MIKROTIK_")
@@ -51,6 +57,11 @@ def isolate_local_config(tmp_path_factory):
     for var in CONFIG_PATH_VARS:
         saved[var] = os.environ.get(var)
         os.environ[var] = str(empty / "absent.json")
+
+    for var in AMBIENT_STATE:
+        if var in os.environ:
+            saved[var] = os.environ[var]
+            del os.environ[var]
 
     # Only strip credentials that are not already deliberately set by a test
     # runner; individual tests that need one set it themselves.

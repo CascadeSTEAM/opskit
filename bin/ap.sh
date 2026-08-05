@@ -9,7 +9,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${OPSKIT_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 RED='\033[0;31m'; NC='\033[0m'
 
-ACTIVE_ENV=$(grep '^ACTIVE_ENV=' "$REPO_ROOT/.env" 2>/dev/null | cut -d= -f2 | tr -d '"' | xargs || true)
+# ACTIVE_ENV precedence lives in one place (opskit #126): an exported ACTIVE_ENV
+# pins this session and wins over .env, so a concurrent session running
+# switch-env.sh cannot change the environment out from under us mid-task.
+ACTIVE_ENV=$(python3 "$SCRIPT_DIR/active_env.py" 2>/dev/null || true)
 if [ -z "$ACTIVE_ENV" ]; then
     echo -e "${RED}ACTIVE_ENV is not set. Run: bin/switch-env.sh <env>${NC}" >&2
     exit 1
