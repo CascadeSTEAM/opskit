@@ -88,3 +88,10 @@ projects/*
 
 # Raw session learnings — distilled into permanent memory in a later discussion cycle
 session.log
+
+# Lifecycle watch dirs — documents are client-laden, private-layer only
+# (docs/client-data-policy.md); only the directory skeleton is tracked.
+proposals/*
+!proposals/.gitkeep
+plans/*
+!plans/.gitkeep

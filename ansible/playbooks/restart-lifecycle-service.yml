@@ -40,14 +40,14 @@
 
     - name: Install/update Python dependencies
       ansible.builtin.pip:
-        requirements: "{{ repo_root }}/requirements.txt"
+        requirements: "{{ repo_root }}/requirements-dev.txt"
         virtualenv: "{{ repo_root }}/.venv"
         virtualenv_command: python3 -m venv
       when: not restart_only
 
     - name: Smoke test lifecycle-processor
       ansible.builtin.command:
-        cmd: "{{ venv_python }} {{ repo_root }}/scripts/lifecycle-processor.py --dry-run"
+        cmd: "{{ venv_python }} {{ repo_root }}/bin/lifecycle-processor.py --dry-run"
         chdir: "{{ repo_root }}"
       register: smoke_test
       failed_when: smoke_test.rc not in [0, 1]
