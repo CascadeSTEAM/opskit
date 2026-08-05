@@ -716,35 +716,61 @@ def validate_new_proposal(filepath: Path, user: str, dry_run: bool = False) -> b
 # Git helpers
 # =============================================================================
 
+# The daemon may only ever commit the lifecycle documents it manages. It used
+# to `git add -A` + `git commit --no-verify`, which swept the operator's
+# unrelated working-tree state into daemon commits AND bypassed every guard
+# hook (publication, client-token, secret scan) — issue #143.
+LIFECYCLE_GIT_PATHSPECS = ['proposals', 'plans']
+
+
 def git_commit(message: str) -> bool:
-    """Create a commit. Uses --no-verify to skip pre-commit hooks
-    that may block automated transitions."""
-    result = run_cmd(
-        f'git commit --no-verify -m "{message}"',
-        check=False, timeout=30
+    """Create a commit. Hooks run — an automated commit gets no exemption
+    from the guards precisely because nobody reviews it."""
+    result = subprocess.run(
+        ['git', 'commit', '-m', message],
+        capture_output=True, text=True, timeout=30
     )
     return result.returncode == 0
 
 
 def git_commit_transaction(message: str, dry_run: bool = False) -> bool:
     """
-    Atomic git commit: stage all changes (adds + deletes detected automatically),
-    commit. Returns False if the commit fails.
+    Atomic git commit of the lifecycle directories only. Returns False if
+    the commit fails.
 
-    Uses 'git add -A' to handle renames correctly (files moved via os.rename
-    are detected as delete+add by git).
+    Uses 'git add -A -- <lifecycle dirs>' so renames (os.rename shows up as
+    delete+add) are handled, while the rest of the working tree — including
+    anything the operator has staged or half-finished — is never touched,
+    neither by staging nor by the failure-path reset.
     """
     if dry_run:
         log(f"  [DRY-RUN] Would commit: {message}")
         return True
 
-    result = run_cmd(f"git add -A", check=False)
+    # ':(top)dir' + trailing slash would still error on a missing dir;
+    # only pass pathspecs that exist so a repo without plans/ (or before
+    # first proposal) does not fail the whole transaction.
+    pathspecs = [p for p in LIFECYCLE_GIT_PATHSPECS if Path(p).exists()]
+    if not pathspecs:
+        log(f"  No lifecycle directories present — nothing to commit")
+        return True
+
+    result = run_cmd("git add -A -- " + " ".join(pathspecs), check=False)
     if result.returncode != 0:
         log(f"  Failed to stage changes: {result.stderr.strip()}", 'error')
         return False
 
+    # Nothing staged is success, not failure: in this repo the lifecycle
+    # documents themselves are gitignored (private-layer, client-laden), so
+    # there is legitimately nothing to commit after a transition.
+    staged = run_cmd("git diff --cached --quiet -- " + " ".join(pathspecs),
+                     check=False)
+    if staged.returncode == 0:
+        log(f"  Nothing tracked to commit (lifecycle docs are gitignored here)")
+        return True
+
     if not git_commit(message):
-        run_cmd("git reset HEAD", check=False)
+        run_cmd("git reset HEAD -- " + " ".join(pathspecs), check=False)
         log(f"  Commit failed: {message}", 'error')
         return False
 
