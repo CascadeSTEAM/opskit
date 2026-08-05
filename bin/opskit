@@ -34,8 +34,12 @@ import yaml
 
 def _active_env() -> str:
     """Resolved by bin/active_env.py — an exported ACTIVE_ENV pins the session and
-    wins over .env, so a concurrent session cannot change it mid-task (#126)."""
-    sys.path.insert(0, str(REPO_ROOT))
+    wins over .env, so a concurrent session cannot change it mid-task (#126).
+
+    REPO_ROOT is the DATA root and is overridable, so it is passed as an argument
+    rather than used to find the module: importing code from a path that a caller
+    controls is how a fixture directory ends up shadowing real modules.
+    """
     from bin.active_env import resolve
     return resolve(REPO_ROOT)[0]
 

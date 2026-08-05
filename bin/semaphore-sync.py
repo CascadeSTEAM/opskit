@@ -29,12 +29,20 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
+# The CODE root, which is where this file lives — distinct from ROOT, the DATA root,
+# which callers may point elsewhere. Importing a module from a caller-controlled path
+# is how a fixture directory ends up shadowing a real one.
+_CODE_ROOT = Path(__file__).resolve().parent.parent
+if str(_CODE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_CODE_ROOT))
+
+from bin.active_env import resolve as _resolve_active_env  # noqa: E402
+
+
 def _active_env() -> str:
     """Resolved by bin/active_env.py — an exported ACTIVE_ENV pins the session and
     wins over .env, so a concurrent session cannot change it mid-task (#126)."""
-    sys.path.insert(0, str(ROOT))
-    from bin.active_env import resolve
-    return resolve(ROOT)[0]
+    return _resolve_active_env(ROOT)[0]
 
 
 def _load_env_yml(env_name: str) -> dict:

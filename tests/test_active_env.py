@@ -200,3 +200,18 @@ def test_tests_are_isolated_from_an_inherited_pin():
     """Honouring the variable makes it ambient state — exactly the #122 hazard.
     conftest strips it, and that must stay true or CI and a developer diverge."""
     assert "ACTIVE_ENV" not in os.environ
+
+
+def test_readers_do_not_import_code_from_the_data_root():
+    """Review finding on this very change: `_active_env` inserted REPO_ROOT — the
+    DATA root, which callers override — into sys.path and imported from it. A
+    fixture or environment directory containing a `bin/` could then shadow real
+    modules. Code is located from the file's own path; the data root is an argument.
+    """
+    for name in ("opskit", "semaphore-sync.py"):
+        source = (ROOT / "bin" / name).read_text()
+        for bad in ("sys.path.insert(0, str(REPO_ROOT))", "sys.path.insert(0, str(ROOT))"):
+            assert bad not in source, (
+                f"bin/{name} puts the data root on sys.path — import code from the "
+                f"code root and pass the data root as an argument"
+            )
