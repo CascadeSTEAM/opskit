@@ -12,20 +12,20 @@
     - name: Collect system OS and hardware facts
       ansible.builtin.set_fact:
         host_discovered_info:
-          os_family: "{{ ansible_os_family }}"
-          distribution: "{{ ansible_distribution }}"
-          distribution_version: "{{ ansible_distribution_version }}"
-          distribution_release: "{{ ansible_distribution_release }}"
-          kernel: "{{ ansible_kernel }}"
-          architecture: "{{ ansible_architecture }}"
-          virtualization_type: "{{ ansible_virtualization_type }}"
-          processor_count: "{{ ansible_processor_count | default(0) }}"
-          processor_cores: "{{ ansible_processor_cores | default(0) }}"
-          memtotal_mb: "{{ ansible_memtotal_mb | default(0) }}"
-          swaptotal_mb: "{{ ansible_swaptotal_mb | default(0) }}"
-          product_name: "{{ ansible_product_name | default('') }}"
-          product_version: "{{ ansible_product_version | default('') }}"
-          last_gathered: "{{ ansible_date_time.iso8601 }}"
+          os_family: "{{ ansible_facts['os_family'] }}"
+          distribution: "{{ ansible_facts['distribution'] }}"
+          distribution_version: "{{ ansible_facts['distribution_version'] }}"
+          distribution_release: "{{ ansible_facts['distribution_release'] }}"
+          kernel: "{{ ansible_facts['kernel'] }}"
+          architecture: "{{ ansible_facts['architecture'] }}"
+          virtualization_type: "{{ ansible_facts['virtualization_type'] }}"
+          processor_count: "{{ ansible_facts['processor_count'] | default(0) }}"
+          processor_cores: "{{ ansible_facts['processor_cores'] | default(0) }}"
+          memtotal_mb: "{{ ansible_facts['memtotal_mb'] | default(0) }}"
+          swaptotal_mb: "{{ ansible_facts['swaptotal_mb'] | default(0) }}"
+          product_name: "{{ ansible_facts['product_name'] | default('') }}"
+          product_version: "{{ ansible_facts['product_version'] | default('') }}"
+          last_gathered: "{{ ansible_facts['date_time']['iso8601'] }}"
 
     # ------------------------------------------------------------------
     # Network info
@@ -48,9 +48,9 @@
     - name: Assemble network facts
       ansible.builtin.set_fact:
         host_network_info:
-          default_ip: "{{ ansible_default_ipv4.address | default('') }}"
-          default_interface: "{{ ansible_default_ipv4.interface | default('') }}"
-          default_gateway: "{{ ansible_default_ipv4.gateway | default('') }}"
+          default_ip: "{{ ansible_facts['default_ipv4']['address'] | default('') }}"
+          default_interface: "{{ ansible_facts['default_ipv4']['interface'] | default('') }}"
+          default_gateway: "{{ ansible_facts['default_ipv4']['gateway'] | default('') }}"
           dns_config: "{{ dns_config.stdout | default('') }}"
           routes: "{{ gateway_config.stdout | default('') }}"
           interfaces: "{{ interface_status.stdout | default('') }}"
@@ -70,27 +70,27 @@
         content: |
           ---
           # Auto-discovered facts for {{ inventory_hostname }}
-          # Last gathered: {{ ansible_date_time.iso8601 }}
+          # Last gathered: {{ ansible_facts['date_time']['iso8601'] }}
           discovered:
             os: {
-              family: "{{ ansible_os_family }}",
-              distro: "{{ ansible_distribution }}",
-              version: "{{ ansible_distribution_version }}",
-              release: "{{ ansible_distribution_release }}"
+              family: "{{ ansible_facts['os_family'] }}",
+              distro: "{{ ansible_facts['distribution'] }}",
+              version: "{{ ansible_facts['distribution_version'] }}",
+              release: "{{ ansible_facts['distribution_release'] }}"
             }
             hardware: {
-              kernel: "{{ ansible_kernel }}",
-              arch: "{{ ansible_architecture }}",
-              virt_type: "{{ ansible_virtualization_type }}",
-              cpu_count: {{ ansible_processor_count | default(0) }},
-              cpu_cores: {{ ansible_processor_cores | default(0) }},
-              ram_mb: {{ ansible_memtotal_mb | default(0) }},
-              swap_mb: {{ ansible_swaptotal_mb | default(0) }},
-              product: "{{ ansible_product_name | default('') }}"
+              kernel: "{{ ansible_facts['kernel'] }}",
+              arch: "{{ ansible_facts['architecture'] }}",
+              virt_type: "{{ ansible_facts['virtualization_type'] }}",
+              cpu_count: {{ ansible_facts['processor_count'] | default(0) }},
+              cpu_cores: {{ ansible_facts['processor_cores'] | default(0) }},
+              ram_mb: {{ ansible_facts['memtotal_mb'] | default(0) }},
+              swap_mb: {{ ansible_facts['swaptotal_mb'] | default(0) }},
+              product: "{{ ansible_facts['product_name'] | default('') }}"
             }
             network: {
-              default_ip: "{{ ansible_default_ipv4.address | default('') }}",
-              default_gw: "{{ ansible_default_ipv4.gateway | default('') }}",
-              default_iface: "{{ ansible_default_ipv4.interface | default('') }}"
+              default_ip: "{{ ansible_facts['default_ipv4']['address'] | default('') }}",
+              default_gw: "{{ ansible_facts['default_ipv4']['gateway'] | default('') }}",
+              default_iface: "{{ ansible_facts['default_ipv4']['interface'] | default('') }}"
             }
         dest: "{{ playbook_dir }}/../inventory/host_vars/{{ inventory_hostname }}/discovered.yml"

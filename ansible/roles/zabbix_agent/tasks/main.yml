@@ -4,12 +4,12 @@
 
 - name: Detect OS family
   set_fact:
-    is_debian: "{{ ansible_os_family == 'Debian' }}"
-    is_alpine: "{{ ansible_os_family == 'Alpine' }}"
+    is_debian: "{{ ansible_facts['os_family'] == 'Debian' }}"
+    is_alpine: "{{ ansible_facts['os_family'] == 'Alpine' }}"
 
 - name: Fail on unsupported OS
   fail:
-    msg: "Unsupported OS family: {{ ansible_os_family }}. Only Debian/Ubuntu and Alpine are supported."
+    msg: "Unsupported OS family: {{ ansible_facts['os_family'] }}. Only Debian/Ubuntu and Alpine are supported."
   when: not is_debian and not is_alpine
 
 # ── Debian/Ubuntu ──
@@ -25,8 +25,8 @@
 
 - name: Install Zabbix repository (Debian/Ubuntu)
   apt:
-    deb: "https://repo.zabbix.com/zabbix/{{ zabbix_version }}/{{ ansible_distribution | lower }}/pool/main/z/zabbix-release/zabbix-release_latest_{{ zabbix_version
-      }}+{{ ansible_distribution | lower }}{{ ansible_distribution_version if ansible_distribution == 'Ubuntu' else ansible_distribution_major_version }}_all.deb"
+    deb: "https://repo.zabbix.com/zabbix/{{ zabbix_version }}/{{ ansible_facts['distribution'] | lower }}/pool/main/z/zabbix-release/zabbix-release_latest_{{ zabbix_version
+      }}+{{ ansible_facts['distribution'] | lower }}{{ ansible_facts['distribution_version'] if ansible_facts['distribution'] == 'Ubuntu' else ansible_facts['distribution_major_version'] }}_all.deb"
   when: is_debian
   register: repo_installed
 
@@ -96,5 +96,5 @@
 
 - name: Display agent status
   debug:
-    msg: "Zabbix agent status on {{ ansible_hostname }}: {{ agent_status.stdout }}"
+    msg: "Zabbix agent status on {{ ansible_facts['hostname'] }}: {{ agent_status.stdout }}"
   when: not is_alpine

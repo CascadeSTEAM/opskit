@@ -10,4 +10,4 @@ frappe_apps_path: "{{ frappe_bench_path }}/apps"
 frappe_db_dump_path: "/root/pre-{{ frappe_target_branch }}-dump.sql"
 
 # Proxmox snapshot description
-pve_snapshot_description: "Pre-{{ frappe_target_branch }} upgrade — Ansible {{ ansible_date_time.date | default('unknown') }}"
+pve_snapshot_description: "Pre-{{ frappe_target_branch }} upgrade — Ansible {{ ansible_facts['date_time']['date'] | default('unknown') }}"

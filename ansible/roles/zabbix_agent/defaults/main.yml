@@ -13,5 +13,5 @@ zabbix_psk_identity: "PSK Cascade STEAM"
 zabbix_psk_key: "" # MUST be set to enable PSK
 
 # Host metadata for auto-registration
-zabbix_agent_hostname: "{{ ansible_hostname }}"
+zabbix_agent_hostname: "{{ ansible_facts['hostname'] }}"
 zabbix_agent_hostmetadata: "{{ 'T1' if zabbix_tier is defined and zabbix_tier == 'T1' else 'T3' }}"
