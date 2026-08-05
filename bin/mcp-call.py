@@ -26,6 +26,11 @@ Usage:
 Output is the tool's structured result as JSON when it has one, otherwise its
 text content. --raw prints the whole MCP response envelope.
 
+CAUTION: when a server fails, its stderr is quoted back so the cause is visible —
+that is the point. But a server crashing while handling credentials can put them
+in a traceback. Treat probe and failure output as sensitive: read it, act on it,
+do not paste it into a public issue or PR.
+
 Requires an unlocked vault session for servers with mapped secrets:
   export BW_SESSION=$(bw unlock --raw)
 """
@@ -252,6 +257,12 @@ def run_probes(servers: list[str], timeout: int) -> int:
     if failures:
         print(f"{failures} of {len(servers)} server(s) cannot serve tools.",
               file=sys.stderr)
+        # The quoted stderr above is the whole value of this probe, and is also
+        # the one place a secret can surface: a server that dies while handling
+        # credentials may put them in a traceback. Say so at the point of use,
+        # not only in the docstring nobody reads mid-incident.
+        print("Server output above may contain credentials — do not paste it "
+              "into a public issue or PR.", file=sys.stderr)
         return 1
     print(f"All {len(servers)} server(s) serve tools.")
     return 0

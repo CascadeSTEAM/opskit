@@ -333,3 +333,20 @@ def test_a_server_that_never_answers_times_out_instead_of_hanging(tmp_path):
 
     assert result.returncode == 1
     assert "did not respond within" in result.stdout
+
+
+def test_probe_failure_warns_that_output_may_contain_secrets(tmp_path):
+    """The quoted stderr is this probe's whole value and also its one leak path:
+    a server dying while handling credentials can put them in a traceback. The
+    warning belongs at the point of use, not only in a docstring."""
+    root = _make_root(tmp_path, server_body=(
+        'import sys\n'
+        'print("boom", file=sys.stderr)\n'
+        'sys.exit(1)\n'
+    ), servers="stub")
+
+    result = _run(root, "--probe")
+
+    assert result.returncode == 1
+    assert "may contain credentials" in result.stderr
+    assert "public issue" in result.stderr
