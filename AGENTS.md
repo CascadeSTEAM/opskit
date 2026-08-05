@@ -127,9 +127,31 @@ python3 bin/automation-ladder.py sync-agents   # then restart the agent session
 
 Load the relevant skill before working in its domain.
 
+## Two layers — know which one you are changing
+
+This repo contains two different things, and the rules below do not apply equally to
+both. Establish which layer you are in *before* citing any principle.
+
+| Layer | What it is | What governs it |
+|-------|-----------|-----------------|
+| **Product** | What OpsKit does *to environments*: provisioning, devices, services, DNS, records | The Core Rules, the IaC rule, and Development Principle #2's vehicle rule below |
+| **Collaboration surface** | The operator, the agent, and the OpsKit CLI between them: this file, `CLAUDE.md`, `skills/`, `agents/`, harness wiring, self-improvement machinery | **Principle #2 does not apply.** No Ansible dimension exists here. The default vehicle is an **MCP tool**, because that is what an LLM reaches for reliably — discoverable, typed schema, harness-agnostic — and `bin/mcp-call.py` makes MCP tools shell-reachable too, so they are strictly more accessible than a script, not less |
+
+**Why this table exists:** an agent applied Principle #2 to a proposal about improving
+this very file, concluded "script, not MCP tool", and cited the doctrine as though it
+settled the question. It does not — Principle #2 arbitrates how we change *client
+environments*. Changing how the operator and the agent work together is a different
+layer with different risks. See #136.
+
+One risk specific to the collaboration layer: these files are the **control surface for
+agent behaviour**. Verifying them can be automated freely; *rewriting* them cannot — an
+automated edit can silently weaken a hard rule and no test catches a rule that has
+merely been softened. Tools here propose; a human disposes.
+
 ## Development Principles
 
 Set by the project owner; they apply to every session, not per-task.
+**Principle #2's vehicle rule governs the product layer** — see the table above.
 
 1. **Never lose an idea.** An idea that surfaces in conversation and isn't acted
    on immediately gets captured before the session ends — cheapest first:
