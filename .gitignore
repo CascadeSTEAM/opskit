@@ -85,3 +85,6 @@ NOTES.md
 # Real members never enter this public repo; only projects/example/ is tracked.
 projects/*
 !projects/example/
+
+# Raw session learnings — distilled into permanent memory in a later discussion cycle
+session.log
