@@ -1,0 +1,30 @@
+{
+  "_comment": [
+    "MCP servers that bin/mcp-run.sh can launch but this repo does not contain.",
+    "Tracked on purpose: a command line is not a secret, and the whole point is",
+    "that the launch path stops living in an agent runtime's config file where",
+    "nothing tests it and nothing rebuilds it (opskit #80, #105).",
+    "",
+    "Key   = server name, matching its section in vault-map.local.json.",
+    "        Must not collide with an in-repo mcp/<name>-mcp-server.py.",
+    "command = argv, launched with the vault-resolved secrets in its environment.",
+    "install = how to obtain it, for the operator that --check tells to install it.",
+    "",
+    "Keep this file free of environment names, hostnames and vault identifiers",
+    "(docs/client-data-policy.md) — those belong in the gitignored layers."
+  ],
+  "mikromcp": {
+    "command": ["mikromcp", "serve"],
+    "install": "npm install -g mikromcp",
+    "why": [
+      "The sanctioned path for all RouterOS work (AGENTS.md routes MikroTik",
+      "through @mikrotik, which is restricted to mikromcp_* tools).",
+      "",
+      "mikromcp reads its device list from ~/.mikromcp/routers.yaml and takes",
+      "credentials from <envPrefix>_USER / <envPrefix>_PASS environment",
+      "variables — its credentials.source: \"vault\" is declared in the schema",
+      "but unimplemented, and raises VAULT_NOT_SUPPORTED. So the vault",
+      "resolution has to happen here, at launch, one prefix per router."
+    ]
+  }
+}

@@ -16,7 +16,11 @@ ROOT = Path(__file__).resolve().parents[1]
 MCP_RUN = ROOT / "bin" / "mcp-run.sh"
 
 
-def _make_root(tmp_path: Path, vault_map: dict | None = None) -> Path:
+def _make_root(
+    tmp_path: Path,
+    vault_map: dict | None = None,
+    external: dict | None = None,
+) -> Path:
     """A fake repo root: one MCP server that dumps the env it was launched with."""
     root = tmp_path / "repo"
     (root / "mcp").mkdir(parents=True)
@@ -32,7 +36,25 @@ def _make_root(tmp_path: Path, vault_map: dict | None = None) -> Path:
 
     if vault_map is not None:
         (root / "mcp" / "vault-map.local.json").write_text(json.dumps(vault_map))
+    if external is not None:
+        (root / "mcp" / "external-servers.json").write_text(json.dumps(external))
     return root
+
+
+def _make_external_binary(tmp_path: Path, name: str = "demoext") -> Path:
+    """A stub for a server installed outside the repo — it prints the secrets it
+    was launched with, same as the in-repo fake."""
+    bin_dir = tmp_path / "extbin"
+    bin_dir.mkdir(exist_ok=True)
+    exe = bin_dir / name
+    exe.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "print(json.dumps({'argv': sys.argv[1:], **{k: v for k, v in "
+        "os.environ.items() if k.startswith('EXT_')}}))\n"
+    )
+    exe.chmod(0o755)
+    return bin_dir
 
 
 def _make_bw_stub(tmp_path: Path, items: dict) -> Path:
@@ -56,7 +78,13 @@ def _make_bw_stub(tmp_path: Path, items: dict) -> Path:
     return bw
 
 
-def _run(root: Path, *args: str, bw: Path | None = None, session: str | None = "sess"):
+def _run(
+    root: Path,
+    *args: str,
+    bw: Path | None = None,
+    session: str | None = "sess",
+    path_prepend: Path | None = None,
+):
     env = {
         **os.environ,
         "OPSKIT_ROOT": str(root),
@@ -64,6 +92,8 @@ def _run(root: Path, *args: str, bw: Path | None = None, session: str | None = "
         # server has no third-party imports.
         "OPSKIT_VENV_PYTHON": str(ROOT / ".venv" / "bin" / "python3"),
     }
+    if path_prepend is not None:
+        env["PATH"] = f"{path_prepend}:{env['PATH']}"
     env["OPSKIT_BW"] = str(bw) if bw else "bw"
     if session is None:
         env.pop("BW_SESSION", None)
@@ -287,3 +317,114 @@ def test_refuses_to_launch_when_the_path_is_invalid(tmp_path):
 
     assert result.returncode == 1
     assert "--check" in result.stderr
+
+
+# ── external servers (issue #105) ─────────────────────────────────────────────
+# Servers installed outside this repo — a global npm binary, a uvx package —
+# declared in mcp/external-servers.json. Before this, they had nowhere to get
+# secrets from except an agent runtime's config file, so mikromcp's router admin
+# passwords sat there in cleartext.
+
+EXT = {"demoext": {"command": ["demoext", "serve"], "install": "npm i -g demoext"}}
+
+
+def test_list_includes_external_servers(tmp_path):
+    root = _make_root(tmp_path, external=EXT)
+    result = _run(root, "--list")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == ["demo", "demoext", "other"]
+
+
+def test_external_check_passes_when_the_binary_is_installed(tmp_path):
+    root = _make_root(tmp_path, {"demoext": {"EXT_PASS": {"item": "i1"}}}, external=EXT)
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(password="pw")})
+    bin_dir = _make_external_binary(tmp_path)
+
+    result = _run(root, "demoext", "--check", bw=bw, path_prepend=bin_dir)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Launch path OK" in result.stdout
+
+
+def test_external_check_flags_a_missing_binary(tmp_path):
+    """The silent-failure case this validation exists for: the server lives
+    outside the repo, so nothing else would notice it is not installed."""
+    root = _make_root(tmp_path, {"demoext": {"EXT_PASS": {"item": "i1"}}}, external=EXT)
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(password="pw")})
+
+    result = _run(root, "demoext", "--check", bw=bw)  # no stub on PATH
+
+    assert result.returncode == 1
+    assert "not found on PATH" in result.stderr
+
+
+def test_external_server_receives_vault_resolved_secrets(tmp_path):
+    root = _make_root(
+        tmp_path,
+        {"demoext": {"EXT_USER": {"item": "i1", "field": "username"},
+                     "EXT_PASS": {"item": "i1", "field": "password"}}},
+        external=EXT,
+    )
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(username="svc", password="pw")})
+    bin_dir = _make_external_binary(tmp_path)
+
+    result = _run(root, "demoext", bw=bw, path_prepend=bin_dir)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "argv": ["serve"], "EXT_USER": "svc", "EXT_PASS": "pw",
+    }
+
+
+def test_external_server_does_not_require_the_repo_venv(tmp_path):
+    """An external server runs on its own runtime — a missing repo venv must not
+    block it, unlike an in-repo python server."""
+    root = _make_root(tmp_path, {"demoext": {"EXT_PASS": {"item": "i1"}}}, external=EXT)
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(password="pw")})
+    bin_dir = _make_external_binary(tmp_path)
+    env = {
+        **os.environ,
+        "OPSKIT_ROOT": str(root),
+        "OPSKIT_VENV_PYTHON": str(root / ".venv" / "bin" / "python3"),  # absent
+        "OPSKIT_BW": str(bw),
+        "BW_SESSION": "sess",
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+    }
+    result = subprocess.run(
+        ["bash", str(MCP_RUN), "demoext", "--check"],
+        env=env, capture_output=True, text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_external_entry_without_a_command_is_a_clear_error(tmp_path):
+    root = _make_root(tmp_path, {"broken": {}}, external={"broken": {"install": "x"}})
+    result = _run(root, "broken")
+
+    assert result.returncode == 1
+    assert "declares no 'command'" in result.stderr
+
+
+def test_comment_keys_in_the_external_map_are_not_servers(tmp_path):
+    root = _make_root(tmp_path, external={"_comment": ["docs"], **EXT})
+    result = _run(root, "--list")
+
+    assert result.stdout.split() == ["demo", "demoext", "other"]
+
+
+def test_the_repos_own_external_map_is_valid(tmp_path):
+    """Guards the real file: a typo here breaks every external server silently."""
+    declared = json.loads((ROOT / "mcp" / "external-servers.json").read_text())
+    servers = {k: v for k, v in declared.items() if not k.startswith("_")}
+
+    assert servers, "no external servers declared"
+    for name, entry in servers.items():
+        assert entry.get("command"), f"{name} has no command"
+        assert isinstance(entry["command"], list)
+        assert all(isinstance(p, str) for p in entry["command"])
+        assert entry.get("install"), f"{name} has no install hint"
+        assert not (ROOT / "mcp" / f"{name}-mcp-server.py").exists(), (
+            f"{name} shadows an in-repo server"
+        )
