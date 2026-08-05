@@ -25,11 +25,12 @@ done
 
 # ── Show current if no argument ────────────────────────────────────────────────
 if [ -z "${1:-}" ]; then
-    current="${ACTIVE_ENV:-}"
-    [ -z "$current" ] && [ -f "$REPO_ROOT/.env" ] && current=$(grep "^ACTIVE_ENV=" "$REPO_ROOT/.env" 2>/dev/null | cut -d= -f2 | tr -d '"')
+    current=$(python3 "$SCRIPT_DIR/active_env.py" 2>/dev/null || true)
+    source_desc=$(python3 "$SCRIPT_DIR/active_env.py" --source 2>/dev/null || true)
     if [ -n "$current" ]; then
         label="${ENV_LABELS[$current]:-$current}"
         echo -e "${GREEN}Active environment: $label ($current)${NC}"
+        echo -e "  ${YELLOW}source: $source_desc${NC}"
     else
         echo -e "${YELLOW}ACTIVE_ENV not set.${NC}"
         echo "Run: bin/switch-env.sh <env>"
@@ -80,6 +81,19 @@ fi
 
 echo -e "${GREEN}Switched to: $LABEL${NC}"
 echo "  .env ACTIVE_ENV=$TARGET"
+
+# An exported ACTIVE_ENV wins over .env (opskit #126), so writing .env changes
+# nothing for THIS shell. Silence here would make switch-env look broken — the
+# operator would keep switching and keep getting the old environment.
+if [ -n "${ACTIVE_ENV:-}" ] && [ "${ACTIVE_ENV}" != "$TARGET" ]; then
+    echo ""
+    echo -e "${RED}This shell is PINNED to '${ACTIVE_ENV}' by an exported ACTIVE_ENV.${NC}"
+    echo -e "${RED}.env now says $TARGET, but this shell will keep using ${ACTIVE_ENV}.${NC}"
+    echo "  To follow .env in this shell:   unset ACTIVE_ENV"
+    echo "  To pin this shell to $TARGET:   export ACTIVE_ENV=$TARGET"
+elif [ -n "${ACTIVE_ENV:-}" ]; then
+    echo -e "  ${YELLOW}(this shell is pinned to $TARGET by an exported ACTIVE_ENV)${NC}"
+fi
 if [ -n "$PREV_TICKET" ]; then
     echo -e "  ${YELLOW}Cleared active ticket: $PREV_TICKET${NC}"
     echo "  Open a new ticket: bin/open-ticket.sh \"description\""
