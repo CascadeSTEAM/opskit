@@ -23,7 +23,8 @@ usage() {
     echo "  pull      Fast-forward pull the environment repo"
     echo "  push      Push committed changes (refuses a dirty tree unless --commit)"
     echo "  status    Show remote, branch, and working-tree state"
-    echo "  coverage  Every environment: does it have a remote, and is it pushed?"
+    echo "  coverage  Is each environment LAYER backed up to a git remote and pushed?"
+    echo "            (about the layer's files — not host reachability)"
     echo ""
     echo "Remote URLs come from $REMOTES_FILE (gitignored):"
     echo "  <env> <git-url>    # one per line, '#' comments allowed"
@@ -39,6 +40,13 @@ usage() {
 # Being mapped is necessary, not sufficient — commits that exist on no remote are
 # just as lost. Both states are reported, distinctly, because they need different
 # fixes.
+#
+# WORDING MATTERS HERE (opskit #128). "remote" means two things in this codebase:
+# the git remote of the environment LAYER, and the remote HOSTS that layer
+# describes. This reports the first. An operator read "no remote" as "host
+# unreachable", said so, and was right about the hosts — which is how a real
+# backup gap gets dismissed as a false alarm. So every message names the layer and
+# its git remote explicitly, and disclaims reachability where the confusion lands.
 coverage() {
     local base="$REPO_ROOT/environments"
     if [ ! -d "$base" ]; then
@@ -61,14 +69,18 @@ coverage() {
 
         if [ -z "$url" ]; then
             unmapped=$((unmapped + 1))
-            printf "  ${RED}✗${NC} %-12s no remote in %s — exists on this machine only\n" \
-                "$name" "$(basename "$REMOTES_FILE")"
+            printf "  ${RED}✗${NC} %-12s layer NOT BACKED UP — no git remote for environments/%s/\n" \
+                "$name" "$name"
+            printf "               its config and datasets exist only on this machine\n"
+            printf "               (about the layer's git remote, not host reachability)\n"
             continue
         fi
 
         if [ ! -d "$dir/.git" ]; then
             unmapped=$((unmapped + 1))
-            printf "  ${RED}✗${NC} %-12s mapped, but not a git repo — nothing is committed\n" "$name"
+            printf "  ${RED}✗${NC} %-12s layer NOT BACKED UP — environments/%s/ is mapped in %s\n" \
+                "$name" "$name" "$(basename "$REMOTES_FILE")"
+            printf "               but is not a git repo, so nothing is committed or pushed\n"
             continue
         fi
 
@@ -76,12 +88,13 @@ coverage() {
         ahead=$(git -C "$dir" rev-list --count '@{u}..HEAD' 2>/dev/null || echo "no-upstream")
         if [ "$ahead" = "no-upstream" ]; then
             unpushed=$((unpushed + 1))
-            printf "  ${YELLOW}⚠${NC} %-12s mapped, but this branch tracks no remote branch\n" "$name"
+            printf "  ${YELLOW}⚠${NC} %-12s layer partly backed up — its branch tracks no remote branch\n" "$name"
         elif [ "$ahead" != "0" ]; then
             unpushed=$((unpushed + 1))
-            printf "  ${YELLOW}⚠${NC} %-12s %s commit(s) exist on no remote\n" "$name" "$ahead"
+            printf "  ${YELLOW}⚠${NC} %-12s layer partly backed up — %s commit(s) are on no git remote\n" \
+                "$name" "$ahead"
         else
-            printf "  ${GREEN}✓${NC} %-12s pushed\n" "$name"
+            printf "  ${GREEN}✓${NC} %-12s layer backed up and pushed\n" "$name"
         fi
     done
 
@@ -91,11 +104,11 @@ coverage() {
         return 0
     fi
     if [ "$unmapped" -eq 0 ] && [ "$unpushed" -eq 0 ]; then
-        echo -e "${GREEN}All $total layer(s) have a remote and are pushed.${NC}"
+        echo -e "${GREEN}All $total environment layer(s) are backed up to a git remote and pushed.${NC}"
         return 0
     fi
-    [ "$unmapped" -gt 0 ] && echo -e "${RED}$unmapped layer(s) have no remote — add them to $(basename "$REMOTES_FILE") and push, or accept that they are local-only.${NC}"
-    [ "$unpushed" -gt 0 ] && echo -e "${YELLOW}$unpushed layer(s) have work that exists nowhere else — bin/env-sync.sh <env> push${NC}"
+    [ "$unmapped" -gt 0 ] && echo -e "${RED}$unmapped environment layer(s) are NOT BACKED UP: no git remote for their environments/<name>/ directory.${NC}" && echo -e "${RED}  This is about backing up the layer's files, not about whether its hosts are reachable.${NC}" && echo "  Add an entry to $(basename "$REMOTES_FILE") and push, or accept that the layer is local-only."
+    [ "$unpushed" -gt 0 ] && echo -e "${YELLOW}$unpushed environment layer(s) have committed work on no git remote — bin/env-sync.sh <env> push${NC}"
     # Reported, not fatal: a scratch or retired layer may be deliberately local,
     # and only the operator knows which. Naming it is the job.
     return 0
