@@ -264,3 +264,123 @@ class TestSingleBranchInvariant:
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert run_sync(cloned_root, ENV_NAME, "status").returncode == 0
+
+
+class TestCoverage:
+    """Which layers are actually backed up anywhere (issue #116, ledger row 20).
+
+    An environment directory absent from the remote map has no remote at all: it
+    exists on exactly one machine and is lost outright in a rebuild, a disk
+    failure or a workstation migration. install.sh counted environments but never
+    cross-checked the map, so the one failure mode that loses data was the one
+    nothing reported. Confirmed on first run — a real layer had no remote.
+    """
+
+    def _add_dir(self, root: Path, name: str, git: bool = False,
+                 mapped: bool = False, bare: Path | None = None) -> Path:
+        d = root / "environments" / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "env.yml").write_text(f"name: {name}\n")
+        if git:
+            git("init", "-b", "main", str(d))
+            git("add", "-A", cwd=d)
+            git("commit", "-m", "seed", cwd=d)
+        if mapped and bare is not None:
+            with (root / ".env-remotes").open("a") as fh:
+                fh.write(f"{name} file://{bare}\n")
+        return d
+
+    def test_a_mapped_and_pushed_layer_is_clean(self, cloned_root):
+        result = run_sync(cloned_root, "coverage")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "pushed" in result.stdout
+        assert "have a remote and are pushed" in result.stdout
+
+    def test_an_unmapped_layer_is_named_with_its_consequence(self, cloned_root):
+        d = cloned_root / "environments" / "orphan"
+        d.mkdir(parents=True)
+        (d / "env.yml").write_text("name: orphan\n")
+
+        result = run_sync(cloned_root, "coverage")
+
+        assert "orphan" in result.stdout
+        assert "no remote" in result.stdout
+        # Stating the consequence is the point — "unmapped" alone means nothing.
+        assert "this machine only" in result.stdout
+
+    def test_a_mapped_directory_that_is_not_a_repo_is_flagged(self, cloned_root):
+        d = cloned_root / "environments" / "notrepo"
+        d.mkdir(parents=True)
+        (d / "env.yml").write_text("name: notrepo\n")
+        with (cloned_root / ".env-remotes").open("a") as fh:
+            fh.write("notrepo file:///nonexistent.git\n")
+
+        result = run_sync(cloned_root, "coverage")
+
+        assert "nothing is committed" in result.stdout
+
+    def test_unpushed_commits_are_reported_with_a_count(self, cloned_root):
+        """Being in the map is necessary, not sufficient: commits that exist on
+        no remote are just as lost."""
+        env = env_dir(cloned_root)
+        (env / "note.md").write_text("local only\n")
+        git("add", "-A", cwd=env)
+        git("commit", "-m", "local work", cwd=env)
+
+        result = run_sync(cloned_root, "coverage")
+
+        assert "1 commit(s) exist on no remote" in result.stdout
+
+    def test_unmapped_and_unpushed_are_reported_distinctly(self, cloned_root):
+        """They need different fixes, so they must not read alike."""
+        env = env_dir(cloned_root)
+        (env / "note.md").write_text("local only\n")
+        git("add", "-A", cwd=env)
+        git("commit", "-m", "local work", cwd=env)
+        orphan = cloned_root / "environments" / "orphan"
+        orphan.mkdir(parents=True)
+
+        result = run_sync(cloned_root, "coverage")
+
+        assert "no remote" in result.stdout
+        assert "exist on no remote" in result.stdout
+        assert "add them to" in result.stdout
+        assert "push" in result.stdout
+
+    def test_example_and_dotted_directories_are_excluded(self, cloned_root):
+        for name in ("example", ".retired"):
+            d = cloned_root / "environments" / name
+            d.mkdir(parents=True)
+            (d / "env.yml").write_text(f"name: {name}\n")
+
+        result = run_sync(cloned_root, "coverage")
+
+        assert "example" not in result.stdout
+        assert ".retired" not in result.stdout
+
+    def test_coverage_reports_without_failing(self, cloned_root):
+        """A scratch or retired layer may be deliberately local, and only the
+        operator knows which. Naming it is the job; failing is not."""
+        (cloned_root / "environments" / "orphan").mkdir(parents=True)
+
+        result = run_sync(cloned_root, "coverage")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_coverage_needs_no_environment_argument(self, cloned_root):
+        """It is a repo-wide question, so it must not require an env name."""
+        result = run_sync(cloned_root, "coverage")
+
+        assert result.returncode == 0
+        assert "Usage" not in result.stdout
+
+    def test_no_environments_directory_is_not_an_error(self, tmp_path):
+        root = tmp_path / "bare"
+        root.mkdir()
+        (root / ".env-remotes").write_text("")
+
+        result = run_sync(root, "coverage")
+
+        assert result.returncode == 0
+        assert "No environments" in result.stdout
