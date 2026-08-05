@@ -23,7 +23,7 @@ If you are NOT in a domain-specific subagent and the task matches one, switch. E
 ## Core Rules
 - **ALWAYS VERIFY** — never assume IPs, credentials, or roles are current.
 - **Data-driven everything** — environment config lives in `environments/<env>/env.yml`. Never hardcode environment names, hostnames, or subnets. Discover them at runtime.
-- **IaC mandatory — Ansible must be able to rebuild the whole infrastructure from
+- **IaC mandatory — Ansible must be able to rebuild the whole infrastructure for a specific environment from
   zero.** That is the objective: emergency restoration, standing up a dev/test
   environment, onboarding a new device — while day-to-day changes stay fast. Every
   repeatable *system/deployment*-state operation (provisioning, packages, services,
@@ -40,7 +40,7 @@ If you are NOT in a domain-specific subagent and the task matches one, switch. E
 - **Hooks auto-setup** — at session start, verify `core.hooksPath` is `.githooks`. If not, run `bash bin/setup-hooks.sh` to ensure consistent commit enforcement across all clones.
 - **Document as you go** — every change to infrastructure MUST be recorded in device YAMLs, docs, or vault in the same session. See `.opencode/rules/document-as-you-go.md`.
 - **Definition of done** — work isn't done until it's triaged, tested, documented, and stub-free. Machine-enforced (new tool→test, new skill→registered, no stubs) by `bin/definition-of-done-guard.py` in pre-commit + CI; the rest is verified at `endsession`. See `.opencode/rules/definition-of-done.md`.
-- **SSH aliases REQUIRED** — never connect by raw IP. Always read `~/.ssh/config` first and use the defined host alias.
+- **SSH aliases REQUIRED** — never connect by raw IP. Always read `~/.ssh/config` first and use the defined host alias or offer to create a new entry if needed.
 
 ## Environment Model
 
