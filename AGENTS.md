@@ -84,6 +84,7 @@ All scripts are data-driven — they read from `environments/$ACTIVE_ENV/env.yml
 | `bin/automation-ladder.py` | Track manual processes → escalate to scripts/playbooks |
 | `bin/lifecycle-processor.py` | Manage lifecycle transitions |
 | `bin/frappe-exec.py` | Sanctioned Path B Frappe/ERPNext exec (SSH + docker exec + bench venv python); see `frappe-access` skill |
+| `mcp/collab-mcp-server.py` | Collaboration-layer self-check: verify every path this file names, report skill/tool drift, propose improvements. **Never edits the governing docs** — run via `bin/mcp-call.py collab --list` |
 | `bin/mcp-run.sh` | Launch an `mcp/` server — or an external one declared in `mcp/external-servers.json` — with secrets resolved from the vault (`--check` validates the launch path without fetching anything) |
 | `bin/suggest-client-tokens.py` | Report client identifiers found in the private layers that `.client-tokens` does not guard (reports only — never writes; its output is client-identifying, keep it local) |
 | `bin/validate-datasets.py` | Validate device records + `env.yml` against `schemas/` (reports by default, `--strict` to fail, `--versions` for schema-version drift) |
@@ -127,9 +128,31 @@ python3 bin/automation-ladder.py sync-agents   # then restart the agent session
 
 Load the relevant skill before working in its domain.
 
+## Two layers — know which one you are changing
+
+This repo contains two different things, and the rules below do not apply equally to
+both. Establish which layer you are in *before* citing any principle.
+
+| Layer | What it is | What governs it |
+|-------|-----------|-----------------|
+| **Product** | What OpsKit does *to environments*: provisioning, devices, services, DNS, records | The Core Rules, the IaC rule, and Development Principle #2's vehicle rule below |
+| **Collaboration surface** | The operator, the agent, and the OpsKit CLI between them: this file, `CLAUDE.md`, `skills/`, `agents/`, harness wiring, self-improvement machinery | **Principle #2 does not apply.** No Ansible dimension exists here. The default vehicle is an **MCP tool**, because that is what an LLM reaches for reliably — discoverable, typed schema, harness-agnostic — and `bin/mcp-call.py` makes MCP tools shell-reachable too, so they are strictly more accessible than a script, not less |
+
+**Why this table exists:** an agent applied Principle #2 to a proposal about improving
+this very file, concluded "script, not MCP tool", and cited the doctrine as though it
+settled the question. It does not — Principle #2 arbitrates how we change *client
+environments*. Changing how the operator and the agent work together is a different
+layer with different risks. See #136.
+
+One risk specific to the collaboration layer: these files are the **control surface for
+agent behaviour**. Verifying them can be automated freely; *rewriting* them cannot — an
+automated edit can silently weaken a hard rule and no test catches a rule that has
+merely been softened. Tools here propose; a human disposes.
+
 ## Development Principles
 
 Set by the project owner; they apply to every session, not per-task.
+**Principle #2's vehicle rule governs the product layer** — see the table above.
 
 1. **Never lose an idea.** An idea that surfaces in conversation and isn't acted
    on immediately gets captured before the session ends — cheapest first:
