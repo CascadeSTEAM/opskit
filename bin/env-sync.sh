@@ -55,7 +55,7 @@ coverage() {
         case "$name" in example|.*) continue ;; esac
         total=$((total + 1))
 
-        url=$(ENV_NAME="$name" awk -v env="$name" \
+        url=$(awk -v env="$name" \
             '$0 !~ /^[[:space:]]*#/ && $1 == env { print $2; exit }' \
             "$REMOTES_FILE" 2>/dev/null || true)
 
