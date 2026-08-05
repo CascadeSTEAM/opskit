@@ -26,14 +26,14 @@
   hosts: "{{ target | default('workstations') }}"
   gather_facts: true
   vars:
-    local_bin: "{{ ansible_env.HOME }}/.local/bin"
+    local_bin: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
 
   tasks:
     - name: Refuse to run on the wrong machine (mandatory for connection=local)
       ansible.builtin.assert:
-        that: ansible_hostname == inventory_hostname
+        that: ansible_facts['hostname'] == inventory_hostname
         fail_msg: >-
-          This machine is {{ ansible_hostname }}, not {{ inventory_hostname }} —
+          This machine is {{ ansible_facts['hostname'] }}, not {{ inventory_hostname }} —
           refusing to run a workstation play meant for another host.
 
     - name: Require pipx

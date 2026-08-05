@@ -12,5 +12,5 @@ php_timezone: "America/Los_Angeles"
 # URLs for Zabbix repo packages
 # For Ubuntu 24.04: https://repo.zabbix.com/zabbix/7.2/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest_7.2+ubuntu24.04_all.deb
 # For Debian 12: https://repo.zabbix.com/zabbix/7.2/release/debian/pool/main/z/zabbix-release/zabbix-release_latest_7.2+debian12_all.deb
-zabbix_repo_url: "https://repo.zabbix.com/zabbix/{{ zabbix_version }}/release/{{ ansible_distribution | lower }}/pool/main/z/zabbix-release/zabbix-release_latest_{{
-  zabbix_version }}+{{ ansible_distribution | lower }}{{ ansible_distribution_major_version }}_all.deb"
+zabbix_repo_url: "https://repo.zabbix.com/zabbix/{{ zabbix_version }}/release/{{ ansible_facts['distribution'] | lower }}/pool/main/z/zabbix-release/zabbix-release_latest_{{
+  zabbix_version }}+{{ ansible_facts['distribution'] | lower }}{{ ansible_facts['distribution_major_version'] }}_all.deb"

@@ -19,10 +19,10 @@
 
   vars:
     # Override with -e opskit_repo_root=/path/to/checkout if the repo lives elsewhere
-    repo_root: "{{ opskit_repo_root | default(ansible_env.HOME + '/Projects/opskit') }}"
+    repo_root: "{{ opskit_repo_root | default(ansible_facts['env']['HOME'] + '/Projects/opskit') }}"
     venv_python: "{{ repo_root }}/.venv/bin/python3"
     service_name: lifecycle-processor
-    systemd_user_dir: "{{ ansible_env.HOME }}/.config/systemd/user"
+    systemd_user_dir: "{{ ansible_facts['env']['HOME'] }}/.config/systemd/user"
     restart_only: false
 
   tasks:

@@ -25,9 +25,9 @@
   tasks:
     - name: Refuse to run on the wrong machine (mandatory for connection=local)
       ansible.builtin.assert:
-        that: ansible_hostname == inventory_hostname
+        that: ansible_facts['hostname'] == inventory_hostname
         fail_msg: >-
-          This machine is {{ ansible_hostname }}, not {{ inventory_hostname }} —
+          This machine is {{ ansible_facts['hostname'] }}, not {{ inventory_hostname }} —
           refusing to run a workstation play meant for another host.
 
     - name: Update apt cache
