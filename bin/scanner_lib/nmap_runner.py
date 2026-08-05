@@ -50,6 +50,64 @@ def check_nmap() -> bool:
     return shutil.which('nmap') is not None
 
 
+def is_privileged() -> bool:
+    """Returns True if running with root privileges (ARP scans work)."""
+    return os.geteuid() == 0
+
+
+def is_local_subnet(network: str) -> bool:
+    """
+    Returns True if this machine is directly attached to `network` —
+    the case where nmap discovery uses ARP and therefore needs root
+    for MAC/vendor data.
+
+    Detection: ask the kernel which source address it would use to reach
+    the subnet (UDP connect() does not send any packet), then check
+    whether that address lies inside the subnet itself.
+    """
+    import ipaddress
+    import socket
+    try:
+        net = ipaddress.ip_network(network, strict=False)
+    except ValueError:
+        return False
+    # iter() because hosts() returns a plain list for /32 and /31 networks
+    probe_ip = str(next(iter(net.hosts()), net.network_address))
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect((probe_ip, 9))
+            local_ip = ipaddress.ip_address(s.getsockname()[0])
+    except OSError:
+        return False
+    return local_ip in net
+
+
+def unprivileged_scan_warning(subnets: list[str],
+                              privileged: bool,
+                              use_sudo: bool) -> Optional[str]:
+    """
+    Returns a warning message if scanning would silently lose ARP-level
+    data (issue #141), or None when the scan is fine as-is.
+
+    Local-subnet discovery without root writes device YAMLs with empty
+    MAC addresses and no vendor — a silent degradation, not a failure.
+    """
+    if privileged or use_sudo:
+        return None
+    local = [s for s in subnets if is_local_subnet(s)]
+    if not local:
+        return None
+    return (
+        "  ! UNPRIVILEGED LOCAL-SUBNET SCAN — MAC addresses and vendors "
+        "will be MISSING\n"
+        f"    Directly-attached subnet(s): {', '.join(local)}\n"
+        "    nmap needs root for ARP-level discovery on the local LAN; "
+        "without it the\n"
+        "    device YAMLs are written with empty MACs and no vendor data.\n"
+        "    Fix: re-run as `opskit scan --sudo` (or as root)."
+    )
+
+
 def _run(cmd: list[str], timeout: int = 300) -> tuple[str, str, int]:
     """Run a command, return (stdout, stderr, returncode)."""
     try:

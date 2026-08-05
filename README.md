@@ -49,6 +49,7 @@ Phase 4 — Resolve uplinks via router bridge/LLDP, validate chains
 ```
 
 ```bash
+opskit scan --sudo             # nmap via sudo (MAC/vendor data on local subnets)
 opskit scan --dry-run          # preview, no network access
 opskit scan --discover-only    # nmap discovery only
 opskit scan --enrich-only      # re-run enrichment on existing data
