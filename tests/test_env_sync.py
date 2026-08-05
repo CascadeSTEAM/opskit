@@ -191,3 +191,76 @@ class TestArgs:
         result = run_sync(fixture_root, ENV_NAME, "frobnicate")
         assert result.returncode != 0
         assert "Unknown action" in result.stdout
+
+
+class TestSingleBranchInvariant:
+    """An environment layer is a monolithic record, not a codebase — one branch.
+
+    Regression: an env layer accumulated 26 commits of session notes and device
+    records on an unmerged feature branch. None of it was on the default branch,
+    so no other clone could see any of it, and a force-push or a deleted branch
+    would have taken the lot. Branching an operational record defeats the point
+    of committing it.
+    """
+
+    def _branch_off(self, root: Path, name: str = "feat/stray") -> None:
+        git("checkout", "-b", name, cwd=env_dir(root))
+
+    def test_push_refuses_from_a_non_default_branch(self, cloned_root):
+        self._branch_off(cloned_root)
+        (env_dir(cloned_root) / "note.md").write_text("stranded\n")
+
+        result = run_sync(cloned_root, ENV_NAME, "push", "--commit", "note")
+
+        assert result.returncode != 0
+        assert "not 'main'" in result.stderr
+        assert "monolithic" in result.stderr
+
+    def test_the_refusal_says_how_to_fold_the_branch_back_in(self, cloned_root):
+        self._branch_off(cloned_root)
+
+        result = run_sync(cloned_root, ENV_NAME, "push")
+
+        assert "merge --ff-only" in result.stderr
+        assert "branch -d" in result.stderr
+
+    def test_push_refuses_before_committing_anything(self, cloned_root):
+        """The guard must run before the --commit convenience, or it would
+        create the stranded commit it exists to prevent."""
+        self._branch_off(cloned_root)
+        (env_dir(cloned_root) / "note.md").write_text("stranded\n")
+
+        run_sync(cloned_root, ENV_NAME, "push", "--commit", "should not happen")
+
+        log = subprocess.run(
+            ["git", "log", "--oneline"], cwd=env_dir(cloned_root),
+            capture_output=True, text=True,
+        ).stdout
+        assert "should not happen" not in log
+
+    def test_pull_refuses_from_a_non_default_branch(self, cloned_root):
+        self._branch_off(cloned_root)
+
+        result = run_sync(cloned_root, ENV_NAME, "pull")
+
+        assert result.returncode != 0
+        assert "monolithic" in result.stderr
+
+    def test_status_reports_a_stray_branch_without_failing(self, cloned_root):
+        """status is diagnostic — being told the layer is stranded is the whole
+        reason to run it, so it reports rather than refuses."""
+        self._branch_off(cloned_root)
+
+        result = run_sync(cloned_root, ENV_NAME, "status")
+
+        assert result.returncode == 0
+        assert "expected main" in result.stdout
+        assert "invisible to other clones" in result.stdout
+
+    def test_the_happy_path_is_unaffected(self, cloned_root):
+        (env_dir(cloned_root) / "note.md").write_text("on main\n")
+
+        result = run_sync(cloned_root, ENV_NAME, "push", "--commit", "a note")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert run_sync(cloned_root, ENV_NAME, "status").returncode == 0

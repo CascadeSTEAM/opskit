@@ -94,6 +94,37 @@ env_git() {
     git -C "$ENV_DIR" "$@"
 }
 
+# An environment layer is a monolithic record of one environment, not a codebase.
+# There is nothing to review, nothing to release, and no second contributor to
+# isolate from — so it has exactly one branch. Feature branches here do not add
+# safety, they add a place for the operational record to get stranded: an env
+# layer once accumulated 26 commits of session notes and device records on an
+# unmerged branch, all of it invisible on the default branch and one force-push
+# from gone. Committed history is the backup; branching it defeats that.
+default_branch() {
+    env_git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null \
+        | sed 's|^origin/||' \
+        || true
+}
+
+require_default_branch() {
+    local current expected
+    current=$(env_git rev-parse --abbrev-ref HEAD)
+    expected=$(default_branch)
+    [ -n "$expected" ] || expected="main"
+
+    [ "$current" = "$expected" ] && return 0
+
+    echo -e "${RED}Environment '$ENV_NAME' is on branch '$current', not '$expected'.${NC}" >&2
+    echo "  Environment layers are monolithic — one branch, always $expected." >&2
+    echo "  Anything committed elsewhere is invisible to every other clone." >&2
+    echo "  Fold it back in:" >&2
+    echo "    git -C $ENV_DIR checkout $expected" >&2
+    echo "    git -C $ENV_DIR merge --ff-only $current" >&2
+    echo "    git -C $ENV_DIR branch -d $current" >&2
+    exit 1
+}
+
 # ── Actions ────────────────────────────────────────────────────────────────────
 case "$ACTION" in
     clone)
@@ -114,12 +145,14 @@ case "$ACTION" in
 
     pull)
         require_env_repo
+        require_default_branch
         echo -e "${GREEN}Pulling environment '$ENV_NAME'...${NC}"
         env_git pull --ff-only
         ;;
 
     push)
         require_env_repo
+        require_default_branch
         if [ -n "$(env_git status --porcelain)" ]; then
             if [ -z "$COMMIT_MSG" ]; then
                 echo -e "${RED}Environment repo has uncommitted changes — refusing to push.${NC}"
@@ -133,7 +166,7 @@ case "$ACTION" in
             env_git commit -m "$COMMIT_MSG"
         fi
         echo -e "${GREEN}Pushing environment '$ENV_NAME'...${NC}"
-        env_git push origin HEAD
+        env_git push origin "$(env_git rev-parse --abbrev-ref HEAD)"
         ;;
 
     status)
@@ -142,7 +175,15 @@ case "$ACTION" in
         echo -e "${GREEN}Environment: $ENV_NAME${NC}"
         echo "  Path:   $ENV_DIR"
         echo "  Remote: $REMOTE_URL"
-        echo "  Branch: $branch"
+        expected_branch=$(default_branch)
+        [ -n "$expected_branch" ] || expected_branch="main"
+        if [ "$branch" = "$expected_branch" ]; then
+            echo "  Branch: $branch"
+        else
+            # Reported, not refused — status is diagnostic, and being told the
+            # layer is stranded is the whole reason to run it.
+            echo -e "  ${YELLOW}Branch: $branch (expected $expected_branch — commits here are invisible to other clones)${NC}"
+        fi
         if [ -n "$(env_git status --porcelain)" ]; then
             echo -e "  ${YELLOW}Working tree: dirty${NC}"
             env_git status --short | sed 's/^/    /'
