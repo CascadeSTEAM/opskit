@@ -3,14 +3,9 @@
   "$id": "https://github.com/CascadeSTEAM/opskit/schemas/device.schema.json",
   "x-opskit-schema-version": 1,
   "title": "opskit Device Schema",
-  "description": "Schema for environments/<env>/datasets/devices/*.yml \u2014 a single device record.",
+  "description": "Schema for environments/<env>/datasets/devices/*.yml — a single device record.",
   "type": "object",
-  "required": [
-    "name",
-    "status",
-    "owner",
-    "maturity"
-  ],
+  "required": ["name", "status", "owner", "maturity"],
   "properties": {
     "name": {
       "type": "string",
@@ -32,53 +27,20 @@
     },
     "role": {
       "type": "string",
-      "enum": [
-        "router",
-        "switch",
-        "server",
-        "workstation",
-        "access-point",
-        "printer",
-        "camera",
-        "iot",
-        "vm",
-        "container",
-        "unknown"
-      ],
+      "enum": ["router", "switch", "server", "workstation", "access-point", "printer", "camera", "iot", "vm", "container", "unknown"],
       "description": "Device role."
     },
-    "os": {
-      "type": "string",
-      "description": "Operating system."
-    },
-    "os_version": {
-      "type": "string",
-      "description": "OS version string."
-    },
-    "hardware": {
-      "type": "string",
-      "description": "Hardware model."
-    },
-    "serial": {
-      "type": "string"
-    },
+    "os": {"type": "string", "description": "Operating system."},
+    "os_version": {"type": "string", "description": "OS version string."},
+    "hardware": {"type": "string", "description": "Hardware model."},
+    "serial": {"type": "string"},
     "status": {
       "type": "string",
-      "enum": [
-        "active",
-        "standby",
-        "maintenance",
-        "decommissioned",
-        "unknown"
-      ],
+      "enum": ["active", "standby", "maintenance", "decommissioned", "unknown"],
       "description": "Operational status."
     },
-    "site": {
-      "type": "string"
-    },
-    "location": {
-      "type": "string"
-    },
+    "site": {"type": "string"},
+    "location": {"type": "string"},
     "owner": {
       "type": "string",
       "description": "Environment name that owns this device."
@@ -91,39 +53,23 @@
     },
     "vlans": {
       "type": "array",
-      "items": {
-        "type": "integer",
-        "minimum": 1,
-        "maximum": 4094
-      }
+      "items": {"type": "integer", "minimum": 1, "maximum": 4094}
     },
     "services": {
       "type": "array",
-      "items": {
-        "type": "string"
-      }
+      "items": {"type": "string"}
     },
     "tags": {
       "type": "array",
-      "items": {
-        "type": "string"
-      }
+      "items": {"type": "string"}
     },
-    "notes": {
-      "type": "string"
-    },
+    "notes": {"type": "string"},
     "monitoring": {
       "type": "object",
       "properties": {
-        "zabbix_agent": {
-          "type": "boolean"
-        },
-        "zabbix_tier": {
-          "type": "string"
-        },
-        "snmp": {
-          "type": "boolean"
-        }
+        "zabbix_agent": {"type": "boolean"},
+        "zabbix_tier": {"type": "string"},
+        "snmp": {"type": "boolean"}
       }
     },
     "mikromcp": {
@@ -138,11 +84,7 @@
           "type": "string",
           "description": "Why the device is excluded. Required in practice when enabled is false."
         },
-        "port": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 65535
-        },
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
         "tls": {
           "type": "boolean",
           "description": "Use HTTPS. Defaults the port to 443 and turns on certificate verification, since claiming TLS while skipping verification is worse than plain HTTP."
@@ -151,42 +93,24 @@
           "type": "boolean",
           "description": "Verify the certificate. Set false only for an explicitly pinned self-signed cert, and say so in the record body."
         },
-        "ssh_port": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 65535
-        }
+        "ssh_port": {"type": "integer", "minimum": 1, "maximum": 65535}
       },
       "additionalProperties": false
     },
     "bmc": {
       "type": "object",
       "properties": {
-        "type": {
-          "type": "string"
-        },
-        "ip": {
-          "type": "string"
-        }
+        "type": {"type": "string"},
+        "ip": {"type": "string"}
       }
     },
     "procurement": {
       "type": "object",
       "properties": {
-        "vendor": {
-          "type": "string"
-        },
-        "purchase_date": {
-          "type": "string",
-          "format": "date"
-        },
-        "cost": {
-          "type": "number"
-        },
-        "warranty_until": {
-          "type": "string",
-          "format": "date"
-        }
+        "vendor": {"type": "string"},
+        "purchase_date": {"type": "string", "format": "date"},
+        "cost": {"type": "number"},
+        "warranty_until": {"type": "string", "format": "date"}
       }
     },
     "contacts": {
@@ -194,29 +118,17 @@
       "items": {
         "type": "object",
         "properties": {
-          "name": {
-            "type": "string"
-          },
-          "role": {
-            "type": "string"
-          },
-          "email": {
-            "type": "string",
-            "format": "email"
-          }
+          "name": {"type": "string"},
+          "role": {"type": "string"},
+          "email": {"type": "string", "format": "email"}
         }
       }
     },
     "decommission": {
       "type": "object",
       "properties": {
-        "plan": {
-          "type": "string"
-        },
-        "eol_date": {
-          "type": "string",
-          "format": "date"
-        }
+        "plan": {"type": "string"},
+        "eol_date": {"type": "string", "format": "date"}
       }
     }
   }

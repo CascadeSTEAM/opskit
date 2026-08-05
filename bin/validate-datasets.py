@@ -86,7 +86,9 @@ def environments(repo_root: Path, only: str | None = None) -> list[Path]:
         return []
     out = []
     for d in sorted(base.iterdir()):
-        if not d.is_dir() or d.name == "example":
+        # "example" is the committed template. Dotted names are not environments:
+        # a `.retired` directory showed up as one on first run.
+        if not d.is_dir() or d.name == "example" or d.name.startswith("."):
             continue
         if only and d.name != only:
             continue

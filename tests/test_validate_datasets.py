@@ -305,3 +305,14 @@ def test_env_flag_limits_the_run(tmp_path):
 
     assert result.returncode == 0
     assert "other" not in result.stdout
+
+
+def test_dotted_directories_are_not_environments(tmp_path):
+    """A `.retired` directory was reported as a lagging environment on first run."""
+    root = _make_root(tmp_path)
+    _record(_env(root, "acme"), "gw-01", VALID)
+    _env(root, ".retired")
+
+    result = _run(root, "--versions")
+
+    assert ".retired" not in result.stdout
