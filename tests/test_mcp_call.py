@@ -257,3 +257,96 @@ def test_a_server_that_dies_reports_its_stderr(tmp_path):
     assert result.returncode == 1
     assert "without responding" in result.stderr
     assert "cannot resolve credentials" in result.stderr
+
+
+# ── liveness probe (issue #112) ───────────────────────────────────────────────
+# mcp-run.sh --check validates the launch path and structurally cannot go
+# further. A server that parses its config and then rejects it — as the Proxmox
+# one does — looks identical to a healthy one from outside: launch path valid,
+# tools absent. Absent tools read as an agent declining to help, which is how
+# that stayed unnoticed. The probe starts each server for real.
+
+def test_probe_reports_a_healthy_server_with_its_tool_count(tmp_path):
+    result = _run(_make_root(tmp_path, servers="stub"), "--probe")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "OK" in result.stdout
+    assert "2 tools" in result.stdout
+
+
+def test_probe_reports_a_server_that_dies_during_startup(tmp_path):
+    """The Proxmox case: it exits during config validation, so --check is clean
+    and the tools are simply absent."""
+    root = _make_root(tmp_path, server_body=(
+        'import sys\n'
+        'print("Insecure TLS configuration blocked", file=sys.stderr)\n'
+        'sys.exit(1)\n'
+    ), servers="stub")
+
+    result = _run(root, "--probe")
+
+    assert result.returncode == 1
+    assert "FAIL" in result.stdout
+    # The cause must be quoted, or the report is no better than silence.
+    assert "Insecure TLS configuration blocked" in result.stdout
+
+
+def test_probe_fails_a_server_that_starts_but_exposes_no_tools(tmp_path):
+    """Serving zero tools is indistinguishable from being absent, to a caller."""
+    root = _make_root(tmp_path, server_body=STUB_SERVER.replace(
+        'TOOLS = [', 'TOOLS = []\nUNUSED = ['), servers="stub")
+
+    result = _run(root, "--probe")
+
+    assert result.returncode == 1
+    assert "no tools" in result.stdout
+
+
+def test_probe_checks_every_server_and_exits_nonzero_if_any_fails(tmp_path):
+    """One bad server must not mask the others, nor they it."""
+    root = _make_root(tmp_path, servers="stub stub2")
+
+    result = _run(root, "--probe")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.count("OK") == 2
+    assert "All 2 server(s)" in result.stdout
+
+
+def test_probe_can_target_a_single_server(tmp_path):
+    result = _run(_make_root(tmp_path, servers="stub other"), "stub", "--probe")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "stub" in result.stdout
+    assert "other" not in result.stdout
+
+
+def test_a_server_that_never_answers_times_out_instead_of_hanging(tmp_path):
+    """Regression: readline on a pipe ignores the socket-style timeout, so a
+    server that starts and then goes quiet blocked forever."""
+    root = _make_root(tmp_path, server_body=(
+        'import time\n'
+        'time.sleep(300)\n'
+    ), servers="stub")
+
+    result = _run(root, "stub", "--probe", "--timeout", "3")
+
+    assert result.returncode == 1
+    assert "did not respond within" in result.stdout
+
+
+def test_probe_failure_warns_that_output_may_contain_secrets(tmp_path):
+    """The quoted stderr is this probe's whole value and also its one leak path:
+    a server dying while handling credentials can put them in a traceback. The
+    warning belongs at the point of use, not only in a docstring."""
+    root = _make_root(tmp_path, server_body=(
+        'import sys\n'
+        'print("boom", file=sys.stderr)\n'
+        'sys.exit(1)\n'
+    ), servers="stub")
+
+    result = _run(root, "--probe")
+
+    assert result.returncode == 1
+    assert "may contain credentials" in result.stderr
+    assert "public issue" in result.stderr
