@@ -75,7 +75,7 @@ All scripts are data-driven — they read from `environments/$ACTIVE_ENV/env.yml
 
 | Script | Purpose |
 |--------|---------|
-| `bin/switch-env.sh <env>` | Set ACTIVE_ENV, probe connectivity |
+| `bin/switch-env.sh <env>` | Set ACTIVE_ENV in `.env`, probe connectivity. **An exported `ACTIVE_ENV` pins a session and wins over `.env`** — use it when two sessions share a clone, or one will change the other's environment mid-task |
 | `bin/env-sync.sh <env> <action>` | Sync `environments/<env>/` against its private repo (clone/pull/push/status; map in gitignored `.env-remotes`). Environment layers are single-branch — pull/push refuse from anything but the default branch. `coverage` reports which layers have no remote or unpushed work |
 | `bin/check-connectivity.sh [env]` | Probe all connectivity targets from env.yml |
 | `bin/ap.sh <playbook>` | Run Ansible playbook with `--limit` scoped to ACTIVE_ENV |

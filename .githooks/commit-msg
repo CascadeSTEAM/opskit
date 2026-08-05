@@ -10,11 +10,11 @@ COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
 # bin/publication-guard.sh so local hooks and CI cannot drift.
 bash bin/publication-guard.sh --message-file "$COMMIT_MSG_FILE"
 
-# Detect ACTIVE_ENV from .env (site repo context)
-ACTIVE_ENV=""
-if [ -f ".env" ]; then
-    ACTIVE_ENV=$(grep "^ACTIVE_ENV=" .env 2>/dev/null | cut -d= -f2 | tr -d '"')
-fi
+# Resolve ACTIVE_ENV through the shared resolver, so an exported ACTIVE_ENV pins
+# this session (opskit #126). This hook is the one that misfired: a concurrent
+# session flipped .env and a commit was checked against the wrong environment's
+# ticket prefix.
+ACTIVE_ENV=$(python3 bin/active_env.py 2>/dev/null || true)
 
 # Only enforce if we can resolve an environment and it has a ticket prefix
 if [ -z "$ACTIVE_ENV" ]; then
