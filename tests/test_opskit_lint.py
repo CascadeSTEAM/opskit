@@ -59,7 +59,7 @@ def test_lint_flags_missing_device_yaml(tmp_path):
     result = run_lint(tmp_path)
     assert result.returncode == 1
     assert "srv-02" in result.stdout
-    assert "no datasets/devices/srv-02.yml" in result.stdout
+    assert "no datasets/devices/srv-02" in result.stdout
     assert "2/3 inventory hosts" in result.stdout
 
 
@@ -77,7 +77,7 @@ def test_lint_warns_on_orphan_device_yaml(tmp_path):
     assert result.returncode == 0, result.stderr
     assert "old-box" in result.stdout
     assert "no inventory host" in result.stdout
-    assert "1 orphan device YAML" in result.stdout
+    assert "1 orphan device record" in result.stdout
 
 
 def test_lint_missing_inventory_fails(tmp_path):
@@ -114,3 +114,78 @@ def test_lint_unknown_env_fails(tmp_path):
     (tmp_path / "environments").mkdir()
     result = run_lint(tmp_path, env="nope")
     assert result.returncode == 1
+
+
+# ── device records are not always .yml (issue #114, ledger row 23) ─────────────
+# The glob was hardcoded to '*.yml' while env.yml declares the real extension via
+# source_of_truth.format. For a layer storing devices as .md with YAML front
+# matter, every inventory host read as missing and lint exited 1 — it had never
+# passed there. A check whose output is always wrong teaches people to ignore it.
+
+def make_env_with_ext(tmp_path: Path, inventory: str, devices: list[str],
+                      ext: str, sot_format: str | None = None) -> Path:
+    env_dir = tmp_path / "environments" / "acme"
+    (env_dir / "ansible").mkdir(parents=True)
+    (env_dir / "datasets" / "devices").mkdir(parents=True)
+    env_yml = "name: acme\n"
+    if sot_format:
+        env_yml += f"source_of_truth:\n  type: git-yaml\n  format: {sot_format}\n"
+    (env_dir / "env.yml").write_text(env_yml)
+    (env_dir / "ansible" / "inventory.yml").write_text(inventory)
+    for host in devices:
+        body = (f"---\nname: {host}\nhostname: {host}\n---\n" if ext == "md"
+                else f"hostname: {host}\n")
+        (env_dir / "datasets" / "devices" / f"{host}.{ext}").write_text(body)
+    return env_dir
+
+
+INVENTORY_FLAT = """\
+all:
+  children:
+    acme:
+      hosts:
+        gw-01:
+        srv-01:
+"""
+
+
+def test_lint_accepts_md_front_matter_records(tmp_path):
+    make_env_with_ext(tmp_path, INVENTORY_FLAT, ["gw-01", "srv-01"],
+                      ext="md", sot_format="md")
+
+    result = run_lint(tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2/2" in result.stdout
+
+
+def test_lint_accepts_yaml_extension(tmp_path):
+    make_env_with_ext(tmp_path, INVENTORY_FLAT, ["gw-01", "srv-01"], ext="yaml")
+
+    result = run_lint(tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_lint_accepts_a_half_migrated_layer(tmp_path):
+    """Both extensions count regardless of the declared format: the declared
+    format says what the layer is converging on, and failing a mid-migration
+    layer breaks the check exactly when it is most useful."""
+    env_dir = make_env_with_ext(tmp_path, INVENTORY_FLAT, ["gw-01"],
+                                ext="md", sot_format="md")
+    (env_dir / "datasets" / "devices" / "srv-01.yml").write_text("hostname: srv-01\n")
+
+    result = run_lint(tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2/2" in result.stdout
+
+
+def test_lint_still_reports_a_genuinely_missing_record(tmp_path):
+    """The fix must not turn the check into one that always passes either."""
+    make_env_with_ext(tmp_path, INVENTORY_FLAT, ["gw-01"], ext="md", sot_format="md")
+
+    result = run_lint(tmp_path)
+
+    assert result.returncode == 1
+    assert "srv-01" in result.stdout
