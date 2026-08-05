@@ -9,11 +9,16 @@
 #      (whitespace/comma separated — CI injects this from a repo secret,
 #      since the token list itself must never be published)
 #   3. (--messages) No client tokens in commit messages of a range
+#   4. (--branch) No client tokens in a branch name. A branch name is published
+#      the moment it is pushed: it shows up in the remote branch list, in CI logs
+#      and in notifications, before any merge, and survives in forks and clones
+#      after deletion. The commit-message guard never sees it.
 #
 # Usage:
 #   bin/publication-guard.sh --cached              # staged changes (pre-commit)
 #   bin/publication-guard.sh <base>...<head>       # a diff range (CI)
 #   bin/publication-guard.sh --messages <range>    # commit messages of a range
+#   bin/publication-guard.sh --branch [name]       # a branch name (default: HEAD)
 #
 # Overrides (reviewed false positives only):
 #   ALLOW_PRIVATE_IPS=1   skip check 1
@@ -60,6 +65,34 @@ check_message_text() {
     fi
     return 0
 }
+
+if [ "$MODE" = "--branch" ]; then
+    # Default to the current branch so a bare --branch is useful interactively.
+    BRANCH="${2:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")}"
+    if [ -z "$BRANCH" ] || [ "$BRANCH" = "HEAD" ]; then
+        # Detached HEAD has no name to leak.
+        exit 0
+    fi
+    if [ "${ALLOW_CLIENT_TOKENS:-0}" = "1" ]; then exit 0; fi
+    fail=0
+    for tok in $(collect_tokens); do
+        if echo "$BRANCH" | grep -qiE "\b${tok}\b"; then
+            echo "ERROR: branch name '${BRANCH}' contains the client token '${tok}'."
+            fail=1
+        fi
+    done
+    if [ "$fail" -ne 0 ]; then
+        echo "A branch name is published as soon as it is pushed — it appears in the"
+        echo "remote branch list, CI logs and notifications, and survives in forks"
+        echo "and clones even after the branch is deleted."
+        echo "Rename it before pushing:"
+        echo "  git branch -m <generic-name>"
+        echo "See docs/client-data-policy.md. Reviewed false positive?"
+        echo "Override with ALLOW_CLIENT_TOKENS=1."
+        exit 1
+    fi
+    exit 0
+fi
 
 if [ "$MODE" = "--messages" ]; then
     RANGE="${2:?usage: publication-guard.sh --messages <range>}"
