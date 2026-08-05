@@ -1,0 +1,183 @@
+---
+# ansible/playbooks/mikrotik-provision-mcp-readonly-user.yml
+#
+# Provisions the scoped read-only RouterOS API user that mikromcp authenticates
+# with, plus the group that constrains it.
+#
+# ── Why this playbook exists, and why it is Ansible ──────────────────────────
+#
+# AGENTS.md routes all RouterOS work through the @mikrotik subagent, which is
+# restricted to mikromcp_* tools. mikromcp *can* do this (manage_user_group,
+# manage_user), so this playbook does not exist because Ansible is the only way.
+# It exists because the IaC rule is explicit that it must:
+#
+#   "A domain having an MCP tool does NOT replace its playbook — the playbook is
+#    the rebuild path, the MCP tool is for diagnosis and ad-hoc change."
+#
+# The account this creates is the one mikromcp itself logs in with. Without a
+# rebuild path, a router restored from zero comes back with no way for the
+# sanctioned tool to reach it — the chicken-and-egg case #94 asks to be stated
+# explicitly. That is the exemption: this playbook bootstraps the very access
+# mikromcp depends on, so it may talk to RouterOS directly.
+#
+# This is a *rebuild* path, not the day-to-day path. Ad-hoc user changes go
+# through mikromcp; if you make one, reflect it here in the same session or the
+# rebuild path rots (.opencode/rules/iac-required.md).
+#
+# ── Provenance ────────────────────────────────────────────────────────────────
+#
+# The account already exists on one router, created 2026-07 under a ticket
+# recorded privately, and its vault item credited a playbook of this name —
+# which was never committed.
+# opskit #105 found the gap; ledger row 29 tracks it. The policy string below is
+# not invented: it was read off that live router with mikromcp list_user_groups,
+# so a rebuild reproduces what is actually deployed.
+#
+# ── Verification status ───────────────────────────────────────────────────────
+#
+# Module argument shapes here are NOT yet verified against hardware. The sibling
+# playbook mikrotik-configure-rest-api.yml is broken in exactly that way (#94),
+# so this one deliberately avoids community.routeros.api_modify: that module
+# converges a whole path against a `data` list, and pointed at `user` a wrong
+# payload can remove every other account on the device. Instead it reads with
+# api_info and adds with api, which cannot delete anything.
+#
+# Verify against #94's RouterOS CHR lab VM before running on production gear.
+# Run with --check first regardless; the add tasks are guarded by api_info reads
+# so a check run is read-only.
+#
+# ── Usage ─────────────────────────────────────────────────────────────────────
+#
+#   ansible-playbook ansible/playbooks/mikrotik-provision-mcp-readonly-user.yml \
+#     -e mikrotik_host=<router-ip> \
+#     -e mikrotik_admin_user=<admin> \
+#     -e mikrotik_admin_password=<from-vault> \
+#     -e mcp_user_password=<from-vault> \
+#     --check
+#
+# Store mcp_user_password in the vault FIRST and pass it in. This playbook does
+# not generate credentials: a generated password would have to be persisted
+# somewhere to be usable afterwards, which is the hard rule in
+# .opencode/rules/no-plaintext-creds.md. Same reasoning as the sibling playbook.
+
+- name: Provision the scoped read-only RouterOS API user for mikromcp
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    mcp_user: "mcp-claude"
+    mcp_group: "mcp-readonly"
+
+    # Read from the deployed router, not composed by hand. read+api+rest-api is
+    # everything mikromcp's read tools need; every other policy is explicitly
+    # negated so a future RouterOS default cannot silently widen the account.
+    mcp_group_policy: >-
+      read,api,rest-api,!local,!telnet,!ssh,!ftp,!reboot,!write,!policy,
+      !test,!winbox,!password,!web,!sniff,!sensitive,!romon
+
+    # REST is plaintext HTTP until www-ssl is enabled (#94, #105 item 1). When
+    # that lands, flip this and the credential stops crossing the wire in clear.
+    mikrotik_tls: false
+
+  tasks:
+    - name: Require the credentials this playbook refuses to invent
+      ansible.builtin.assert:
+        that:
+          - mikrotik_host is defined
+          - mikrotik_admin_password is defined
+          - mcp_user_password is defined
+          - mcp_user_password | length >= 16
+        fail_msg: >-
+          mikrotik_host, mikrotik_admin_password and mcp_user_password (>=16
+          chars) are all required. Create the API user's password in the vault
+          first and pass it with -e; this playbook does not generate or persist
+          credentials.
+
+    - name: Warn when the admin credential will cross the network in clear
+      ansible.builtin.debug:
+        msg: >-
+          TLS is off, so this run sends the router admin password over plaintext
+          HTTP. Acceptable only on a trusted segment. Track #94 (www-ssl) and
+          #105 item 1.
+      when: not mikrotik_tls
+
+    - name: Read the existing user groups
+      community.routeros.api_info:
+        hostname: "{{ mikrotik_host }}"
+        username: "{{ mikrotik_admin_user | default('admin') }}"
+        password: "{{ mikrotik_admin_password }}"
+        tls: "{{ mikrotik_tls }}"
+        validate_certs: "{{ mikrotik_tls }}"
+        path: user group
+      register: existing_groups
+      check_mode: false
+
+    - name: Create the read-only group
+      community.routeros.api:
+        hostname: "{{ mikrotik_host }}"
+        username: "{{ mikrotik_admin_user | default('admin') }}"
+        password: "{{ mikrotik_admin_password }}"
+        tls: "{{ mikrotik_tls }}"
+        validate_certs: "{{ mikrotik_tls }}"
+        path: user group
+        add: >-
+          name={{ mcp_group }}
+          policy={{ mcp_group_policy | regex_replace('\s+', '') }}
+      when:
+        - mcp_group not in (existing_groups.result | map(attribute='name') | list)
+        - not ansible_check_mode
+      changed_when: true
+
+    - name: Read the existing users
+      community.routeros.api_info:
+        hostname: "{{ mikrotik_host }}"
+        username: "{{ mikrotik_admin_user | default('admin') }}"
+        password: "{{ mikrotik_admin_password }}"
+        tls: "{{ mikrotik_tls }}"
+        validate_certs: "{{ mikrotik_tls }}"
+        path: user
+      register: existing_users
+      check_mode: false
+
+    - name: Create the read-only API user
+      community.routeros.api:
+        hostname: "{{ mikrotik_host }}"
+        username: "{{ mikrotik_admin_user | default('admin') }}"
+        password: "{{ mikrotik_admin_password }}"
+        tls: "{{ mikrotik_tls }}"
+        validate_certs: "{{ mikrotik_tls }}"
+        path: user
+        add: >-
+          name={{ mcp_user }}
+          group={{ mcp_group }}
+          password={{ mcp_user_password }}
+          comment=mikromcp read-only API access (opskit)
+          disabled=no
+      when:
+        - mcp_user not in (existing_users.result | map(attribute='name') | list)
+        - not ansible_check_mode
+      no_log: true
+      changed_when: true
+
+    - name: Verify the new account can reach the REST API
+      ansible.builtin.uri:
+        url: "{{ 'https' if mikrotik_tls else 'http' }}://{{ mikrotik_host }}/rest/system/resource"
+        user: "{{ mcp_user }}"
+        password: "{{ mcp_user_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ mikrotik_tls }}"
+        return_content: true
+      register: rest_check
+      when: not ansible_check_mode
+      no_log: true
+
+    - name: Report the provisioned account
+      ansible.builtin.debug:
+        msg: >-
+          {{ mcp_user }}@{{ mikrotik_host }} reached the REST API — RouterOS
+          {{ (rest_check.json | default({})).version | default('unknown') }}.
+          Store this credential in the vault and map it in
+          mcp/vault-map.local.json under 'mikromcp' as <PREFIX>_USER/_PASS,
+          then confirm with: mikromcp doctor
+      when: not ansible_check_mode
