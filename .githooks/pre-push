@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# opskit pre-push hook — the last check before anything becomes public.
+#
+# A branch name is published the instant it is pushed: it appears in the remote's
+# branch list, in the PR interface, in CI logs and in notifications, before any
+# review and before any merge. It also survives in forks and clones after the
+# branch is deleted. Nothing else in the guard chain sees it — pre-commit checks
+# content and paths, commit-msg checks the message, and neither knows the name of
+# the branch they are on (opskit #118, ledger row 7).
+#
+# Push time is the right moment, and the only one. Blocking `git checkout -b`
+# would fail on names that never leave the machine, and a guard that fires on
+# private activity gets disabled.
+#
+# git passes refs on stdin: <local-ref> <local-sha> <remote-ref> <remote-sha>
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+GUARD="$REPO_ROOT/bin/publication-guard.sh"
+
+[ -x "$GUARD" ] || [ -f "$GUARD" ] || exit 0
+
+ZERO='0000000000000000000000000000000000000000'
+status=0
+
+while read -r local_ref local_sha _remote_ref _remote_sha; do
+    # A deletion pushes the zero sha and publishes no new name.
+    [ "$local_sha" = "$ZERO" ] && continue
+    # Only branches carry a name worth checking; a tag is not a work-in-progress
+    # name and is usually a version.
+    case "$local_ref" in
+        refs/heads/*) branch="${local_ref#refs/heads/}" ;;
+        *) continue ;;
+    esac
+    if ! bash "$GUARD" --branch "$branch"; then
+        status=1
+    fi
+done
+
+exit "$status"
