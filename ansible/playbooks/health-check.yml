@@ -90,7 +90,7 @@
       check_mode: false
 
     - name: Check gateway reachability
-      ansible.builtin.command: ping -c 1 {{ ansible_default_ipv4.gateway }}
+      ansible.builtin.command: ping -c 1 {{ ansible_facts['default_ipv4']['gateway'] }}
       register: gw_check
       failed_when: gw_check.rc != 0
       changed_when: false
