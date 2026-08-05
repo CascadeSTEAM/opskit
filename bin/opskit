@@ -257,14 +257,30 @@ def cmd_scan(args):
         print("  Skipping nmap scan (--enrich-only / --uplinks-only)")
     else:
         print("  Mode: live nmap scan")
+
+        # Local subnets scanned without root silently lose ARP-level data
+        # (empty MACs, no vendor) — warn loudly instead (#141).
+        warning = nmap_runner.unprivileged_scan_warning(
+            subnets, nmap_runner.is_privileged(), args.sudo)
+        if warning:
+            print(warning)
+
         if args.dry_run:
             print("  [DRY RUN] Would scan: " + " ".join(subnets))
             return
 
+        # Cache sudo credentials up front so the password prompt happens
+        # once here, not mid-scan inside a captured-output nmap run.
+        if args.sudo and not nmap_runner.is_privileged():
+            if subprocess.run(['sudo', '-v']).returncode != 0:
+                print("  ERROR: --sudo requested but sudo authentication failed")
+                return
+
         # Run discovery on each subnet
         discovery_hosts = []
         for subnet in subnets:
-            xml_path = nmap_runner.discover(subnet, timeout=args.timeout)
+            xml_path = nmap_runner.discover(subnet, use_sudo=args.sudo,
+                                            timeout=args.timeout)
             if xml_path:
                 discovery_hosts.extend(parser.parse_discovery(xml_path))
 
@@ -276,7 +292,7 @@ def cmd_scan(args):
         if not args.discover_only:
             live_ips = [h['ip'] for h in hosts if h.get('status') == 'up']
             if live_ips:
-                portscan_xml = nmap_runner.portscan(live_ips)
+                portscan_xml = nmap_runner.portscan(live_ips, use_sudo=args.sudo)
                 if portscan_xml:
                     hosts = parser.parse_portscan(portscan_xml, hosts)
 
@@ -540,7 +556,7 @@ _opskit_completion() {{
             COMPREPLY=( $(compgen -W "" -- "$cur") )
             ;;
         scan|status|lint)
-            COMPREPLY=( $(compgen -W "--env --dry-run --discover-only --enrich-only --uplinks-only --skip-enrich --skip-uplinks --no-router --fixture" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--env --dry-run --discover-only --enrich-only --uplinks-only --skip-enrich --skip-uplinks --no-router --fixture --sudo" -- "$cur") )
             ;;
         setup-completion)
             COMPREPLY=( $(compgen -W "bash zsh" -- "$cur") )
@@ -756,6 +772,8 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
     ps.add_argument('--no-router', action='store_true', help='skip router SSH for bridge/LLDP')
     ps.add_argument('--fixture', help='nmap XML fixture path (CI/test)')
     ps.add_argument('--timeout', type=int, default=0, help='scan timeout in seconds (0=auto, /24→60s, /16→300s)')
+    ps.add_argument('--sudo', action='store_true',
+                    help='run nmap via sudo (required for MAC/vendor data on local subnets)')
 
     # status
     pt = sub.add_parser('status', help='inventory summary')

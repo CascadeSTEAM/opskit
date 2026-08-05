@@ -6,6 +6,7 @@ How `opskit scan` discovers, enriches, and links devices on your network.
 
 ```bash
 opskit scan                    # full pipeline
+opskit scan --sudo             # nmap via sudo — required for MAC/vendor data on local subnets
 opskit scan --dry-run          # preview nmap commands
 opskit scan --discover-only    # nmap only, list live hosts
 opskit scan --enrich-only      # re-run enrichment on existing YAMLs
