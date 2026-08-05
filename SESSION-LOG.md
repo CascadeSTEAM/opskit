@@ -13,6 +13,53 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-08-05, continued — the collaboration layer gets its own tooling
+
+Merged #129, #132, #135, #137. Closed #128, #130, #133, #136. Filed #131, #134, #138.
+Ledger rows 7, 10, 11, 16, 17, 34, 39, 40 resolved.
+
+**Key decisions:**
+- **Two layers, stated explicitly.** The vehicle rule governs the *product* — what we do
+  to environments. It is silent on the *collaboration surface*: the instruction files,
+  skills, agents and harness wiring. An agent applied it to a proposal about improving
+  that surface, concluded "script, not MCP tool", and cited doctrine as though it
+  settled the question. The document never said which layer it governed, so the
+  misreading was the document's fault as much as the reader's. Now a table at the top of
+  the principles, with the incident recorded as the reason — a rule with no rationale
+  gets re-litigated.
+- **Verify may be automated; rewriting may not.** The governing files are the control
+  surface for agent behaviour. An automated edit can silently weaken a hard rule, and no
+  test catches a rule that has merely been softened. Tools there propose; a human
+  disposes.
+- **A guard is only as good as its list, and nothing can verify a list is complete.**
+  Twice in one day the list was the weak link rather than the check. The response is a
+  reporter that derives candidates from the private layers — and a standing
+  acknowledgement that it narrows the gap rather than closing it.
+- **Signal beats recall in any report a human must read.** The first version of that
+  reporter suggested device names as client names. A report full of noise is ignored
+  entirely, so a missed candidate is preferable to a list nobody reads.
+- **A guard that only sees deltas cannot tell you the state of the thing it guards.**
+  Every guard here checks added lines, so nothing has ever examined the repo's existing
+  content — which is how pre-existing content went unreviewed. Generalises well beyond
+  the specific finding.
+- **Report the consequence, not the condition.** "No remote" was read as "host
+  unreachable" and dismissed — correctly, about the hosts. A check understood as
+  something else produces false reassurance.
+- **Copying between projects is the disease.** Four independent instances surfaced in
+  one day, all the same shape: a copy that could not tell it was stale. A survey of the
+  sibling projects then found the cure already prototyped — one project consumes this
+  repo's guards *by reference* rather than reimplementing them. #138 generalises that.
+
+**Completed:** 588 tests, up from 341 at session start. Sixteen PRs, 9/9 CI on each.
+Four subagent-assisted analyses; two found things a direct read would have missed.
+
+**Open threads:** #134 and #131 need owner decisions; #138 needs a mechanism choice;
+#94 still needs a lab device and #106 waits on it. Two helpdesk actions are prepared but
+unposted. Ledger row 24 (an injected-variable deprecation across 12 files) is scoped and
+unstarted — a clean first task next session.
+
+---
+
 ## 2026-08-05 — Guards that had never guarded, and one that guarded the wrong surface
 
 Merged #108, #111, #113, #115, #117, #119, #121, #123, #125. Closed #105, #110,
