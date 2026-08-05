@@ -243,3 +243,88 @@ def test_untenanted_vars_are_accepted(tmp_path):
     })
     assert r.returncode == 0, r.stderr
     assert _ticket(root) == "TS-0123"
+
+
+# ── --help must not file a ticket (issue #120, ledger row 34) ──────────────────
+# The first argument was taken as the ticket subject unconditionally, so
+# `open-ticket.sh --help` ATTEMPTED A LIVE CREATE titled "--help" against the
+# client helpdesk. It only failed when found because credentials happened to be
+# absent. A flag that acts instead of describing is a trap anywhere; in a tool
+# whose side effect lands on someone else's system it is worse — a junk ticket on
+# a client helpdesk is visible to the client.
+
+def test_help_prints_usage_and_files_nothing(tmp_path):
+    root = _root(tmp_path, CONFIGURED)
+
+    result = _run(root, "--help")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Usage" in result.stdout
+    assert not (root / ".current-ticket").exists()
+    # The give-away that it tried to create: the create path always announces it.
+    assert "Creating ticket" not in result.stdout
+
+
+def test_short_help_flag_behaves_the_same(tmp_path):
+    root = _root(tmp_path, CONFIGURED)
+
+    result = _run(root, "-h")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Usage" in result.stdout
+    assert not (root / ".current-ticket").exists()
+
+
+def test_an_unknown_flag_is_refused_rather_than_filed(tmp_path):
+    """The general fix: --help was one instance of 'a typo becomes a subject'."""
+    root = _root(tmp_path, CONFIGURED)
+
+    result = _run(root, "--bogus")
+
+    assert result.returncode == 2
+    assert "Refusing to treat" in result.stderr
+    assert not (root / ".current-ticket").exists()
+
+
+def test_the_refusal_shows_how_to_pass_a_dash_leading_subject(tmp_path):
+    root = _root(tmp_path, CONFIGURED)
+
+    result = _run(root, "--bogus")
+
+    assert "-- " in result.stderr
+
+
+def test_a_genuine_dash_leading_subject_works_after_a_separator(tmp_path):
+    root = _root(tmp_path, NOHELPDESK)
+
+    result = _run(root, "--local", "--", "-weird subject")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (root / ".current-ticket").exists()
+
+
+def test_an_ordinary_subject_is_unaffected(tmp_path):
+    root = _root(tmp_path, NOHELPDESK)
+
+    result = _run(root, "--local", "a normal subject")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (root / ".current-ticket").exists()
+
+
+def test_close_is_unaffected(tmp_path):
+    root = _root(tmp_path, NOHELPDESK)
+    _run(root, "--local", "something")
+
+    result = _run(root, "close")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (root / ".current-ticket").exists()
+
+
+def test_no_arguments_still_shows_the_current_ticket(tmp_path):
+    root = _root(tmp_path, NOHELPDESK)
+
+    result = _run(root)
+
+    assert result.returncode == 0, result.stdout + result.stderr
