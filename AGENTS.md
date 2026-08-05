@@ -84,6 +84,7 @@ All scripts are data-driven — they read from `environments/$ACTIVE_ENV/env.yml
 | `bin/automation-ladder.py` | Track manual processes → escalate to scripts/playbooks |
 | `bin/lifecycle-processor.py` | Manage lifecycle transitions |
 | `bin/frappe-exec.py` | Sanctioned Path B Frappe/ERPNext exec (SSH + docker exec + bench venv python); see `frappe-access` skill |
+| `mcp/collab-mcp-server.py` | Collaboration-layer self-check: verify every path this file names, report skill/tool drift, propose improvements. **Never edits the governing docs** — run via `bin/mcp-call.py collab --list` |
 | `bin/mcp-run.sh` | Launch an `mcp/` server — or an external one declared in `mcp/external-servers.json` — with secrets resolved from the vault (`--check` validates the launch path without fetching anything) |
 | `bin/suggest-client-tokens.py` | Report client identifiers found in the private layers that `.client-tokens` does not guard (reports only — never writes; its output is client-identifying, keep it local) |
 | `bin/validate-datasets.py` | Validate device records + `env.yml` against `schemas/` (reports by default, `--strict` to fail, `--versions` for schema-version drift) |

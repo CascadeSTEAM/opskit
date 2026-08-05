@@ -173,7 +173,23 @@ else
     report 0 "vault map" "$VAULT_MAP not found — copy mcp/vault-map.example.json and fill it in"
 fi
 
-if command -v "$BW" >/dev/null 2>&1; then
+# Does this server need the vault at all? A server declared with an explicit empty
+# object needs no secrets, and requiring an unlocked vault to launch a tool that only
+# reads local files would be absurd — it would make the collaboration-layer server
+# (#136) unusable whenever the vault happened to be locked.
+NEEDS_SECRETS=1
+if [ -f "$VAULT_MAP" ]; then
+    NEEDS_SECRETS=$("$(json_python)" -c '
+import json, sys
+raw = json.load(open(sys.argv[1]))
+entry = raw.get(sys.argv[2])
+print("0" if isinstance(entry, dict) and not entry else "1")
+' "$VAULT_MAP" "$SERVER" 2>/dev/null || echo "1")
+fi
+
+if [ "$NEEDS_SECRETS" = "0" ]; then
+    report 1 "vault" "not needed — this server declares no secrets"
+elif command -v "$BW" >/dev/null 2>&1; then
     report 1 "bw CLI" "$(command -v "$BW")"
 else
     report 0 "bw CLI" "not found — npm install -g @bitwarden/cli"
@@ -187,7 +203,9 @@ fi
 #
 # stdin is closed for every bw call: against a locked vault bw otherwise blocks on
 # a hidden master-password prompt, which presents as a hang rather than an error.
-if [ -z "${BW_SESSION:-}" ]; then
+if [ "$NEEDS_SECRETS" = "0" ]; then
+    :                       # no secrets to resolve, so no session is required
+elif [ -z "${BW_SESSION:-}" ]; then
     report 0 "BW_SESSION" "not set — export BW_SESSION=\$(bw unlock --raw) before the agent runtime starts"
 elif ! command -v "$BW" >/dev/null 2>&1; then
     report 0 "BW_SESSION" "set, but the bw CLI is missing so it cannot be validated"
@@ -222,10 +240,21 @@ for var, spec in (raw.get(sys.argv[2]) or {}).items():
     print(f"{var}\t{item}\t{field}")
 PY
 )
-    if [ -z "$ENTRIES" ]; then
-        report 0 "map entries" "no credentials declared for '$SERVER' in $(basename "$VAULT_MAP") — it would start with none and fail at first tool call"
-    else
+    # An explicit empty object means "this server needs no secrets" — a deliberate
+    # declaration, distinct from the key being absent. The collaboration-layer server
+    # (#136) reads only local files; demanding a vault entry would force a fake one,
+    # and a fake entry is worse than none because it implies a secret exists.
+    DECLARED=$("$(json_python)" -c '
+import json, sys
+raw = json.load(open(sys.argv[1]))
+print("present" if sys.argv[2] in raw else "absent")
+' "$VAULT_MAP" "$SERVER" 2>/dev/null || echo "absent")
+    if [ -n "$ENTRIES" ]; then
         report 1 "map entries" "$(echo "$ENTRIES" | wc -l) secret(s) declared"
+    elif [ "$DECLARED" = "present" ]; then
+        report 1 "map entries" "declared as needing no secrets"
+    else
+        report 0 "map entries" "no credentials declared for '$SERVER' in $(basename "$VAULT_MAP") — it would start with none and fail at first tool call"
     fi
 fi
 
