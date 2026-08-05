@@ -13,6 +13,57 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-08-05 — Guards that had never guarded, and one that guarded the wrong surface
+
+Merged #108, #111, #113, #115, #117, #119, #121, #123, #125. Closed #105, #110,
+#112, #114, #116, #118, #120, #122, #124. Split #106. Ledger rows 7, 16, 17, 18,
+20, 23, 25, 28, 29, 30, 31, 32, 33, 34, 35 resolved; rows 36, 37, 38 captured.
+
+**The theme, unplanned:** almost every issue this session turned out to be a check
+that existed and did not work. A lint that had never once passed because it globbed
+the wrong extension. A launch validator that could not detect a server which parses
+its config and then rejects it. A publication guard that read every surface except
+the one a branch name is published on. A test suite that was green because CI has no
+configuration. Schemas that described data nothing validated. In each case the
+absence of signal read as success.
+
+**Key decisions:**
+- **Report before enforcing, with the flip as a deliberate step.** Dataset
+  validation would fail unfixably on introduction — one layer has 58 of 59 records
+  missing a required field. A check that can never pass gets ignored, which is
+  worse than no check. `--strict` exists for when a layer is clean.
+- **Prevention over detection** where both are possible. A test suite that behaves
+  differently per machine is broken even if something notices, so config paths are
+  isolated by construction rather than by everyone remembering.
+- **Guards must be seen to fail.** Each new guard is verified against the real
+  pre-fix code, not only against its own fixtures — a guard validated against its
+  own test cases agrees with itself. The AST interpolation guard found 5 findings in
+  the pre-fix file and 0 after.
+- **Verification follows TLS by default.** Claiming transport security while
+  skipping certificate checks is worse than plaintext: it looks secure and is not.
+- **Nothing is dropped silently.** Generated config names what it could not include,
+  with the reason. Omission leaving no trace is how a device stayed missing long
+  enough to become an issue.
+- **A missing value is a refusal, not a guess** when it selects an API path.
+- **AST over regex for security guards.** A regex cannot distinguish a quoted
+  interpolation from a bare one, and a guard with false positives gets disabled.
+- **The client-data rule binds every published surface**, not just session notes —
+  public issues, PR bodies, and the tracked idea ledger. Two issues describing an
+  environment's device inventory were deleted (not closed: a closed issue stays
+  public and indexed) and refiled privately. A finding usually splits: the device is
+  private, the tool gap is public, and the public half generalises better anyway.
+- **Environment layers are single-branch.** One had 26 commits of operational record
+  on an unmerged branch, invisible to every other clone.
+
+**Completed:** 512 tests, up from 341. Nine PRs, 9/9 CI checks green on each.
+
+**Open threads:** #94 needs a lab device; #106 waits on it; #103, #104 untouched.
+~14 ledger rows remain untriaged. A tool self-review found and fixed a latent hang
+and a credential-exposure path in code merged the same day, which argues for the
+review step staying adversarial rather than confirmatory.
+
+---
+
 ## 2026-08-04, continued (3) — the config becomes a build artifact
 
 #105 finished as far as it can go; split #106 (TLS) and #107 (an unmanaged AP,
