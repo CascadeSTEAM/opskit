@@ -17,15 +17,94 @@ REMOTES_FILE="$REPO_ROOT/.env-remotes"
 
 usage() {
     echo "Usage: bin/env-sync.sh <env> <clone|pull|push|status> [--commit \"msg\"]"
+    echo "       bin/env-sync.sh coverage"
     echo ""
-    echo "  clone   Clone the env's private repo into environments/<env>/"
-    echo "  pull    Fast-forward pull the environment repo"
-    echo "  push    Push committed changes (refuses a dirty tree unless --commit)"
-    echo "  status  Show remote, branch, and working-tree state"
+    echo "  clone     Clone the env's private repo into environments/<env>/"
+    echo "  pull      Fast-forward pull the environment repo"
+    echo "  push      Push committed changes (refuses a dirty tree unless --commit)"
+    echo "  status    Show remote, branch, and working-tree state"
+    echo "  coverage  Every environment: does it have a remote, and is it pushed?"
     echo ""
     echo "Remote URLs come from $REMOTES_FILE (gitignored):"
     echo "  <env> <git-url>    # one per line, '#' comments allowed"
 }
+
+# ── coverage: which layers are actually backed up anywhere ─────────────────────
+# An environment directory absent from the remote map has no remote at all: it
+# exists on exactly one machine and is lost outright in a rebuild, a disk failure
+# or a workstation migration. install.sh counts environments but never
+# cross-checks them against the map, so the one failure mode that loses data is
+# the one nothing reported (opskit #116, ledger row 20).
+#
+# Being mapped is necessary, not sufficient — commits that exist on no remote are
+# just as lost. Both states are reported, distinctly, because they need different
+# fixes.
+coverage() {
+    local base="$REPO_ROOT/environments"
+    if [ ! -d "$base" ]; then
+        echo "No environments/ directory."
+        return 0
+    fi
+
+    local unmapped=0 unpushed=0 total=0 name dir url
+
+    for dir in "$base"/*; do
+        [ -d "$dir" ] || continue
+        name="$(basename "$dir")"
+        # example is the committed template; dotted names are not environments.
+        case "$name" in example|.*) continue ;; esac
+        total=$((total + 1))
+
+        url=$(awk -v env="$name" \
+            '$0 !~ /^[[:space:]]*#/ && $1 == env { print $2; exit }' \
+            "$REMOTES_FILE" 2>/dev/null || true)
+
+        if [ -z "$url" ]; then
+            unmapped=$((unmapped + 1))
+            printf "  ${RED}✗${NC} %-12s no remote in %s — exists on this machine only\n" \
+                "$name" "$(basename "$REMOTES_FILE")"
+            continue
+        fi
+
+        if [ ! -d "$dir/.git" ]; then
+            unmapped=$((unmapped + 1))
+            printf "  ${RED}✗${NC} %-12s mapped, but not a git repo — nothing is committed\n" "$name"
+            continue
+        fi
+
+        local ahead
+        ahead=$(git -C "$dir" rev-list --count '@{u}..HEAD' 2>/dev/null || echo "no-upstream")
+        if [ "$ahead" = "no-upstream" ]; then
+            unpushed=$((unpushed + 1))
+            printf "  ${YELLOW}⚠${NC} %-12s mapped, but this branch tracks no remote branch\n" "$name"
+        elif [ "$ahead" != "0" ]; then
+            unpushed=$((unpushed + 1))
+            printf "  ${YELLOW}⚠${NC} %-12s %s commit(s) exist on no remote\n" "$name" "$ahead"
+        else
+            printf "  ${GREEN}✓${NC} %-12s pushed\n" "$name"
+        fi
+    done
+
+    echo ""
+    if [ "$total" -eq 0 ]; then
+        echo "No environment layers present."
+        return 0
+    fi
+    if [ "$unmapped" -eq 0 ] && [ "$unpushed" -eq 0 ]; then
+        echo -e "${GREEN}All $total layer(s) have a remote and are pushed.${NC}"
+        return 0
+    fi
+    [ "$unmapped" -gt 0 ] && echo -e "${RED}$unmapped layer(s) have no remote — add them to $(basename "$REMOTES_FILE") and push, or accept that they are local-only.${NC}"
+    [ "$unpushed" -gt 0 ] && echo -e "${YELLOW}$unpushed layer(s) have work that exists nowhere else — bin/env-sync.sh <env> push${NC}"
+    # Reported, not fatal: a scratch or retired layer may be deliberately local,
+    # and only the operator knows which. Naming it is the job.
+    return 0
+}
+
+if [ "${1:-}" = "coverage" ]; then
+    coverage
+    exit $?
+fi
 
 if [ $# -lt 2 ]; then
     usage
