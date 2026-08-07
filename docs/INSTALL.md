@@ -282,9 +282,13 @@ works; the environment variable wins when both are present:
 ```bash
 export BW_SESSION=$(bw unlock --raw)                    # this shell only
 
-bw unlock --raw > ~/.cache/opskit/bw-session            # persists across shells
-chmod 600 ~/.cache/opskit/bw-session
+mkdir -p ~/.cache/opskit                                # persists across shells
+(umask 077; bw unlock --raw > ~/.cache/opskit/bw-session)
 ```
+
+Write it inside `(umask 077; …)` rather than chmod'ing afterwards: a plain
+redirect creates the file at your default umask, leaving a live key to the
+whole vault group-readable until the chmod lands.
 
 Export it **before** starting the agent runtime — servers read the variable at
 launch, so unlocking afterwards does not help the current session.

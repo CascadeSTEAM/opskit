@@ -99,6 +99,8 @@ def _run(
     session: str | None = "sess",
     path_prepend: Path | None = None,
     session_file: Path | None = None,
+    drop_home: bool = False,
+    session_file_env: bool = True,
 ):
     env = {
         **os.environ,
@@ -112,6 +114,11 @@ def _run(
         # cases and CI would disagree with a laptop — the #123 defect.
         "BW_SESSION_FILE": str(session_file or (root / "no-session-file")),
     }
+    if not session_file_env:
+        # Exercise the HOME-derived default path instead of an explicit override.
+        env.pop("BW_SESSION_FILE", None)
+    if drop_home:
+        env.pop("HOME", None)
     if path_prepend is not None:
         env["PATH"] = f"{path_prepend}:{env['PATH']}"
     env["OPSKIT_BW"] = str(bw) if bw else "bw"
@@ -662,3 +669,106 @@ def test_list_works_even_when_the_session_file_is_unusable(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.split() == ["demo", "other"]
+
+
+# ── Regressions from the first session-file cut (#154) ───────────────────
+
+
+def test_unset_home_does_not_abort_the_script(tmp_path):
+    """`$HOME` was dereferenced at top level under `set -u`, so env -i, cron and
+    scrubbed systemd units died with 'HOME: unbound variable' before argument
+    handling — an MCP server that simply stops serving tools."""
+    root = _make_root(tmp_path)
+
+    result = _run(root, "--list", drop_home=True, session_file_env=False)
+
+    assert result.returncode == 0, result.stderr
+    assert "unbound variable" not in result.stderr
+    assert result.stdout.split() == ["demo", "other"]
+
+
+def test_unset_home_still_launches_with_an_exported_session(tmp_path):
+    """No HOME means no discoverable default file — the env var must still work."""
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(password="s3cret")})
+
+    result = _run(root, "demo", bw=bw, session="sess",
+                  drop_home=True, session_file_env=False)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["DEMO_A"] == "s3cret"
+
+
+def test_secret_free_server_ignores_an_unusable_session_file(tmp_path):
+    """An empty map entry means the server declares no secrets. It never reads
+    the token, so an unrelated file's mode must not gate it."""
+    root = _make_root(tmp_path, {"demo": {}})
+    bw = _make_bw_stub(tmp_path, {})
+
+    result = _run(root, "demo", "--check", bw=bw, session=None,
+                  session_file=_session_file(tmp_path, mode=0o644))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "no declared secrets" in result.stdout or "not needed" in result.stdout
+
+
+def test_symlinked_session_file_is_judged_by_its_target(tmp_path):
+    """A symlink's own mode is 0777 on Linux. Judging the link refused valid
+    setups and printed a `chmod 600 <link>` fix that chmod dereferences, so it
+    could never clear the error."""
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(password="s3cret")})
+    target = _session_file(tmp_path)          # mode 600
+    link = tmp_path / "session-link"
+    link.symlink_to(target)
+
+    result = _run(root, "demo", "--check", bw=bw, session=None, session_file=link)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "readable beyond its owner" not in result.stderr
+
+
+def test_symlink_to_a_loose_target_is_still_refused(tmp_path):
+    """Following the link must not become a way to smuggle a loose token in."""
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item()})
+    target = _session_file(tmp_path, mode=0o644)
+    link = tmp_path / "session-link"
+    link.symlink_to(target)
+
+    result = _run(root, "demo", "--check", bw=bw, session=None, session_file=link)
+
+    assert result.returncode != 0
+    assert "readable beyond its owner" in result.stderr
+
+
+def test_stale_file_token_is_told_to_refresh_the_file(tmp_path):
+    """`export BW_SESSION=...` fixes only the operator's shell: the file stays
+    stale and the agent runtime keeps reading the dead token."""
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item()}, state="locked")
+    sf = _session_file(tmp_path)
+
+    result = _run(root, "demo", "--check", bw=bw, session=None, session_file=sf)
+
+    assert result.returncode == 1
+    assert "LOCKED" in result.stderr
+    assert str(sf) in result.stderr
+    assert "umask 077" in result.stderr
+
+
+def test_stale_env_token_still_told_to_re_export(tmp_path):
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item()}, state="locked")
+
+    result = _run(root, "demo", "--check", bw=bw, session="sess")
+
+    assert "export BW_SESSION" in result.stderr
+
+
+def test_documented_session_file_recipe_is_umask_safe():
+    """The recipe is security-critical and copy-pasted: a plain redirect plus a
+    later chmod leaves a live vault key group-readable in between."""
+    install = (ROOT / "docs" / "INSTALL.md").read_text()
+    assert "umask 077" in install
+    assert "mkdir -p ~/.cache/opskit" in install
