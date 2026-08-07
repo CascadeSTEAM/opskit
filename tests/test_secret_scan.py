@@ -189,3 +189,31 @@ def test_patterns_are_introspectable():
     joined = "\n".join(patterns)
     for keyword in ("password", "secret", "token", "api", "PRIVATE KEY"):
         assert keyword in joined
+
+
+def test_hook_runs_with_no_unbound_variables():
+    """Rewiring the secret scan removed the block that defined STAGED_FILES,
+    leaving a later check referencing it. `|| true` swallowed the error, so the
+    environment-isolation check silently stopped seeing any files while the hook
+    still reported success — a dead guard is worse than a failing one."""
+    result = subprocess.run(["bash", "-u", "-n", str(HOOK)],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+    ran = subprocess.run(["bash", str(HOOK)], capture_output=True, text=True,
+                         cwd=str(ROOT))
+    assert "unbound variable" not in ran.stderr + ran.stdout
+
+
+def test_hook_defines_every_variable_it_reads():
+    """Cheap structural check for the same class: any $VAR the hook reads must
+    be assigned somewhere in it (or be a known override/env var)."""
+    import re
+    text = HOOK.read_text()
+    assigned = set(re.findall(r"^\s*([A-Z_][A-Z0-9_]*)=", text, re.MULTILINE))
+    assigned |= {"ALLOW_PRIVATE_IPS", "ALLOW_CLIENT_TOKENS", "ALLOW_DOD_SKIP",
+                 "ALLOW_SECRET_SCAN", "SKIP_GITLEAKS", "PATH", "HOME"}
+    read = set(re.findall(r'\$\{?([A-Z_][A-Z0-9_]*)[}:]', text))
+    read |= set(re.findall(r'\$([A-Z_][A-Z0-9_]*)\b', text))
+    missing = {v for v in read - assigned if not v.startswith("BASH")}
+    assert not missing, f"pre-commit reads undefined variable(s): {sorted(missing)}"

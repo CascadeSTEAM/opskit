@@ -25,6 +25,7 @@ fi
 bash bin/publication-guard.sh --cached
 
 # Environment isolation — only environments/example/ may be committed
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
 ENV_FILES=$(echo "$STAGED_FILES" | grep '^environments/' | grep -v '^environments/example/' || true)
 if [ -n "$ENV_FILES" ]; then
     echo "ERROR: Real environment files cannot be committed:"
