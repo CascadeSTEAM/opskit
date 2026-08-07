@@ -528,9 +528,9 @@ def test_validating_the_session_still_fetches_no_secrets(tmp_path):
 # pre-approving the sanctioned MCP path.
 
 
-def _session_file(tmp_path: Path, token: str = "sess", mode: int = 0o600) -> Path:
+def _session_file(tmp_path: Path, tok: str = "sess", mode: int = 0o600) -> Path:
     f = tmp_path / "bw-session"
-    f.write_text(token)
+    f.write_text(tok)
     f.chmod(mode)
     return f
 
@@ -564,7 +564,7 @@ def test_env_var_wins_over_session_file(tmp_path):
     bw = _make_bw_stub(tmp_path, {"i1": _login_item()})
 
     result = _run(root, "demo", "--check", bw=bw, session="from-env",
-                  session_file=_session_file(tmp_path, token="from-file"))
+                  session_file=_session_file(tmp_path, tok="from-file"))
 
     assert "environment" in result.stdout
 
