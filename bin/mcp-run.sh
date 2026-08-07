@@ -66,16 +66,18 @@ die() { echo -e "${RED}ERROR${NC}: $*" >&2; exit 1; }
 BW_SESSION_SOURCE="environment"
 BW_SESSION_PROBLEM=""
 
-# Remediation must name the source actually in play. Telling a file-based setup
-# to `export BW_SESSION=...` fixes only the operator's own shell: the stale file
-# stays stale, the agent runtime keeps reading the dead token, and the export
-# then shadows the file forever in that shell (#154).
+# Remediation must name the source actually in play: telling a file-based setup
+# to `export BW_SESSION=...` fixes only the operator's own shell while the agent
+# runtime keeps reading the stale file (#154). The wording lives in the resolver
+# with everything else about sessions — two copies of it here and there is the
+# duplication #155 exists to remove.
 refresh_hint() {
-    if [ "$BW_SESSION_SOURCE" = "environment" ]; then
-        echo "re-run: export BW_SESSION=\$(bw unlock --raw)"
-    else
-        echo "refresh the session FILE it came from: (umask 077; bw unlock --raw > $BW_SESSION_SOURCE)"
-    fi
+    # --source-is is required, not cosmetic: this script exports BW_SESSION once
+    # it resolves, so a resolver subprocess would then report "environment" and
+    # tell the operator to refresh the wrong thing.
+    "$(json_python)" "$SCRIPT_DIR/bw_session.py" --refresh-hint \
+        --source-is "$BW_SESSION_SOURCE" 2>/dev/null \
+        || echo "re-run: export BW_SESSION=\$(bw unlock --raw)"
 }
 
 # Session resolution (env var, else a mode-checked file) lives in

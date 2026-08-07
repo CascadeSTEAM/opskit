@@ -233,3 +233,15 @@ def test_no_caller_reads_bw_session_directly():
             assert not pattern.search(text), (
                 f"{path.name} reads BW_SESSION directly — ask bw_session.resolve()"
             )
+
+
+def test_refresh_hint_accepts_an_explicit_source(tmp_path):
+    """A caller that already resolved and exported the token cannot ask the
+    resolver to re-derive the source: the export makes every later lookup say
+    "environment", so the hint would name the wrong thing to refresh."""
+    r = _cli("--refresh-hint", "--source-is", "/some/session/file",
+             BW_SESSION="already-exported")
+
+    assert r.returncode == 0
+    assert "/some/session/file" in r.stdout
+    assert "umask 077" in r.stdout

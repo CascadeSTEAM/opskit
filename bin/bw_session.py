@@ -155,7 +155,18 @@ def main(argv: list[str] | None = None) -> int:
                       help="exit 0 if a session is usable, 1 otherwise")
     mode.add_argument("--token", action="store_true",
                       help="print the session token for $(...) capture")
+    mode.add_argument("--refresh-hint", action="store_true",
+                      help="how to refresh the session actually in play")
+    # A caller that already resolved and EXPORTED the token cannot ask us to
+    # re-derive the source: the export makes every later lookup say
+    # "environment", so the hint would name the wrong thing to refresh.
+    ap.add_argument("--source-is", metavar="SOURCE",
+                    help="the already-known source, for --refresh-hint")
     args = ap.parse_args(argv)
+
+    if args.refresh_hint and args.source_is:
+        print(refresh_hint(args.source_is))
+        return 0
 
     try:
         token, source = resolve()
@@ -166,6 +177,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.token:
         print(token)
+    elif args.refresh_hint:
+        print(refresh_hint(source))
     else:
         print(source)
     return 0
