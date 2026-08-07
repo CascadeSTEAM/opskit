@@ -3,31 +3,11 @@ set -euo pipefail
 
 echo "=== opskit pre-commit ==="
 
-# Secret scan (fast grep-based, belt-and-suspenders with CI gitleaks)
-# `[^{]` on the first character mirrors the CI secret-scan pattern: a value
-# starting with a brace is a Jinja/template placeholder or JSON, not a literal
-# credential. Without it the hook fired on `password="{{ some_var }}"` while CI
-# passed — a false positive only the local gate produced, which is how people
-# learn to reach for --no-verify.
-PATTERNS=(
-    'password\s*=\s*"[^{][^"]{8,}"'
-    'api[_-]?key\s*=\s*"[^{][^"]{8,}"'
-    '-----BEGIN (RSA|EC|DSA|OPENSSH) PRIVATE KEY-----'
-    'ghp_[A-Za-z0-9]{36}'
-    'AIza[0-9A-Za-z\-_]{35}'
-)
-
-STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
-
-for pattern in "${PATTERNS[@]}"; do
-    matches=$(echo "$STAGED_FILES" | xargs -r grep -nE "$pattern" 2>/dev/null || true)
-    if [ -n "$matches" ]; then
-        echo "ERROR: Possible secret detected:"
-        echo "$matches"
-        echo "Remove the secret and try again."
-        exit 1
-    fi
-done
+# Fast grep-based secret scan. Patterns live in bin/secret-scan.sh, shared with
+# CI, so the local gate and the server-side gate cannot drift — they did, and a
+# commit that passed every local check failed CI on a pattern the hook lacked
+# (#157). Complements the gitleaks pass below.
+bash bin/secret-scan.sh --cached
 
 # Deep secret scan (gitleaks) over staged changes — complements the fast grep
 # patterns above and the CI gitleaks job. Skips gracefully if gitleaks isn't

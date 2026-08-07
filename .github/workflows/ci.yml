@@ -50,11 +50,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Patterns live in bin/secret-scan.sh, shared with .githooks/pre-commit so
+      # the two gates cannot drift (#157).
       - name: grep-based secret scan (no-license)
-        run: |
-          grep -rnE '(password|api[_-]?key|secret|token)\s*[:=]\s*"[^{][^"]{8,}"' \
-            --include='*.yml' --include='*.yaml' --include='*.py' --include='*.sh' --include='*.md' . && \
-            echo "ERROR: Secret pattern matched" && exit 1 || echo "PASS: no secrets found"
+        run: bash bin/secret-scan.sh --tree
 
   # Deep secret scan with gitleaks (default ruleset + .gitleaks.toml allowlists).
   # Scans the PR diff range, not full history: main is already clean, and the
