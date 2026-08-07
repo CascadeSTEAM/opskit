@@ -18,11 +18,15 @@ triggers: bitwarden,secrets,vault,credentials
 | Create Item | `cat item.json \| python3 scripts/bw-management.py create` | Uses robust wrapper |
 | Lookup | `bw get item <name>` | Requires `BW_SESSION` |
 | List Orgs | `bw list organizations` | To find `organizationId` |
-| Unlock | `export BW_SESSION=$(bw unlock --raw)` | Manual session refresh |
+| Unlock (shell) | `export BW_SESSION=$(bw unlock --raw)` | This shell only |
+| Unlock (persistent) | `(umask 077; bw unlock --raw > ~/.cache/opskit/bw-session)` | Survives across shells |
 
 ## Key Rules
 
-- Always check if `BW_SESSION` is set before running commands.
+- A session may come from `BW_SESSION` **or** from `~/.cache/opskit/bw-session`
+  (env var wins). Do not test the variable yourself — ask the one resolver:
+  `python3 bin/bw_session.py --check` (or `--source` to see which is in play).
+  `bin/bw-management.py` and `bin/mcp-run.sh` already go through it.
 - Use the `scripts/bw-management.py` wrapper for creating items to avoid "Error parsing encoded request data".
 - All infrastructure secrets should ideally be stored in your environment's organization (e.g., "<env> IT").
 - For LXC/VM creation, store at least the hostname, IP, and access method (e.g., SSH key name).
