@@ -36,7 +36,10 @@
 #
 # Requires an unlocked vault session, from either source (env var wins):
 #   export BW_SESSION=$(bw unlock --raw)
-#   bw unlock --raw > ~/.cache/opskit/bw-session && chmod 600 ~/.cache/opskit/bw-session
+#   mkdir -p ~/.cache/opskit
+#   (umask 077; bw unlock --raw > ~/.cache/opskit/bw-session)
+# The subshell umask matters: writing first and chmod'ing after leaves a live
+# vault key group-readable in between (#154).
 # Override the file path with BW_SESSION_FILE.
 set -euo pipefail
 
@@ -49,7 +52,18 @@ VAULT_MAP="${OPSKIT_VAULT_MAP:-$MCP_DIR/vault-map.local.json}"
 EXTERNAL_MAP="${OPSKIT_EXTERNAL_MAP:-$MCP_DIR/external-servers.json}"
 VENV_PYTHON="${OPSKIT_VENV_PYTHON:-$REPO_ROOT/.venv/bin/python3}"
 BW="${OPSKIT_BW:-bw}"
-BW_SESSION_FILE="${BW_SESSION_FILE:-$HOME/.cache/opskit/bw-session}"
+# An explicit override always wins. Otherwise the default lives under HOME —
+# which is NOT guaranteed to be set: `env -i`, cron, and systemd units with a
+# scrubbed environment all run without it, and dereferencing it under `set -u`
+# aborted the whole script there (#154). No HOME means no discoverable default,
+# which disables the fallback rather than killing the run.
+if [ -z "${BW_SESSION_FILE:-}" ]; then
+    if [ -n "${HOME:-}" ]; then
+        BW_SESSION_FILE="$HOME/.cache/opskit/bw-session"
+    else
+        BW_SESSION_FILE=""
+    fi
+fi
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 
@@ -58,6 +72,18 @@ die() { echo -e "${RED}ERROR${NC}: $*" >&2; exit 1; }
 # Where the session came from, for --check to report honestly.
 BW_SESSION_SOURCE="environment"
 BW_SESSION_FILE_EMPTY=0
+
+# Remediation must name the source actually in play. Telling a file-based setup
+# to `export BW_SESSION=...` fixes only the operator's own shell: the stale file
+# stays stale, the agent runtime keeps reading the dead token, and the export
+# then shadows the file forever in that shell (#154).
+refresh_hint() {
+    if [ "$BW_SESSION_SOURCE" = "environment" ]; then
+        echo "re-run: export BW_SESSION=\$(bw unlock --raw)"
+    else
+        echo "refresh the session FILE it came from: (umask 077; bw unlock --raw > $BW_SESSION_SOURCE)"
+    fi
+}
 
 # Requiring BW_SESSION in the environment forces every credentialed shell call
 # into the form `BW_SESSION=$(cat ...) bin/mcp-call.py ...`. Permission allow
@@ -71,11 +97,17 @@ BW_SESSION_FILE_EMPTY=0
 # unverifiable guard that reports success is worse than no guard.
 load_session_file() {
     [ -n "${BW_SESSION:-}" ] && return 0
+    [ -n "$BW_SESSION_FILE" ] || return 0
     [ -f "$BW_SESSION_FILE" ] || return 0
 
+    # -L on purpose: a symlink's own mode is 0777 on Linux and says nothing
+    # about who can read the token. What governs readability is the TARGET's
+    # mode — and judging the link instead refused legitimate setups while
+    # printing a `chmod 600 <link>` fix that chmod dereferences, so it could
+    # never clear the error (#154).
     local mode
-    mode=$(stat -c '%a' "$BW_SESSION_FILE" 2>/dev/null \
-        || stat -f '%Lp' "$BW_SESSION_FILE" 2>/dev/null || echo "")
+    mode=$(stat -L -c '%a' "$BW_SESSION_FILE" 2>/dev/null \
+        || stat -L -f '%Lp' "$BW_SESSION_FILE" 2>/dev/null || echo "")
     if [ -z "$mode" ]; then
         die "cannot read the file mode of $BW_SESSION_FILE (no usable stat), so
   its permissions cannot be verified and it will not be used.
@@ -143,10 +175,6 @@ if [ "${1:-}" = "--list" ]; then
     list_servers
     exit 0
 fi
-
-# After --list on purpose: listing servers needs no vault, so a refusal to use
-# the session file (bad mode, unverifiable mode) must not break it.
-load_session_file
 
 SERVER="${1:-}"
 CHECK_ONLY=0
@@ -244,6 +272,13 @@ print("0" if isinstance(entry, dict) and not entry else "1")
 ' "$VAULT_MAP" "$SERVER" 2>/dev/null || echo "1")
 fi
 
+# Only now, once we know this server actually consumes secrets. Loading (and
+# its fail-closed refusals) earlier meant a loose-mode session file could kill
+# `--list` and secret-free servers over a file they never read (#154).
+if [ "$NEEDS_SECRETS" = "1" ]; then
+    load_session_file
+fi
+
 if [ "$NEEDS_SECRETS" = "0" ]; then
     report 1 "vault" "not needed — this server declares no secrets"
 elif command -v "$BW" >/dev/null 2>&1; then
@@ -279,11 +314,11 @@ except Exception:
         unlocked)
             report 1 "BW_SESSION" "unlocked (from $BW_SESSION_SOURCE)" ;;
         locked)
-            report 0 "BW_SESSION" "set but the vault is LOCKED — the token is stale; re-run: export BW_SESSION=\$(bw unlock --raw)" ;;
+            report 0 "BW_SESSION" "set (from $BW_SESSION_SOURCE) but the vault is LOCKED — the token is stale; $(refresh_hint)" ;;
         unauthenticated)
-            report 0 "BW_SESSION" "set but the CLI is not logged in — run: bw login" ;;
+            report 0 "BW_SESSION" "set (from $BW_SESSION_SOURCE) but the CLI is not logged in — run: bw login, then $(refresh_hint)" ;;
         *)
-            report 0 "BW_SESSION" "set but the vault state could not be read ($BW_STATE)" ;;
+            report 0 "BW_SESSION" "set (from $BW_SESSION_SOURCE) but the vault state could not be read ($BW_STATE)" ;;
     esac
 fi
 
