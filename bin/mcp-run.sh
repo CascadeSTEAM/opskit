@@ -34,7 +34,10 @@
 #   bin/mcp-run.sh <server> --check    # validate the launch path, fetch nothing
 #   bin/mcp-run.sh --list              # servers this repo can launch
 #
-# Requires an unlocked vault session:  export BW_SESSION=$(bw unlock --raw)
+# Requires an unlocked vault session, from either source (env var wins):
+#   export BW_SESSION=$(bw unlock --raw)
+#   bw unlock --raw > ~/.cache/opskit/bw-session && chmod 600 ~/.cache/opskit/bw-session
+# Override the file path with BW_SESSION_FILE.
 set -euo pipefail
 
 REPO_ROOT="${OPSKIT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -46,10 +49,42 @@ VAULT_MAP="${OPSKIT_VAULT_MAP:-$MCP_DIR/vault-map.local.json}"
 EXTERNAL_MAP="${OPSKIT_EXTERNAL_MAP:-$MCP_DIR/external-servers.json}"
 VENV_PYTHON="${OPSKIT_VENV_PYTHON:-$REPO_ROOT/.venv/bin/python3}"
 BW="${OPSKIT_BW:-bw}"
+BW_SESSION_FILE="${BW_SESSION_FILE:-$HOME/.cache/opskit/bw-session}"
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 
 die() { echo -e "${RED}ERROR${NC}: $*" >&2; exit 1; }
+
+# Where the session came from, for --check to report honestly.
+BW_SESSION_SOURCE="environment"
+
+# Requiring BW_SESSION in the environment forces every credentialed shell call
+# into the form `BW_SESSION=$(cat ...) bin/mcp-call.py ...`. Permission allow
+# rules match from the command's first character, so that prefix defeats any
+# rule pre-approving the sanctioned MCP path (#152). Falling back to a file
+# keeps the canonical invocation prefix-free.
+#
+# Fail closed on loose permissions: a group- or world-readable session file is
+# refused rather than used. A session token is a live key to the whole vault.
+load_session_file() {
+    [ -n "${BW_SESSION:-}" ] && return 0
+    [ -f "$BW_SESSION_FILE" ] || return 0
+
+    local mode
+    mode=$(stat -c '%a' "$BW_SESSION_FILE" 2>/dev/null \
+        || stat -f '%Lp' "$BW_SESSION_FILE" 2>/dev/null || echo "")
+    if [ -n "$mode" ] && [ "$((8#$mode & 8#077))" -ne 0 ]; then
+        die "$BW_SESSION_FILE is mode $mode — readable beyond its owner.
+  A vault session token is a live key to every secret. Fix:
+    chmod 600 $BW_SESSION_FILE"
+    fi
+
+    BW_SESSION="$(cat "$BW_SESSION_FILE")"
+    export BW_SESSION
+    BW_SESSION_SOURCE="$BW_SESSION_FILE"
+}
+
+load_session_file
 
 # Any python3 will do for reading JSON. The repo venv is preferred so secret
 # parsing stays on one interpreter, but --list must work before `make deps`.
@@ -206,7 +241,7 @@ fi
 if [ "$NEEDS_SECRETS" = "0" ]; then
     :                       # no secrets to resolve, so no session is required
 elif [ -z "${BW_SESSION:-}" ]; then
-    report 0 "BW_SESSION" "not set — export BW_SESSION=\$(bw unlock --raw) before the agent runtime starts"
+    report 0 "BW_SESSION" "not set — export BW_SESSION=\$(bw unlock --raw), or write it to $BW_SESSION_FILE (mode 600)"
 elif ! command -v "$BW" >/dev/null 2>&1; then
     report 0 "BW_SESSION" "set, but the bw CLI is missing so it cannot be validated"
 else
@@ -218,7 +253,7 @@ except Exception:
     print("unreadable")' 2>/dev/null || echo "unreadable")
     case "$BW_STATE" in
         unlocked)
-            report 1 "BW_SESSION" "unlocked" ;;
+            report 1 "BW_SESSION" "unlocked (from $BW_SESSION_SOURCE)" ;;
         locked)
             report 0 "BW_SESSION" "set but the vault is LOCKED — the token is stale; re-run: export BW_SESSION=\$(bw unlock --raw)" ;;
         unauthenticated)
