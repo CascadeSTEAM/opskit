@@ -57,6 +57,7 @@ die() { echo -e "${RED}ERROR${NC}: $*" >&2; exit 1; }
 
 # Where the session came from, for --check to report honestly.
 BW_SESSION_SOURCE="environment"
+BW_SESSION_FILE_EMPTY=0
 
 # Requiring BW_SESSION in the environment forces every credentialed shell call
 # into the form `BW_SESSION=$(cat ...) bin/mcp-call.py ...`. Permission allow
@@ -64,8 +65,10 @@ BW_SESSION_SOURCE="environment"
 # rule pre-approving the sanctioned MCP path (#152). Falling back to a file
 # keeps the canonical invocation prefix-free.
 #
-# Fail closed on loose permissions: a group- or world-readable session file is
-# refused rather than used. A session token is a live key to the whole vault.
+# Fail closed on loose permissions: the file is used only when its mode can be
+# READ and proves owner-only access. A session token is a live key to the whole
+# vault, so "could not determine the mode" is a refusal, not a pass — an
+# unverifiable guard that reports success is worse than no guard.
 load_session_file() {
     [ -n "${BW_SESSION:-}" ] && return 0
     [ -f "$BW_SESSION_FILE" ] || return 0
@@ -73,18 +76,33 @@ load_session_file() {
     local mode
     mode=$(stat -c '%a' "$BW_SESSION_FILE" 2>/dev/null \
         || stat -f '%Lp' "$BW_SESSION_FILE" 2>/dev/null || echo "")
-    if [ -n "$mode" ] && [ "$((8#$mode & 8#077))" -ne 0 ]; then
+    if [ -z "$mode" ]; then
+        die "cannot read the file mode of $BW_SESSION_FILE (no usable stat), so
+  its permissions cannot be verified and it will not be used.
+  Export the session instead:  export BW_SESSION=\$(bw unlock --raw)"
+    fi
+    if [ "$((8#$mode & 8#077))" -ne 0 ]; then
         die "$BW_SESSION_FILE is mode $mode — readable beyond its owner.
   A vault session token is a live key to every secret. Fix:
     chmod 600 $BW_SESSION_FILE"
     fi
 
-    BW_SESSION="$(cat "$BW_SESSION_FILE")"
+    local token
+    token="$(cat "$BW_SESSION_FILE")"
+    # An empty file is the expected residue of a FAILED unlock: the shell
+    # creates the file for `bw unlock --raw > file` before bw runs, so a wrong
+    # master password leaves a well-permissioned empty file behind. Leave
+    # BW_SESSION unset and record why, so --check names the real cause instead
+    # of telling the operator to write the file they just wrote.
+    if [ -z "$token" ]; then
+        BW_SESSION_FILE_EMPTY=1
+        return 0
+    fi
+
+    BW_SESSION="$token"
     export BW_SESSION
     BW_SESSION_SOURCE="$BW_SESSION_FILE"
 }
-
-load_session_file
 
 # Any python3 will do for reading JSON. The repo venv is preferred so secret
 # parsing stays on one interpreter, but --list must work before `make deps`.
@@ -125,6 +143,10 @@ if [ "${1:-}" = "--list" ]; then
     list_servers
     exit 0
 fi
+
+# After --list on purpose: listing servers needs no vault, so a refusal to use
+# the session file (bad mode, unverifiable mode) must not break it.
+load_session_file
 
 SERVER="${1:-}"
 CHECK_ONLY=0
@@ -240,6 +262,8 @@ fi
 # a hidden master-password prompt, which presents as a hang rather than an error.
 if [ "$NEEDS_SECRETS" = "0" ]; then
     :                       # no secrets to resolve, so no session is required
+elif [ "$BW_SESSION_FILE_EMPTY" = "1" ]; then
+    report 0 "BW_SESSION" "$BW_SESSION_FILE exists but is EMPTY — a redirect creates the file before bw runs, so a failed unlock leaves it empty. Re-run: bw unlock --raw > $BW_SESSION_FILE"
 elif [ -z "${BW_SESSION:-}" ]; then
     report 0 "BW_SESSION" "not set — export BW_SESSION=\$(bw unlock --raw), or write it to $BW_SESSION_FILE (mode 600)"
 elif ! command -v "$BW" >/dev/null 2>&1; then

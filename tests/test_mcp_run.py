@@ -603,3 +603,62 @@ def test_session_file_resolves_secrets_at_launch(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["DEMO_A"] == "s3cret"
+
+
+def test_empty_session_file_names_the_real_cause(tmp_path):
+    """`bw unlock --raw > file` has the shell create the file BEFORE bw runs, so
+    a failed unlock leaves a well-permissioned empty file. Reporting 'not set —
+    write it to <file>' would tell the operator to redo what they just did."""
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item()})
+
+    result = _run(root, "demo", "--check", bw=bw, session=None,
+                  session_file=_session_file(tmp_path, tok=""))
+
+    assert result.returncode == 1
+    assert "EMPTY" in result.stderr
+    assert "failed unlock" in result.stderr
+
+
+def test_empty_session_file_does_not_reach_secret_resolution(tmp_path):
+    """Launch mode must fail at the gate, never with an empty session in hand:
+    bw would then block on a hidden master-password prompt."""
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(password="s3cret")})
+
+    result = _run(root, "demo", bw=bw, session=None,
+                  session_file=_session_file(tmp_path, tok=""))
+
+    assert result.returncode == 1
+    assert "launch path invalid" in result.stderr
+    assert "s3cret" not in result.stdout
+
+
+def test_unverifiable_file_mode_is_refused_not_trusted(tmp_path):
+    """Fail closed: if the mode cannot be read, the guard cannot prove
+    owner-only access, and an unverifiable guard must not report success."""
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item()})
+    # A `stat` earlier in PATH that always fails, so neither form yields a mode.
+    stub = tmp_path / "nostat"
+    stub.mkdir()
+    (stub / "stat").write_text("#!/bin/sh\nexit 1\n")
+    (stub / "stat").chmod(0o755)
+
+    result = _run(root, "demo", "--check", bw=bw, session=None,
+                  session_file=_session_file(tmp_path), path_prepend=stub)
+
+    assert result.returncode != 0
+    assert "cannot read the file mode" in result.stderr
+    assert "export BW_SESSION" in result.stderr
+
+
+def test_list_works_even_when_the_session_file_is_unusable(tmp_path):
+    """--list needs no vault at all; a refusal must not take it down."""
+    root = _make_root(tmp_path)
+
+    result = _run(root, "--list", session=None,
+                  session_file=_session_file(tmp_path, mode=0o644))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == ["demo", "other"]
