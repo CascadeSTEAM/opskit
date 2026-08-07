@@ -98,6 +98,7 @@ def _run(
     bw: Path | None = None,
     session: str | None = "sess",
     path_prepend: Path | None = None,
+    session_file: Path | None = None,
 ):
     env = {
         **os.environ,
@@ -105,6 +106,11 @@ def _run(
         # Real venv python: the launcher uses it to parse JSON, and the fake
         # server has no third-party imports.
         "OPSKIT_VENV_PYTHON": str(ROOT / ".venv" / "bin" / "python3"),
+        # Point the session-file fallback (#152) at a path inside the test's
+        # tmpdir unless a test supplies one. Without this a real session file
+        # on the developer's machine would silently satisfy `session=None`
+        # cases and CI would disagree with a laptop — the #123 defect.
+        "BW_SESSION_FILE": str(session_file or (root / "no-session-file")),
     }
     if path_prepend is not None:
         env["PATH"] = f"{path_prepend}:{env['PATH']}"
@@ -512,3 +518,147 @@ def test_validating_the_session_still_fetches_no_secrets(tmp_path):
 
     assert "s3cret" not in result.stdout
     assert "s3cret" not in result.stderr
+
+
+# ── Session-file fallback (#152) ─────────────────────────────────────────
+#
+# Requiring BW_SESSION in the environment forced every credentialed shell call
+# into `BW_SESSION=$(cat ...) bin/mcp-call.py ...`. Permission allow rules match
+# from the command's first character, so that prefix defeated any rule
+# pre-approving the sanctioned MCP path.
+
+
+def _session_file(tmp_path: Path, tok: str = "sess", mode: int = 0o600) -> Path:
+    f = tmp_path / "bw-session"
+    f.write_text(tok)
+    f.chmod(mode)
+    return f
+
+
+def test_session_file_is_used_when_env_var_absent(tmp_path):
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(password="s3cret")})
+
+    result = _run(root, "demo", "--check", bw=bw, session=None,
+                  session_file=_session_file(tmp_path))
+
+    assert result.returncode == 0, result.stderr
+    assert "unlocked" in result.stdout
+
+
+def test_check_names_the_session_source(tmp_path):
+    """An operator debugging a stale token needs to know WHICH token is in play."""
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item()})
+    sf = _session_file(tmp_path)
+
+    from_file = _run(root, "demo", "--check", bw=bw, session=None, session_file=sf)
+    from_env = _run(root, "demo", "--check", bw=bw, session="sess", session_file=sf)
+
+    assert str(sf) in from_file.stdout
+    assert "environment" in from_env.stdout
+
+
+def test_env_var_wins_over_session_file(tmp_path):
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item()})
+
+    result = _run(root, "demo", "--check", bw=bw, session="from-env",
+                  session_file=_session_file(tmp_path, tok="from-file"))
+
+    assert "environment" in result.stdout
+
+
+def test_group_readable_session_file_is_refused(tmp_path):
+    """A session token is a live key to the whole vault — fail closed."""
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item()})
+
+    result = _run(root, "demo", "--check", bw=bw, session=None,
+                  session_file=_session_file(tmp_path, mode=0o640))
+
+    assert result.returncode != 0
+    assert "readable beyond its owner" in result.stderr
+    assert "chmod 600" in result.stderr
+
+
+def test_absent_session_file_behaves_as_before(tmp_path):
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item()})
+
+    result = _run(root, "demo", "--check", bw=bw, session=None,
+                  session_file=tmp_path / "does-not-exist")
+
+    assert result.returncode == 1
+    assert "not set" in result.stderr
+
+
+def test_session_file_resolves_secrets_at_launch(tmp_path):
+    """Not just --check: the real launch path must use the file-sourced token."""
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(password="s3cret")})
+
+    result = _run(root, "demo", bw=bw, session=None,
+                  session_file=_session_file(tmp_path))
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["DEMO_A"] == "s3cret"
+
+
+def test_empty_session_file_names_the_real_cause(tmp_path):
+    """`bw unlock --raw > file` has the shell create the file BEFORE bw runs, so
+    a failed unlock leaves a well-permissioned empty file. Reporting 'not set —
+    write it to <file>' would tell the operator to redo what they just did."""
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item()})
+
+    result = _run(root, "demo", "--check", bw=bw, session=None,
+                  session_file=_session_file(tmp_path, tok=""))
+
+    assert result.returncode == 1
+    assert "EMPTY" in result.stderr
+    assert "failed unlock" in result.stderr
+
+
+def test_empty_session_file_does_not_reach_secret_resolution(tmp_path):
+    """Launch mode must fail at the gate, never with an empty session in hand:
+    bw would then block on a hidden master-password prompt."""
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(password="s3cret")})
+
+    result = _run(root, "demo", bw=bw, session=None,
+                  session_file=_session_file(tmp_path, tok=""))
+
+    assert result.returncode == 1
+    assert "launch path invalid" in result.stderr
+    assert "s3cret" not in result.stdout
+
+
+def test_unverifiable_file_mode_is_refused_not_trusted(tmp_path):
+    """Fail closed: if the mode cannot be read, the guard cannot prove
+    owner-only access, and an unverifiable guard must not report success."""
+    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item()})
+    # A `stat` earlier in PATH that always fails, so neither form yields a mode.
+    stub = tmp_path / "nostat"
+    stub.mkdir()
+    (stub / "stat").write_text("#!/bin/sh\nexit 1\n")
+    (stub / "stat").chmod(0o755)
+
+    result = _run(root, "demo", "--check", bw=bw, session=None,
+                  session_file=_session_file(tmp_path), path_prepend=stub)
+
+    assert result.returncode != 0
+    assert "cannot read the file mode" in result.stderr
+    assert "export BW_SESSION" in result.stderr
+
+
+def test_list_works_even_when_the_session_file_is_unusable(tmp_path):
+    """--list needs no vault at all; a refusal must not take it down."""
+    root = _make_root(tmp_path)
+
+    result = _run(root, "--list", session=None,
+                  session_file=_session_file(tmp_path, mode=0o644))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == ["demo", "other"]
