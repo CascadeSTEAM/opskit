@@ -276,14 +276,25 @@ in this repo contains a vault identifier or a tenant name.
 > repoint it at `bin/mcp-run.sh` if this repo's copy is newer. Migrating is the
 > cheapest moment to collapse that duplication.
 
-Every launch path aborts unless a vault session is exported first:
+Every launch path aborts unless a vault session is available. Either source
+works; the environment variable wins when both are present:
 
 ```bash
-export BW_SESSION=$(bw unlock --raw)
+export BW_SESSION=$(bw unlock --raw)                    # this shell only
+
+bw unlock --raw > ~/.cache/opskit/bw-session            # persists across shells
+chmod 600 ~/.cache/opskit/bw-session
 ```
 
-Do this **before** starting the agent runtime — servers read the variable at
+Export it **before** starting the agent runtime — servers read the variable at
 launch, so unlocking afterwards does not help the current session.
+
+The session file (path overridable with `BW_SESSION_FILE`) exists so a
+credentialed shell call needs no `BW_SESSION=…` prefix: `bin/mcp-call.py …`
+alone works, which lets a permission allow-rule cover the sanctioned MCP path
+(prefix-matched rules cannot see past a leading assignment). The file is
+refused if it is readable beyond its owner — a session token is a live key to
+every secret in the vault.
 
 `--check` is the fast diagnosis for a missing tool namespace: it reports the
 venv, the server file, the vault map, the CLI, the session, and how many
