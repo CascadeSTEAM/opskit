@@ -1,13 +1,21 @@
 ---
 # Verify: every site answers over HTTP through the frontend on this host.
 
-- name: Probe each site through the frontend
-  ansible.builtin.uri:
-    url: "http://localhost:{{ erp_stack_http_port }}{{ erp_stack_verify_path }}"
-    headers:
-      Host: "{{ item }}"
-    status_code: 200
-    timeout: 10
+# curl, not ansible.builtin.uri: uri imports python-cryptography on the TARGET,
+# which explodes on hosts whose system python lacks a matching _cffi_backend
+# (seen in the wild on python3.14). curl has no such dependency. Learned during
+# the first erp_stack field deployment; recovered in opskit #184.
+- name: Probe each site through the frontend  # noqa: command-instead-of-module
+  # The linter's suggestion here is `uri`, which is the module this task exists
+  # to avoid — see above. A per-line ignore, never skip_list: listing the rule
+  # globally would hide every other place it genuinely applies (#83).
+  ansible.builtin.command:
+    cmd: >-
+      curl --silent --show-error --fail --max-time 10
+      --output /dev/null --write-out '%{http_code}'
+      --header 'Host: {{ item }}'
+      http://localhost:{{ erp_stack_http_port }}{{ erp_stack_verify_path }}
+  changed_when: false
   loop: "{{ erp_stack_sites }}"
   register: erp_stack_probe
   retries: "{{ erp_stack_verify_retries }}"

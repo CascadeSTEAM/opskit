@@ -133,7 +133,10 @@
         body_format: form-urlencoded
         body:
           zone: "{{ item[0].name }}"
-          domain: "{{ item[1].name }}.{{ item[0].name }}"
+          # A record named "@" (or empty) is the zone apex itself, not a
+          # child called "@" — "@.example.org" would be a real, wrong record.
+          domain: "{{ item[0].name if item[1].name in ['@', '']
+                      else item[1].name ~ '.' ~ item[0].name }}"
           type: "{{ item[1].type }}"
           value: "{{ item[1].value }}"
           # Technitium expects type-specific params; ipAddress covers A/AAAA
