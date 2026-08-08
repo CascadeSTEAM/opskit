@@ -72,11 +72,23 @@ else
 fi
 
 # ── Clear active ticket ────────────────────────────────────────────────────────
+# The file is shared by every session in this clone, so clearing it used to
+# destroy a concurrent session's active ticket — leaving that session with no
+# ticket while commit-msg still demanded one (#158). A session that pinned
+# itself with an exported OPSKIT_TICKET is unaffected either way; what must not
+# happen is this switch silently removing the only record another session has.
 TICKET_FILE="$REPO_ROOT/.current-ticket"
 PREV_TICKET=""
 if [ -f "$TICKET_FILE" ]; then
-    PREV_TICKET=$(cat "$TICKET_FILE" | tr -d '[:space:]')
+    PREV_TICKET=$(tr -d '[:space:]' < "$TICKET_FILE")
     rm -f "$TICKET_FILE"
+fi
+
+TICKET_PIN_NOTE=""
+if [ -n "${OPSKIT_TICKET:-}" ]; then
+    TICKET_PIN_NOTE="this shell stays pinned to ${OPSKIT_TICKET} by an exported OPSKIT_TICKET"
+elif [ -n "$PREV_TICKET" ]; then
+    TICKET_PIN_NOTE="another session using $PREV_TICKET should pin it: export OPSKIT_TICKET=$PREV_TICKET"
 fi
 
 echo -e "${GREEN}Switched to: $LABEL${NC}"
@@ -99,6 +111,9 @@ if [ -n "$PREV_TICKET" ]; then
     echo "  Open a new ticket: bin/open-ticket.sh \"description\""
 else
     echo "  No active ticket — open one: bin/open-ticket.sh \"description\""
+fi
+if [ -n "$TICKET_PIN_NOTE" ]; then
+    echo -e "  ${YELLOW}${TICKET_PIN_NOTE}${NC}"
 fi
 
 # ── Connectivity probe ─────────────────────────────────────────────────────────

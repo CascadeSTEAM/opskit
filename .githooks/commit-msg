@@ -36,10 +36,18 @@ if [ -z "$PREFIX" ]; then
     exit 0
 fi
 
-# Ticket enforcement applies to client-operation sessions, which always have
-# an open ticket (bin/open-ticket.sh writes .current-ticket). Tool development
-# with no open ticket is exempt — the client-token guard above still applies.
-if [ ! -s .current-ticket ]; then
+# Ticket enforcement applies to client-operation sessions, which always have an
+# open ticket. Tool development with no open ticket is exempt — the client-token
+# guard above still applies.
+#
+# Resolved through bin/active_ticket.py, not by reading .current-ticket: an
+# exported OPSKIT_TICKET pins a session, so a concurrent `switch-env.sh` clearing
+# the shared file can no longer make this hook exempt work that should carry a
+# ticket (#158). Same precedence as ACTIVE_ENV above.
+if ! ACTIVE_TICKET=$(python3 bin/active_ticket.py 2>/dev/null); then
+    exit 0
+fi
+if [ -z "$ACTIVE_TICKET" ]; then
     exit 0
 fi
 
@@ -68,7 +76,7 @@ fi
 if ! echo "$COMMIT_MSG" | grep -qiE "^TKT-[0-9]+:"; then
     echo "ERROR: Infrastructure changes require a TKT-XXXX ticket reference."
     echo "  Add 'TKT-XXXX: ...' (number only — never the client's helpdesk prefix)."
-    echo "  The active ticket's full ID is in .current-ticket."
+    echo "  Active ticket: $(python3 bin/active_ticket.py --verbose 2>/dev/null || echo unresolved)"
     exit 1
 fi
 

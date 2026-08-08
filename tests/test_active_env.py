@@ -187,10 +187,17 @@ def test_every_reader_goes_through_the_resolver(path):
 
 
 def test_only_the_resolver_defines_the_precedence():
-    """If a second file grows the same logic, the precedence has forked."""
+    """If a second file grows the same logic, the precedence has forked.
+
+    Keyed on the ACTIVE_ENV lookup itself, not on a constant NAME: this repo now
+    has a second resolver of the same shape for the active ticket (#158), and a
+    name-based check would flag any sibling that mirrors the pattern while still
+    missing a genuine fork that happened to name its constant differently.
+    """
+    reads_active_env = re.compile(r'environ(?:\.get\(|\[)\s*["\']ACTIVE_ENV["\']')
     definers = [
         p for p in (ROOT / "bin").glob("*.py")
-        if p.name != "active_env.py" and "SOURCE_ENV_VAR" in p.read_text()
+        if p.name != "active_env.py" and reads_active_env.search(p.read_text())
     ]
 
     assert not definers, f"precedence duplicated in {[p.name for p in definers]}"
