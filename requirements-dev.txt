@@ -6,3 +6,4 @@ jsonschema>=4,<5
 requests>=2,<3
 mcp>=1,<2
 watchdog>=4,<7  # lifecycle-processor --watch (systemd unit ExecStart)
+jinja2>=3,<4  # evaluate playbook when: conditions in tests (#103) — Ansible's own template engine
