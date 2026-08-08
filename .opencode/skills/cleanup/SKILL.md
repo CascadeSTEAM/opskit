@@ -38,8 +38,14 @@ That is the whole cycle. The tool holds the safety rules; this skill holds the
   clone; deleting a branch out from under one turns a tidy-up into an outage.
 - **An unmerged branch** — it uses `git branch -d`, never `-D`.
 - **The default branch.**
-- **A remote branch with no PR at all.** "Never had a PR" is not "finished", so
-  that call is the operator's. These are listed separately for a decision.
+- **Any branch carrying commits the base branch lacks**, whatever its PR says.
+  A *closed* PR means rejected or abandoned, not merged, so it gets the same
+  scrutiny as a branch with no PR at all. These are listed separately, with
+  their unmerged commit count, for a decision.
+  (A no-PR branch that is provably an *ancestor* of the base holds nothing, so
+  it is offered like any other dead branch — usually an abandoned
+  `gh issue develop` stub, which is also why issue branches come back with a
+  `-1` suffix.)
 - Anything that is not a branch or worktree metadata. Session notes, the idea
   ledger and the environment layers are out of scope — a cleanup that edits
   those is a different and much riskier thing.
