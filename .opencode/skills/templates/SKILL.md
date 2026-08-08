@@ -13,7 +13,7 @@ description: Document format templates for audit plans and mitigation tracking
 
 ## Audit Plan Template
 
-```
+```markdown
 # Audit — YYYY-MM-DD
 
 **Premise:** <premise text>
@@ -36,7 +36,7 @@ description: Document format templates for audit plans and mitigation tracking
 
 ## Mitigation Plan Template
 
-```
+```markdown
 # Mitigation: <topic>
 
 ## Phase 1: Pre-Audit (Read-Only)

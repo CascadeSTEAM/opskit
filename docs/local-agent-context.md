@@ -1,6 +1,6 @@
 # Local Agent Context — Generate It, Never Commit It
 
-opskit is a public repo. Agent files (`agents/`), skills (`skills/`), and rules
+opskit is a public repo. Agent files (`agents/`), skills (`.opencode/skills/`), and rules
 (`rules/`) are committed and therefore MUST stay environment-agnostic: no real
 IPs, hostnames, usernames, MACs, serials, or site topology. But agents work far
 better with a concrete fact sheet of *your* network in front of them. This
