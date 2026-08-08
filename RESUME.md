@@ -2,6 +2,13 @@
 
 Written at the end of the 2026-08-08 sessions. Read this, then `AGENTS.md`.
 
+## Open risk worth carrying forward
+
+**The datacenter firewall state is unverified in every environment.** #188 stops the
+provisioning playbook from *claiming* isolation it cannot deliver, but containers
+provisioned before that fix may be reachable while their config says otherwise. Nobody
+has touched a node. First step of #189, and it is a live-session task.
+
 ## State right now
 
 - `main` is clean, synced, and green: `make test` 891 passed / 1 skipped, `make lint` 0 failures.
@@ -43,13 +50,6 @@ PR with an external reviewer requested.
 **Blocked on hardware**
 
 - #94, #106 — both need a live RouterOS device.
-
-## Open risk worth carrying forward
-
-**The datacenter firewall state is unverified in every environment.** #188 stops the
-provisioning playbook from *claiming* isolation it cannot deliver, but containers
-provisioned before that fix may be reachable while their config says otherwise. Nobody
-has touched a node. First step of #189, and it is a live-session task.
 
 ## Gotchas that cost time this session
 
