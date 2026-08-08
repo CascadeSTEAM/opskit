@@ -13,7 +13,7 @@
     cmd: >-
       curl --silent --show-error --fail --max-time 10
       --output /dev/null --write-out '%{http_code}'
-      --header 'Host: {{ item }}'
+      --header {{ ('Host: ' ~ item) | quote }}
       http://localhost:{{ erp_stack_http_port }}{{ erp_stack_verify_path }}
   changed_when: false
   loop: "{{ erp_stack_sites }}"

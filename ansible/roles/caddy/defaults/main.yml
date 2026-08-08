@@ -4,6 +4,11 @@ caddy_systemd_service: caddy
 
 caddy_global_email: support@cascadesteam.org
 
+# Admin API bind address. Loopback-only by default; an environment that scrapes
+# Caddy metrics remotely overrides this in its group_vars. Parameterised so a
+# redeploy does not silently revert such an environment to loopback (#184).
+caddy_admin_listen: 127.0.0.1:2019
+
 # Real subnets and WAN/office addresses belong in environments/<env>/
 # group_vars, never in committed defaults (docs/client-data-policy.md).
 # These are RFC 5737 documentation-range placeholders showing the shape.

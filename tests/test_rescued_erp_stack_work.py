@@ -88,6 +88,62 @@ def test_an_ordinary_record_is_still_a_child_of_the_zone():
     assert _render_domain("www", "example.org") == "www.example.org"
 
 
+def _render_verify_block(records, zone="example.org"):
+    """Render the verify step's real shell body against fixture zone data."""
+    task = next(t for t in _tasks(DNS_ZONES)
+                if "Verify DNS resolution" in str(t.get("name", "")))
+    body = str(task["ansible.builtin.shell"]["cmd"])
+    return jinja2.Environment().from_string(body).render(
+        effective_dns_zones=[{"name": zone, "records":
+                              [{"name": r} for r in records]}],
+        ansible_host="192.0.2.53",
+    )
+
+
+def test_the_verify_step_uses_the_same_apex_rule_as_the_add_step():
+    """The half-ported fix that made this a blocker: the add step wrote the
+    record at the zone apex correctly, then the verify step queried
+    '@.example.org', which cannot resolve — and `failed_when` turns that into a
+    failed run for exactly the records this feature exists to support."""
+    rendered = _render_verify_block(["@"])
+
+    assert "@.example.org" not in rendered
+    assert "dig +short @192.0.2.53 example.org" in rendered
+
+
+def test_the_verify_step_still_queries_ordinary_records_in_full():
+    rendered = _render_verify_block(["www"])
+
+    assert "www.example.org" in rendered
+
+
+def test_the_progress_label_does_not_show_an_apex_record_as_a_child():
+    """Cosmetic, but it is the line an operator reads to confirm what ran."""
+    task = next(t for t in _tasks(DNS_ZONES)
+                if "Add records to zones" in str(t.get("name", "")))
+    label = str(task["loop_control"]["label"])
+    rendered = jinja2.Environment().from_string(label).render(
+        item={0: {"name": "example.org"}, 1: {"name": "@"}})
+
+    assert rendered == "example.org"
+
+
+# ── the Caddy admin bind address (the fifth item on the branch) ──────────────
+
+def test_the_caddy_admin_listen_address_is_parameterised():
+    """A redeploy used to reset an environment that binds the admin API for
+    remote metrics scraping back to loopback, silently."""
+    defaults = yaml.safe_load(
+        (ROOT / "ansible" / "roles" / "caddy" / "defaults" / "main.yml").read_text())
+    assert defaults["caddy_admin_listen"] == "127.0.0.1:2019", (
+        "loopback must remain the default; binding wider is an env decision"
+    )
+
+    template = (ROOT / "ansible" / "roles" / "caddy" / "templates"
+                / "Caddyfile.j2").read_text()
+    assert "admin {{ caddy_admin_listen }}" in template
+
+
 # ── the curl-over-uri field finding ──────────────────────────────────────────
 
 def test_the_frontend_probe_does_not_use_the_uri_module():
