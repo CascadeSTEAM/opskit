@@ -13,6 +13,32 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-08-07 — /plow: batch backlog orchestration as a skill
+
+Session note: `docs/session-notes/2026-08-07-plow-skill.md`
+
+**Key decisions:**
+- `/plow` layers on the `gh` skill rather than duplicating it: phase 1 clears
+  the open-PR queue (review cycle, merge on green), phase 2 dedupes/connects/
+  prioritizes open issues, phase 3 works each through the full `gh` cycle,
+  strictly one item in flight. Priority triad: simple over complex, importance
+  over less-immediate, impact over cosmetic.
+- Policy divergence, by operator request: within a `/plow` run, invocation is
+  the merge authorization (bounded — no branch-protection bypass, human-blocked
+  PRs skipped and reported). Pre-authorizes exactly two actions: merging green
+  reviewed PRs and closing unambiguous duplicates.
+- Skill placement follows the codified scaffolder (`new-skill`): canonical in
+  `.opencode/skills/`, `.claude/skills/<name>` symlink — adds no new pair to
+  the #131 divergence freeze.
+
+**Completed:** #164 filed and PR #167 opened (Closes #164); #166 filed
+(scaffolder template's `scripts/` path is nonexistent; 11 skills affected).
+
+**Open threads:** #166 sweep; #131 canonical-tree decision now matters more
+(new skills keep landing in `.opencode/skills/`).
+
+---
+
 ## 2026-08-05, continued — the collaboration layer gets its own tooling
 
 Merged #129, #132, #135, #137. Closed #128, #130, #133, #136. Filed #131, #134, #138.
