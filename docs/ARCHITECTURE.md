@@ -99,8 +99,8 @@ schemas/
   inventory-conventions.md   Device naming + YAML conventions
 
 .opencode/
-  rules/                     9 AI behavioral rules
-  skills/                    9 AI skills (domain knowledge)
+  rules/                    10 AI behavioral rules
+  skills/                   16 AI skills (domain knowledge; the only tree)
 ```
 
 ## Conventions

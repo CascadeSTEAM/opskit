@@ -29,16 +29,26 @@ sudo oscap xccdf eval --profile cis_level1_server \
   /usr/share/xml/scap/ssg/content/ssg-ubuntu2404-ds.xml
 ```
 
+Install: `sudo apt install openscap-scanner scap-security-guide`. Expect
+server-focused false positives — triage before acting.
+
 ## auditd Key Commands
 
 ```bash
 sudo systemctl enable --now auditd
-sudo auditctl -l | head -10
-sudo ausearch -k identity --start recent | tail -5
+sudo auditctl -l | head -10                          # Verify active rules
+sudo ausearch -k identity --start recent | tail -5   # Check identity events
 ```
 
-**WARNING:** Default log rotation caps quick on active systems. Set `max_log_file=50`, `num_logs=4`, `space_left_action=SYSLOG` in `/etc/audit/auditd.conf`.
+**WARNING:** default log rotation caps at 32MB, which is about a day on an
+active dev box. When it fills, auditd stops logging *and* fills `/var`. Set
+`max_log_file=50`, `num_logs=4`, `space_left_action=SYSLOG` in
+`/etc/audit/auditd.conf`.
 
 ## Install
 
 Install via Ansible role or: `sudo apt install lynis rkhunter fail2ban firewalld` (Debian/Ubuntu).
+
+## Related
+
+- `security` skill — credential rules, firewall posture, token handling

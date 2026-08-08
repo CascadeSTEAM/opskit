@@ -1,6 +1,6 @@
 # Local Agent Context — Generate It, Never Commit It
 
-opskit is a public repo. Agent files (`agents/`), skills (`skills/`), and rules
+opskit is a public repo. Agent files (`agents/`), skills (`.opencode/skills/`), and rules
 (`rules/`) are committed and therefore MUST stay environment-agnostic: no real
 IPs, hostnames, usernames, MACs, serials, or site topology. But agents work far
 better with a concrete fact sheet of *your* network in front of them. This
@@ -12,7 +12,7 @@ document describes how to have both.
 Committed (public)                      Generated (gitignored, per environment)
 ──────────────────                      ────────────────────────────────────────
 agents/*.md          generic behavior   environments/<env>/context/
-skills/*/SKILL.md    + "read context    ├── critical-facts.md     ← site facts, host tables
+.opencode/skills/    + "read context    ├── critical-facts.md     ← site facts, host tables
 rules/*.md             at runtime"      ├── ssh-access.md         ← alias → host → user map
 docs/ + templates    methodology        └── <domain>-devices.md   ← per-agent device tables
 bin/scan.py etc.     generators

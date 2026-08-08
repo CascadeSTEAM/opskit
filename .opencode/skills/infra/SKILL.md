@@ -18,11 +18,20 @@ triggers: lxc,proxmox,deploy,placement,commission,decommission,vm,container
 - Ansible provisioning required — no manual installs
 - Document in device datasets before deployment
 
+## Node Roles
+
+Real node tables are environment data and never live in this committed skill
+(`docs/client-data-policy.md`). Read them from the active environment layer:
+`environments/<env>/datasets/devices/` (canonical records) and
+`environments/<env>/context/` (generated fact sheets — see
+`bin/generate-network-docs.py`).
+
 ## Reliability (N+1)
 
 - Critical services run on 2+ nodes
 - Health checks every 60s
 - Auto-failover for DNS, monitoring, and core services
+- DNS server address: read from `environments/<env>/env.yml` connectivity probes
 
 ## Key Rules
 
