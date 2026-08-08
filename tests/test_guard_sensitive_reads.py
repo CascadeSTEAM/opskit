@@ -158,15 +158,63 @@ STILL_DENIED_DESPITE_A_MESSAGE_FLAG = [
     f"cat {SHADOW} | git commit -m 'x'",
 ]
 
+# The review of #169 caught these: -m, -b and -t are argument-less BOOLEANS in
+# plenty of tools, where the next token is the file being read, not a message.
+# Skipping it there hands out one-line exfiltration (`od -b <store>` dumps the
+# whole file). So the strip is scoped to the commands that take these flags as
+# messages, per segment — a git message earlier in the line must not license
+# skipping in a later command.
+BOOLEAN_FLAG_LOOKALIKES = [
+    f"sort -m {SHADOW}",            # -m/--merge: prints the file verbatim
+    f"sort -m {SHADOW} -o /tmp/out",
+    f"sort -b {SHADOW}",            # -b/--ignore-leading-blanks
+    f"diff -b {SHADOW} /etc/hosts",  # -b/--ignore-space-change
+    f"od -b {SHADOW}",              # -b: octal dump of every byte
+    f"column -t {SHADOW}",          # -t: table mode, reprints the file
+    f"tar -t {SHADOW}",
+    # a real message earlier must not license skipping in a later segment
+    f'git commit -m "x" && sort -m {SHADOW}',
+    f'git commit -m "x"; od -b {SHADOW}',
+    f'gh pr comment 1 --body "note" && diff -b {SHADOW} /etc/hosts',
+    # wrapper prefixes must not launder a non-message command
+    f"sudo sort -m {SHADOW}",
+    f"env od -b {SHADOW}",
+]
+
+MORE_MESSAGE_MENTIONS = [
+    f'git commit -m"attached value: {SHADOW}"',   # value attached to -m
+    f'sudo git commit -m "about {SHADOW}"',       # wrapper prefix, real git
+    f'git commit -m "first" -m "second: {SHADOW}"',
+]
+
 
 @pytest.mark.parametrize("command", MESSAGE_ONLY_MENTIONS)
 def test_naming_a_guarded_path_in_a_message_is_allowed(command):
     assert guard.check("Bash", {"command": command}) is None, command
 
 
+@pytest.mark.parametrize("command", MORE_MESSAGE_MENTIONS)
+def test_attached_values_and_wrapper_prefixes_are_still_messages(command):
+    assert guard.check("Bash", {"command": command}) is None, command
+
+
 @pytest.mark.parametrize("command", STILL_DENIED_DESPITE_A_MESSAGE_FLAG)
 def test_a_message_flag_does_not_become_a_bypass(command):
     assert guard.check("Bash", {"command": command}) is not None, command
+
+
+@pytest.mark.parametrize("command", BOOLEAN_FLAG_LOOKALIKES)
+def test_boolean_flags_in_other_tools_are_not_message_flags(command):
+    """`od -b <credential store>` dumps the file. The strip must be scoped to
+    commands where these flags actually take a message, and scoped per segment
+    so an earlier git message cannot license a later command."""
+    assert guard.check("Bash", {"command": command}) is not None, command
+
+
+def test_the_command_scope_is_what_makes_the_strip_safe():
+    """Same flag, same following token — only the command differs."""
+    assert guard._strip_message_args(f"git commit -m {SHADOW}") == "git commit"
+    assert SHADOW in guard._strip_message_args(f"sort -m {SHADOW}")
 
 
 def test_an_unparseable_command_is_scanned_in_full():

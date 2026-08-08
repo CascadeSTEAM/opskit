@@ -86,6 +86,15 @@ that fires when you document the guard is precisely the failure mode above.
 The strip is kept narrow, because distinguishing "mentions a path" from "reads
 a path" in arbitrary shell is the sort of cleverness that hollows out a guard:
 
+- **The strip applies only to commands that take these flags as messages**
+  (`git`, `gh`, and friends), and is decided **per command segment**. This one
+  is load-bearing: `-m`, `-b` and `-t` are argument-less booleans in plenty of
+  other tools — `sort -m`, `sort -b`, `diff -b`, `od -b`, `column -t` — where
+  the token after the flag is the file being read. Skipping it there would hand
+  out one-line exfiltration (`od -b <guarded path>` dumps every byte). Scoping
+  per segment also stops a legitimate `git commit -m "…"` earlier in a line
+  from licensing a skip in a later command. Wrapper prefixes (`sudo`, `env`,
+  `VAR=value`) are seen through, so they cannot launder either side.
 - Only the flag's own argument is dropped; the rest of the command is still
   scanned, so `git commit -m "subject" && cat <guarded path>` still denies.
 - A message argument containing command or process substitution is **not**

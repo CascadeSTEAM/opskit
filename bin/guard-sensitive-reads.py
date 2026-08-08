@@ -56,10 +56,25 @@ REASON = (
 # message was denied, which is the "fires on ordinary work" failure mode the
 # design doc warns gets guards switched off.
 #
-# Deliberately a short list of flags that cannot cause a read. `-F`/`--body-file`
-# are excluded on purpose: they name a file the command opens, so
-# `git commit -F /etc/shadow` really does read it.
+# Scoped to the commands that actually take these flags as messages. `-m`, `-b`
+# and `-t` are argument-less booleans in plenty of other tools — `sort -m`,
+# `od -b`, `diff -b`, `column -t` — where the following token is the file being
+# read, not a message. Skipping it there would hand out a one-line exfiltration
+# path (`od -b <credential store>`), so the command name gates the whole rule.
+#
+# `-F`/`--body-file` are excluded on purpose even here: they name a file the
+# command opens, so `git commit -F /etc/shadow` really does read it.
+MESSAGE_COMMANDS = {"git", "gh", "glab", "hub", "jj"}
 MESSAGE_FLAGS = {"-m", "--message", "-b", "--body", "-t", "--title", "--notes"}
+
+# Short flags whose value may be attached (`-mfix typo`). Long flags use `=`.
+_ATTACHABLE_SHORT = {"-m", "-b", "-t"}
+
+# Wrappers that prefix a real command without changing what it is.
+_COMMAND_PREFIXES = {"sudo", "env", "command", "nice", "nohup", "time", "doas"}
+
+# Operators that end one command and begin another.
+_SEGMENT_SEPARATORS = {"&&", "||", "|", ";", "&", "|&", "\n"}
 
 # A message argument is only inert if the shell will not run anything to build
 # it. `git commit -m "$(cat /etc/shadow)"` reads the file, so a token carrying
@@ -67,16 +82,36 @@ MESSAGE_FLAGS = {"-m", "--message", "-b", "--body", "-t", "--title", "--notes"}
 _SUBSTITUTION = re.compile(r"\$\(|`|<\(|>\(")
 
 
-def _strip_message_args(command: str) -> str:
-    """Drop message-flag arguments from a shell command, keeping everything else.
-
-    Returns the original command unchanged if it cannot be parsed — an
-    unparseable command is scanned in full rather than trusted.
-    """
+def _tokenize(command: str) -> list[str] | None:
+    """Shell-ish tokens with operators kept separate; None if unparseable."""
     try:
-        tokens = shlex.split(command, posix=True)
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        return list(lexer)
     except ValueError:
-        return command  # unbalanced quotes: fail closed
+        return None
+
+
+def _segment_command(tokens: list[str]) -> str:
+    """The command a segment invokes, ignoring wrapper prefixes.
+
+    `sudo git commit …` and `FOO=bar git commit …` both invoke git.
+    """
+    for token in tokens:
+        base = token.rsplit("/", 1)[-1]
+        if base in _COMMAND_PREFIXES:
+            continue
+        name, sep, _ = token.partition("=")
+        if sep and not name.startswith("-"):
+            continue  # VAR=value assignment prefix, not the command
+        return base
+    return ""
+
+
+def _strip_segment(tokens: list[str]) -> list[str]:
+    """Drop message-flag arguments, but only for commands that take them."""
+    if _segment_command(tokens) not in MESSAGE_COMMANDS:
+        return tokens
 
     kept: list[str] = []
     skip_next = False
@@ -98,7 +133,37 @@ def _strip_message_args(command: str) -> str:
                 kept.append(token)
             continue
 
+        # -mfix typo — value attached to a short flag
+        if len(token) > 2 and token[:2] in _ATTACHABLE_SHORT:
+            if _SUBSTITUTION.search(token):
+                kept.append(token)
+            continue
+
         kept.append(token)
+
+    return kept
+
+
+def _strip_message_args(command: str) -> str:
+    """Drop message-flag arguments from a shell command, keeping everything else.
+
+    Returns the original command unchanged if it cannot be parsed — an
+    unparseable command is scanned in full rather than trusted.
+    """
+    tokens = _tokenize(command)
+    if tokens is None:
+        return command  # unbalanced quotes: fail closed
+
+    kept: list[str] = []
+    segment: list[str] = []
+    for token in tokens:
+        if token in _SEGMENT_SEPARATORS:
+            kept.extend(_strip_segment(segment))
+            kept.append(token)
+            segment = []
+        else:
+            segment.append(token)
+    kept.extend(_strip_segment(segment))
 
     return " ".join(kept)
 
