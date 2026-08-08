@@ -13,12 +13,18 @@
 #      the moment it is pushed: it shows up in the remote branch list, in CI logs
 #      and in notifications, before any merge, and survives in forks and clones
 #      after deletion. The commit-message guard never sees it.
+#   5. (--tree) Checks 1 and 2 against the ENTIRE tracked tree, not a diff.
+#      A guard that only sees deltas cannot tell you the state of the thing it
+#      guards (opskit #134): anything committed before the guard existed is
+#      grandfathered in unexamined. No allowlist — examples in tracked files
+#      use RFC 5737 documentation ranges, so any RFC1918 hit is a finding.
 #
 # Usage:
 #   bin/publication-guard.sh --cached              # staged changes (pre-commit)
 #   bin/publication-guard.sh <base>...<head>       # a diff range (CI)
 #   bin/publication-guard.sh --messages <range>    # commit messages of a range
 #   bin/publication-guard.sh --branch [name]       # a branch name (default: HEAD)
+#   bin/publication-guard.sh --tree                # every tracked file's content
 #
 # Overrides (reviewed false positives only):
 #   ALLOW_PRIVATE_IPS=1   skip check 1
@@ -92,6 +98,38 @@ if [ "$MODE" = "--branch" ]; then
         exit 1
     fi
     exit 0
+fi
+
+if [ "$MODE" = "--tree" ]; then
+    fail=0
+
+    if [ "${ALLOW_PRIVATE_IPS:-0}" != "1" ]; then
+        # environments/ is gitignored except example/, which must be clean too.
+        ip_hits=$(git grep -nE "$RFC1918" -- ':!*.png' ':!*.jpg' || true)
+        if [ -n "$ip_hits" ]; then
+            echo "ERROR: Tracked files contain private (RFC1918) addresses:"
+            echo "$ip_hits"
+            echo "Use RFC 5737 documentation ranges (192.0.2.x / 198.51.100.x /"
+            echo "203.0.113.x) in committed files; real values belong in the"
+            echo "private environment layers. See docs/client-data-policy.md."
+            fail=1
+        fi
+    fi
+
+    if [ "${ALLOW_CLIENT_TOKENS:-0}" != "1" ]; then
+        for tok in $(collect_tokens); do
+            tok_hits=$(git grep -inE "\b${tok}\b" -- ':!environments' || true)
+            path_hits=$(git ls-files | grep -v '^environments/' | grep -icE "\b${tok}\b" || true)
+            if [ -n "$tok_hits" ] || [ "$path_hits" -gt 0 ]; then
+                echo "ERROR: Tracked content or paths contain the client token '${tok}':"
+                [ -n "$tok_hits" ] && echo "$tok_hits" | head -20
+                echo "Client-identifying information must never be published — see docs/client-data-policy.md."
+                fail=1
+            fi
+        done
+    fi
+
+    exit "$fail"
 fi
 
 if [ "$MODE" = "--messages" ]; then
