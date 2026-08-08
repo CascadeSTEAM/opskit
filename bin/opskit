@@ -757,7 +757,7 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
     pi = sub.add_parser('init', help='scaffold a new environment')
     pi.add_argument('name', nargs='?', help='environment name (slug) — prompts interactively if omitted')
     pi.add_argument('--display-name', help='human-readable name')
-    pi.add_argument('--subnets', help='comma-separated CIDR ranges (e.g. "192.0.2.0/24,192.0.2.0/24")')
+    pi.add_argument('--subnets', help='comma-separated CIDR ranges (e.g. "192.0.2.0/24,198.51.100.0/24")')
     pi.add_argument('--ticket-prefix', help='helpdesk ticket prefix (e.g. "ACME")')
 
     # scan

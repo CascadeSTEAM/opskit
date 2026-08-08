@@ -13,7 +13,8 @@
 #      the moment it is pushed: it shows up in the remote branch list, in CI logs
 #      and in notifications, before any merge, and survives in forks and clones
 #      after deletion. The commit-message guard never sees it.
-#   5. (--tree) Checks 1 and 2 against the ENTIRE tracked tree, not a diff.
+#   5. (--tree) Checks 1 and 2 against the working-tree content of every
+#      tracked file, not a diff.
 #      A guard that only sees deltas cannot tell you the state of the thing it
 #      guards (opskit #134): anything committed before the guard existed is
 #      grandfathered in unexamined. No allowlist — examples in tracked files
@@ -118,11 +119,16 @@ if [ "$MODE" = "--tree" ]; then
 
     if [ "${ALLOW_CLIENT_TOKENS:-0}" != "1" ]; then
         for tok in $(collect_tokens); do
-            tok_hits=$(git grep -inE "\b${tok}\b" -- ':!environments' || true)
-            path_hits=$(git ls-files | grep -v '^environments/' | grep -icE "\b${tok}\b" || true)
-            if [ -n "$tok_hits" ] || [ "$path_hits" -gt 0 ]; then
+            # environments/ is exempt (real data lives there, gitignored) —
+            # except example/, which is tracked and published like anything else.
+            tok_hits=$({ git grep -inE "\b${tok}\b" -- ':!environments' || true
+                         git grep -inE "\b${tok}\b" -- 'environments/example' || true; })
+            path_hits=$({ git ls-files | grep -v '^environments/' | grep -iE "\b${tok}\b" || true
+                          git ls-files -- environments/example | grep -iE "\b${tok}\b" || true; })
+            if [ -n "$tok_hits" ] || [ -n "$path_hits" ]; then
                 echo "ERROR: Tracked content or paths contain the client token '${tok}':"
                 [ -n "$tok_hits" ] && echo "$tok_hits" | head -20
+                [ -n "$path_hits" ] && echo "$path_hits" | sed 's/^/  path: /' | head -20
                 echo "Client-identifying information must never be published — see docs/client-data-policy.md."
                 fail=1
             fi

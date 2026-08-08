@@ -49,7 +49,10 @@ def _device(name, dtype='server', mac=None, ip=None, description='',
     return doc
 
 
-class EnricherTestCase(unittest.TestCase):
+class EnricherFixture(unittest.TestCase):
+    """Shared scratch-dataset harness. Holds no tests of its own — subclassing
+    a TestCase that has tests re-runs every one of them (opskit #134 review)."""
+
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix='enricher-test-'))
         self.devices_dir = self.tmp / 'devices'
@@ -72,6 +75,8 @@ class EnricherTestCase(unittest.TestCase):
             for f in sorted(self.devices_dir.glob('*.yml'))
         }
 
+
+class EnricherTestCase(EnricherFixture):
     # ── D4/D3: deduplication ─────────────────────────────────────
 
     def test_mac_dup_keeps_curated_name_and_deletes_stub(self):
@@ -227,7 +232,7 @@ class EnricherTestCase(unittest.TestCase):
                          'previously merged pairs must not re-merge')
 
 
-class BmcPairingTestCase(EnricherTestCase):
+class BmcPairingTestCase(EnricherFixture):
     """Phase 7 prefixes come from network.yml, never module constants (#134)."""
 
     def _write_pairing_meta(self):

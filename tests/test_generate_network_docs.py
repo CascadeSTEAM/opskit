@@ -7,6 +7,7 @@ into the gitignored environments/<env>/context/ layer instead.
 """
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -38,7 +39,7 @@ def fake_repo(tmp_path):
 
 def run(repo_root):
     return subprocess.run(
-        ["python3", str(SCRIPT)],
+        [sys.executable, str(SCRIPT)],
         capture_output=True, text=True,
         env={"PATH": "/usr/bin:/bin", "OPSKIT_ROOT": str(repo_root)},
     )
@@ -69,5 +70,7 @@ def test_script_itself_contains_no_topology():
 
 
 def test_script_never_touches_git():
+    """It used to auto-commit its output into the public docs/ tree."""
     text = SCRIPT.read_text()
-    assert "git" not in text.lower().replace("gitignored", "")
+    assert "subprocess" not in text
+    assert "import subprocess" not in text

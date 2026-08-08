@@ -304,15 +304,35 @@ def test_tree_passes_a_clean_repo_with_documentation_ranges(repo):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_tree_token_check_ignores_the_environments_layer(repo):
-    """environments/ is where real data is SUPPOSED to live; only example/ is
-    tracked in the real repo, and staging violations are the isolation check's
-    job, not this one's."""
+def test_tree_token_check_ignores_the_private_environment_layers(repo):
+    """environments/<env>/ is where real data is SUPPOSED to live — it is
+    gitignored, and staging violations are the isolation check's job."""
     commit(repo, "environments/acme/env.yml", "name: acme\n")
 
     result = run_tree_guard(repo)
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_tree_token_check_still_covers_the_tracked_example_layer(repo):
+    """environments/example/ is tracked and published like anything else, so
+    the layer-wide exemption must not swallow it."""
+    commit(repo, "environments/example/env.yml", "name: acme\n")
+
+    result = run_tree_guard(repo)
+
+    assert result.returncode == 1
+    assert "acme" in result.stdout
+
+
+def test_tree_reports_the_offending_path_not_just_a_count(repo):
+    """A path-only hit used to print an error with nothing to act on."""
+    commit(repo, "notes/acme-facts.md", "clean content\n")
+
+    result = run_tree_guard(repo)
+
+    assert result.returncode == 1
+    assert "acme-facts.md" in result.stdout
 
 
 def test_tree_overrides_narrow_it_to_one_check(repo):
