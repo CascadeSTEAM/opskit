@@ -137,18 +137,8 @@
           --net0 name=eth0,bridge={{ ct_bridge }},ip={{ ct_ip }},gw={{ ct_gateway }},firewall=1
           --unprivileged {{ 1 if ct_unprivileged else 0 }}
           --onboot {{ 1 if ct_onboot else 0 }}
-          --features nesting=1,keyctl=1
+          --features nesting=1{{ ',keyctl=1' if ct_unprivileged else '' }}
           --start 0
-      changed_when: true
-      when: existing_ct.rc != 0
-
-    # Docker inside an unprivileged LXC needs nesting (so it can create its own
-    # namespaces) and keyctl (so containerd can use the kernel keyring). Set at
-    # create time above; re-asserted here because a container created by an
-    # earlier version of this play may predate the flags.
-    - name: Ensure the Docker-in-LXC features are set
-      ansible.builtin.command:
-        cmd: "pct set {{ ct_id }} --features nesting=1,keyctl=1"
       changed_when: true
       when: existing_ct.rc != 0
 
@@ -157,6 +147,12 @@
       # issue asks for: the interface has firewall=1 above, so with no permit
       # rules nothing reaches the container until someone deliberately adds a
       # rule. Hardening beyond this posture is a separate task.
+      #
+      # No `mode:` here, deliberately. /etc/pve is pmxcfs, a FUSE cluster
+      # filesystem that hardcodes its own permissions and rejects chmod() with
+      # EPERM. The copy module chmods after writing, so setting mode makes this
+      # task fail on a real node — halfway through provisioning, after the
+      # container already exists.
       ansible.builtin.copy:
         dest: "/etc/pve/firewall/{{ ct_id }}.fw"
         content: |
@@ -168,7 +164,6 @@
           [RULES]
           # Intentionally empty. This container is network-isolated by default
           # (opskit #150). Add rules deliberately, never by default-permit.
-        mode: "0640"
         force: false
       when: existing_ct.rc != 0
 

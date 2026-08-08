@@ -53,6 +53,17 @@ def _flatten(tasks):
     return out
 
 
+def _with_guards(tasks, inherited=""):
+    """(task, effective_guard) pairs — a task in a block is also gated by the
+    block's own `when`, so checking only the task's `when` understates it."""
+    out = []
+    for task in tasks:
+        guard = f"{inherited} {task.get('when', '')}".strip()
+        out.append((task, guard))
+        out.extend(_with_guards(task.get("block", []), guard))
+    return out
+
+
 def test_playbook_exists_and_parses():
     assert PLAYBOOK.is_file()
     assert isinstance(_play(), dict)
@@ -97,22 +108,76 @@ def test_it_refuses_a_container_id_that_belongs_to_something_else():
     assert guarded, "no assert is gated on the existing-container probe"
 
 
+# Modules that only read or report. Anything else in this play changes state.
+READ_ONLY_MODULES = {
+    "ansible.builtin.assert",
+    "ansible.builtin.debug",
+    "ansible.builtin.set_fact",
+}
+
+
+def _module_of(task):
+    for key in task:
+        if key.startswith("ansible.builtin."):
+            return key
+    return None
+
+
+def _mutating_tasks():
+    """Every state-changing task with its effective guard, found by module
+    rather than by grepping for 'pct create'. An earlier version of this test
+    matched command substrings and silently skipped the firewall copy and the
+    template download, so removing their guards went undetected."""
+    out = []
+    for task, guard in _with_guards(_tasks()):
+        module = _module_of(task)
+        if module is None or module in READ_ONLY_MODULES:
+            continue
+        if task.get("block"):
+            continue  # the block wrapper itself performs nothing
+        # A read-only command declares itself with changed_when: false.
+        if task.get("changed_when") is False:
+            continue
+        out.append((task, guard))
+    return out
+
+
 def test_creation_only_runs_when_the_container_is_absent():
     """Every mutating task must be conditioned on the probe, or a re-run
     reshapes a container that already exists."""
-    mutating = [
-        t for t in _flatten(_tasks())
-        if any(k.startswith("ansible.builtin.") and k != "ansible.builtin.assert"
-               and k not in ("ansible.builtin.debug",)
-               for k in t)
-        and "pct create" in str(t) or "pct set" in str(t) or "pct start" in str(t)
-    ]
-    assert mutating, "no container-mutating task found — did the play change shape?"
+    mutating = _mutating_tasks()
+    assert len(mutating) >= 4, (
+        f"expected the create/template/firewall/start tasks, found "
+        f"{[t.get('name') for t, _ in mutating]} — did the play change shape?"
+    )
 
-    for task in mutating:
-        assert "existing_ct" in str(task.get("when", "")), (
+    for task, guard in mutating:
+        assert "existing_ct" in guard, (
             f"task {task.get('name')!r} would run against an existing container"
         )
+
+
+def test_no_task_sets_a_mode_on_the_proxmox_cluster_filesystem():
+    """/etc/pve is pmxcfs, a FUSE filesystem that rejects chmod() with EPERM.
+    The copy module chmods after writing, so a `mode:` there fails the run
+    partway through provisioning — after the container already exists."""
+    for task in _flatten(_tasks()):
+        module = _module_of(task) or ""
+        args = task.get(module) if isinstance(task.get(module), dict) else {}
+        dest = str(args.get("dest", ""))
+        if dest.startswith("/etc/pve"):
+            assert "mode" not in args, (
+                f"task {task.get('name')!r} sets mode on {dest}; pmxcfs rejects "
+                f"chmod and the task will fail on a real node"
+            )
+
+
+def test_keyctl_is_only_requested_for_unprivileged_containers():
+    """Proxmox documents keyctl as unprivileged-only."""
+    text = PLAYBOOK.read_text()
+    assert "',keyctl=1' if ct_unprivileged else ''" in text, (
+        "keyctl must be conditional on ct_unprivileged"
+    )
 
 
 def test_the_probe_never_fails_the_run():
