@@ -13,6 +13,78 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-08-08 — /plow: eight issues closed, and review earns its keep
+
+**Key decisions:**
+
+- **One direction of truth for credentials** (#103). The vault owns the secret
+  value, an inventory owns the metadata, Ansible reads from the vault at run
+  time. Syncing the vault into `ansible-vault` was rejected: a sync has a
+  direction that is easy to get backwards and fails *silently* — the copy keeps
+  working while diverging. This repo has been bitten by that class more than
+  once. Flagged on the PR as the one judgement call worth overriding.
+- **Reuse is by reference, with a version** (#138). The contract buildsmith had
+  prototyped is now supported: `--repo` names the tree under test, so a consumer
+  no longer overloads `OPSKIT_ROOT` with two meanings; `--contract-version` lets
+  it fail closed on a stale OpsKit; `--token-count` lets it fail closed on an
+  empty token list without forking the token logic. Tiers stay separate —
+  executable tooling by reference, conventions by scaffold-plus-drift-check,
+  **skills never shared as content**.
+- **One skill tree** (#131). `.opencode/skills/` survives; the duplicate is
+  gone. `AGENTS.md`'s skill list is now the arbiter of what is ours, and
+  reconciles exactly. Nearly lost real work — `dogfood-cycle` (#102) existed
+  only in the deleted tree — which is the argument for the arbiter existing.
+- **A guard that only sees deltas cannot tell you the state of the thing it
+  guards** (#134). `--tree` audits every tracked file, and its RFC1918 half is
+  enforced in `make test` with no allowlist.
+- **#159's premise was wrong, so nothing was cut over.** The "duplicate" MCP
+  server defines zero tools and `exec`s the same package, adding vault
+  credentials and per-environment topology. Deleting it would have removed the
+  vault integration, not a redundancy.
+
+**Architectural choices:**
+
+- Fetch separated from enrichment in the scanner (#145), so enrichment is
+  offline, deterministic and fixture-tested — no live server anywhere in the
+  suite.
+- Playbooks that cannot run in CI are pinned by *static* tests that assert
+  behaviour (guards present, mutating tasks conditioned, no mode on a
+  chmod-hostile filesystem) rather than by grepping source.
+
+**What this session actually taught:**
+
+- **Adversarial review found four defects that reading would not have.** Each
+  reviewer *ran* the thing: a fix of mine that allowed `od -b <credential
+  store>`; a `mode:` that would fail mid-provisioning on the Proxmox cluster
+  filesystem; a stale DHCP lease renaming devices back on every scan; substring
+  matching that skipped issuing a token while reporting success. Three of the
+  four were in code I had just written and considered done.
+- **Mutation-verification is now the standard here**: revert the fix, confirm
+  the test fails, restore. It exposed a test that passed against the very bug it
+  claimed to guard.
+- **A skipped test is worse than the bug it hides** — `importorskip` silently
+  dropped 13 tests; the dependency was declared instead.
+- Review subagents must pin a commit or worktree; this clone is shared and
+  branches moved under two reviewers mid-run.
+
+**Process failure, recorded deliberately:** a commit for #138 went to `main` and
+was pushed, because `gh issue develop --checkout` created the branch without
+switching the tree and I did not verify. Remediated with a revert on `main` and
+a normal PR — no force-push to shared history. The check is one command
+(`git branch --show-current`) and is now in the session note.
+
+**Completed:** #134, #131, #169, #166, #150, #145, #103 closed and #138
+advanced; PRs #171–#175, #178–#180 merged; suite 848 passed / 1 skipped.
+
+**Open threads:** #168 (Tinker interop — repo-side parts are ready to do, the
+vault collection needs a live session); #170 (tree-wide token hits, needs owner
+decisions); #159 step 2; #176/#177 (split from #138's remaining scope); #181
+(flat schema vs nested scanner records — the validator currently cannot check
+what the scanner writes); #94/#106 blocked on a live RouterOS device; #104
+awaiting an architectural decision.
+
+---
+
 ## 2026-08-07 — the guard goes live, and a peer lineage is founded
 
 **Key decisions:**
