@@ -22,8 +22,11 @@ use is worse than no cleanup tool:
     this clone concurrently)
   * never an unmerged local branch (`git branch -d`, never `-D`)
   * never the default branch
-  * a remote branch with NO pull request is reported, never deleted: it may be
-    work that never reached a PR, and that call is the operator's
+  * a remote branch carrying commits the base branch lacks is reported, never
+    deleted, whatever its PR state — that is unmerged work, and whether it is
+    finished is the operator's call. A branch with no PR that is *provably an
+    ancestor* of the base branch holds nothing, so it is offered like any other
+    dead branch rather than left for a human to re-derive that fact
   * nothing outside branches and worktree metadata — session notes, the idea
     ledger and the environment layers are not this tool's business
 
@@ -161,11 +164,39 @@ def _pr_states() -> dict[str, str]:
     return states
 
 
-def remote_branches() -> tuple[list[tuple[str, str]], list[str]]:
-    """(dead, undecided) remote branches.
+def _is_ancestor(sha: str, base: str) -> bool:
+    """True when `sha` is already contained in `base`.
 
-    `dead` are those whose PR is merged or closed. `undecided` are those with no
-    PR at all — reported for a human, never deleted here.
+    The exact question "would deleting this lose anything", answered without
+    reference to PR history: an ancestor holds nothing the base branch lacks.
+    """
+    return subprocess.run(
+        ["git", "merge-base", "--is-ancestor", sha, base],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    ).returncode == 0
+
+
+def _unique_commits(sha: str, base: str) -> int:
+    out = _git("rev-list", "--count", f"{base}..{sha}", check=False).strip()
+    return int(out) if out.isdigit() else -1
+
+
+def remote_branches() -> tuple[list[tuple[str, str]], list[dict]]:
+    """(dead, no_pr) remote branches.
+
+    `dead` are those whose PR is merged or closed — plus those with no PR that
+    are provably empty, see below. `no_pr` are the rest, each annotated with how
+    many commits it carries that the base branch does not.
+
+    The first real run showed why the no-PR list must be split rather than
+    handed over whole. It produced two branches that were nothing alike: one an
+    abandoned `gh issue develop` stub containing literally nothing, the other
+    three commits of unmerged field work. Presenting those identically is how a
+    list stops being read.
+
+    An abandoned stub is also not harmless: `gh issue develop` cannot reuse a
+    name, so an empty leftover silently renames the next attempt at that issue
+    with a `-1` suffix. That has happened here for #150, #90 and #69.
 
     Raises RuntimeError when the remote or `gh` is unreachable. The caller
     degrades to local-only rather than aborting: being unable to survey the
@@ -176,7 +207,7 @@ def remote_branches() -> tuple[list[tuple[str, str]], list[str]]:
     protected = branches_in_use() | {base, "main", "master"}
     states = _pr_states()
 
-    dead, undecided = [], []
+    dead, no_pr = [], []
     for line in _git("ls-remote", "--heads", "origin").splitlines():
         if not line.strip():
             continue
@@ -186,11 +217,27 @@ def remote_branches() -> tuple[list[tuple[str, str]], list[str]]:
             continue
 
         state = states.get(name)
-        if state is None:
-            undecided.append(name)
-        elif state in DEAD_PR_STATES:
+
+        if state == "MERGED":
+            # GitHub says the content landed. Do NOT ask whether the tip is an
+            # ancestor: a squash merge rewrites it into a new commit, so a
+            # correctly-merged branch is never an ancestor of the base.
             dead.append((name, sha[:9]))
-    return dead, undecided
+            continue
+
+        # CLOSED means the PR was rejected or abandoned, NOT that the work
+        # landed — so it gets the same scrutiny as a branch with no PR at all.
+        if state in (None, "CLOSED"):
+            if base and _is_ancestor(sha, base):
+                dead.append((name, sha[:9]))
+            else:
+                no_pr.append({
+                    "name": name,
+                    "sha": sha[:9],
+                    "state": state or "no PR",
+                    "unique_commits": _unique_commits(sha, base) if base else -1,
+                })
+    return dead, no_pr
 
 
 def survey() -> dict:
@@ -272,10 +319,14 @@ def report(state: dict) -> None:
         print(f"    remote  {name}  ({sha})")
 
     if undecided:
-        print(f"\n  {len(undecided)} remote branch(es) have NO pull request. Not")
-        print("  deleted — 'never had a PR' is not 'finished', so that call is yours:")
-        for name in undecided:
-            print(f"    {name}")
+        print(f"\n  {len(undecided)} remote branch(es) carry commits that {base} does not")
+        print("  have. NOT deleted — that is unmerged work, and whether it is")
+        print("  finished is a judgement only you can make:")
+        for entry in undecided:
+            n = entry["unique_commits"]
+            count = f"{n} unmerged commit(s)" if n >= 0 else "unknown commit count"
+            print(f"    {entry['name']}  ({entry['sha']}, {entry['state']}, {count})")
+        print(f"  Inspect one with:  git log --oneline {base}..origin/<name>")
 
     if not local and not dead:
         print("\nNothing to remove.")

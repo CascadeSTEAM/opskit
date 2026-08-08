@@ -175,15 +175,72 @@ def test_a_remote_branch_with_an_open_pr_is_kept(repo, monkeypatch):
     assert undecided == []
 
 
-def test_a_remote_branch_with_no_pr_is_reported_not_deleted(repo, monkeypatch):
+def test_a_remote_branch_with_no_pr_and_unique_work_is_reported_not_deleted(repo, monkeypatch):
     """'Never had a PR' is not 'finished' — that call is the operator's."""
     mod = _load(repo)
-    _fake_remote(mod, monkeypatch, {"orphan": "a" * 40}, {})
+    sha = git(repo, "rev-parse", "unmerged-branch").stdout.strip()
+    _fake_remote(mod, monkeypatch, {"orphan": sha}, {})
 
     dead, undecided = mod.remote_branches()
 
     assert dead == []
-    assert undecided == ["orphan"]
+    assert [e["name"] for e in undecided] == ["orphan"]
+    assert undecided[0]["unique_commits"] == 1, "the operator needs the size"
+    assert undecided[0]["state"] == "no PR"
+
+
+def test_a_no_pr_branch_that_is_an_ancestor_is_provably_empty(repo, monkeypatch):
+    """The first real run produced two no-PR branches that were nothing alike:
+    an abandoned `gh issue develop` stub holding literally nothing, and three
+    commits of unmerged field work. Asking a human to tell those apart by hand
+    is how a list stops being read."""
+    mod = _load(repo)
+    sha = git(repo, "rev-parse", "main").stdout.strip()
+    _fake_remote(mod, monkeypatch, {"abandoned-stub": sha}, {})
+
+    dead, undecided = mod.remote_branches()
+
+    assert [n for n, _ in dead] == ["abandoned-stub"]
+    assert undecided == []
+
+
+def test_a_closed_pr_does_not_authorize_deleting_unmerged_work(repo, monkeypatch):
+    """CLOSED means the PR was rejected or abandoned, NOT that the work landed.
+    Treating it like MERGED would delete the very thing someone declined to
+    merge but might still want."""
+    mod = _load(repo)
+    sha = git(repo, "rev-parse", "unmerged-branch").stdout.strip()
+    _fake_remote(mod, monkeypatch, {"rejected": sha}, {"rejected": "CLOSED"})
+
+    dead, undecided = mod.remote_branches()
+
+    assert dead == []
+    assert undecided[0]["state"] == "CLOSED"
+
+
+def test_a_closed_pr_whose_work_is_already_in_the_base_is_removable(repo, monkeypatch):
+    mod = _load(repo)
+    sha = git(repo, "rev-parse", "main").stdout.strip()
+    _fake_remote(mod, monkeypatch, {"closed-empty": sha}, {"closed-empty": "CLOSED"})
+
+    dead, undecided = mod.remote_branches()
+
+    assert [n for n, _ in dead] == ["closed-empty"]
+    assert undecided == []
+
+
+def test_a_squash_merged_branch_is_still_removable(repo, monkeypatch):
+    """The subtlety that makes the ancestor check wrong for MERGED: a squash
+    merge rewrites the commits, so a correctly-merged branch is never an
+    ancestor of the base. Requiring one here would stop removing anything."""
+    mod = _load(repo)
+    sha = git(repo, "rev-parse", "unmerged-branch").stdout.strip()  # not an ancestor
+    _fake_remote(mod, monkeypatch, {"squashed": sha}, {"squashed": "MERGED"})
+
+    dead, undecided = mod.remote_branches()
+
+    assert [n for n, _ in dead] == ["squashed"]
+    assert undecided == []
 
 
 def test_a_reopened_ref_is_kept_even_if_an_older_pr_merged(repo, monkeypatch):
