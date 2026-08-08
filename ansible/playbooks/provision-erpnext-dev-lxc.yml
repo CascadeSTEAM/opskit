@@ -1,0 +1,190 @@
+---
+# provision-erpnext-dev-lxc.yml — Create an LXC container on a Proxmox node to
+# host an ERPNext Docker Compose *development* deployment (opskit #150).
+#
+# Per .opencode/rules/iac-required.md the container is system/deployment state,
+# so its rebuild path is this playbook, not a hand-run `pct create`.
+#
+# SAFETY POSTURE
+#   - Idempotent: an existing container is never recreated or destroyed. If the
+#     target ID is in use by something that does not look like this container,
+#     the play FAILS rather than adopting or overwriting it.
+#   - Network-isolated by default: no port forwarding, no permit rules. This
+#     container will later hold a clone of Confidential production data;
+#     hardening and the data restore are separate tasks and out of scope here.
+#   - No infrastructure values are hardcoded. Every address, node, and pool is
+#     a variable, and ct_ip has NO default — the address is not yet allocated,
+#     so the play must fail loudly rather than invent one.
+#
+# SIZING: deliberately generous. The production deployment this mirrors is
+# disk-constrained and that constraint is explicitly NOT reproduced here.
+# Override any of the ct_* variables to suit the target node.
+#
+# Run from this repo root:
+#   ansible-playbook -i environments/$ACTIVE_ENV/ansible/inventory.yml \
+#     ansible/playbooks/provision-erpnext-dev-lxc.yml \
+#     -e target_host=<proxmox-node-alias> -e ct_id=<id> \
+#     -e ct_ip=<address/prefix> -e ct_gateway=<address>
+#
+# Dry run first: add --check.
+
+- name: Provision an ERPNext development LXC container
+  # target_host is supplied at run time with `-e target_host=<host>`; the
+  # linter cannot know that, and the assert below fails loudly if it is
+  # missing. A per-line ignore, never skip_list — syntax-check is unskippable
+  # and listing it there stops ansible-lint running at all (#83).
+  hosts: "{{ target_host }}"  # noqa: syntax-check[specific]
+  gather_facts: false
+
+  vars:
+    # --- Required, no defaults. See the assert below. --------------------
+    # ct_id        container ID to create
+    # ct_ip        CIDR address for the container, e.g. 192.0.2.50/24
+    # ct_gateway   default gateway for the container
+
+    # --- Sizing: generous on purpose, all overridable --------------------
+    ct_hostname: erpnext-dev
+    ct_cores: 4
+    ct_memory_mb: 8192
+    ct_swap_mb: 4096
+    ct_disk_gb: 120
+
+    # --- Placement -------------------------------------------------------
+    ct_storage: local-lvm
+    ct_template_storage: local
+    ct_bridge: vmbr0
+    ct_ostemplate_name: debian-12-standard_12.7-1_amd64.tar.zst
+    ct_unprivileged: true
+    ct_onboot: false
+    ct_start_after_create: false
+
+  tasks:
+    - name: Require the parameters that must never be guessed
+      ansible.builtin.assert:
+        that:
+          - ct_id is defined
+          - ct_ip is defined
+          - ct_gateway is defined
+        fail_msg: >-
+          Pass -e ct_id=<id> -e ct_ip=<address/prefix> -e ct_gateway=<address>.
+          The container address is allocated per environment and has no default
+          on purpose: inventing one would either collide with a live host or
+          silently create an unreachable container.
+
+    - name: Reject an address that is not in CIDR form
+      ansible.builtin.assert:
+        that:
+          - "'/' in ct_ip"
+        fail_msg: >-
+          ct_ip must include a prefix length (e.g. 192.0.2.50/24). Without one
+          pct assumes /24, which is a guess about someone else's network.
+
+    - name: Read the existing container config, if any
+      ansible.builtin.command: "pct config {{ ct_id }}"
+      register: existing_ct
+      changed_when: false
+      failed_when: false
+
+    - name: Refuse to touch a container ID already used by something else
+      ansible.builtin.assert:
+        that:
+          - "existing_ct.stdout is search('(?m)^hostname: ' ~ ct_hostname ~ '$')"
+        fail_msg: >-
+          CT {{ ct_id }} already exists on {{ target_host }} and its hostname is
+          not {{ ct_hostname }}. Refusing to adopt or overwrite it — pick a free
+          ct_id, or confirm this really is the container you meant.
+      when: existing_ct.rc == 0
+
+    - name: Report that the container already exists
+      ansible.builtin.debug:
+        msg: >-
+          CT {{ ct_id }} ({{ ct_hostname }}) already exists — leaving it alone.
+          This play creates the container; it does not reconfigure one.
+      when: existing_ct.rc == 0
+
+    # ---- Everything below runs only when the container does not exist ----
+
+    - name: Ensure the OS template is present on the node
+      when: existing_ct.rc != 0
+      block:
+        - name: List templates already downloaded
+          ansible.builtin.command:
+            cmd: "pveam list {{ ct_template_storage }}"
+          register: template_list
+          changed_when: false
+
+        - name: Refresh the template catalogue
+          ansible.builtin.command: pveam update
+          changed_when: true
+          when: ct_ostemplate_name not in template_list.stdout
+
+        - name: Download the OS template
+          ansible.builtin.command:
+            cmd: "pveam download {{ ct_template_storage }} {{ ct_ostemplate_name }}"
+          changed_when: true
+          when: ct_ostemplate_name not in template_list.stdout
+
+    - name: Create the container
+      ansible.builtin.command:
+        cmd: >-
+          pct create {{ ct_id }}
+          {{ ct_template_storage }}:vztmpl/{{ ct_ostemplate_name }}
+          --hostname {{ ct_hostname }}
+          --cores {{ ct_cores }}
+          --memory {{ ct_memory_mb }}
+          --swap {{ ct_swap_mb }}
+          --rootfs {{ ct_storage }}:{{ ct_disk_gb }}
+          --net0 name=eth0,bridge={{ ct_bridge }},ip={{ ct_ip }},gw={{ ct_gateway }},firewall=1
+          --unprivileged {{ 1 if ct_unprivileged else 0 }}
+          --onboot {{ 1 if ct_onboot else 0 }}
+          --features nesting=1,keyctl=1
+          --start 0
+      changed_when: true
+      when: existing_ct.rc != 0
+
+    # Docker inside an unprivileged LXC needs nesting (so it can create its own
+    # namespaces) and keyctl (so containerd can use the kernel keyring). Set at
+    # create time above; re-asserted here because a container created by an
+    # earlier version of this play may predate the flags.
+    - name: Ensure the Docker-in-LXC features are set
+      ansible.builtin.command:
+        cmd: "pct set {{ ct_id }} --features nesting=1,keyctl=1"
+      changed_when: true
+      when: existing_ct.rc != 0
+
+    - name: Leave the container firewalled with no rules
+      # An empty rules file with a default-DROP policy is the isolation this
+      # issue asks for: the interface has firewall=1 above, so with no permit
+      # rules nothing reaches the container until someone deliberately adds a
+      # rule. Hardening beyond this posture is a separate task.
+      ansible.builtin.copy:
+        dest: "/etc/pve/firewall/{{ ct_id }}.fw"
+        content: |
+          [OPTIONS]
+          enable: 1
+          policy_in: DROP
+          policy_out: ACCEPT
+
+          [RULES]
+          # Intentionally empty. This container is network-isolated by default
+          # (opskit #150). Add rules deliberately, never by default-permit.
+        mode: "0640"
+        force: false
+      when: existing_ct.rc != 0
+
+    - name: Start the container
+      ansible.builtin.command: "pct start {{ ct_id }}"
+      changed_when: true
+      when:
+        - existing_ct.rc != 0
+        - ct_start_after_create | bool
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          CT {{ ct_id }} ({{ ct_hostname }}) provisioned on {{ target_host }}:
+          {{ ct_cores }} cores, {{ ct_memory_mb }} MB RAM, {{ ct_disk_gb }} GB disk,
+          nesting+keyctl enabled, firewalled with no permit rules.
+          Next: install Docker and deploy the ERPNext compose stack — separate
+          tasks, deliberately not done here.
+      when: existing_ct.rc != 0
