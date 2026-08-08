@@ -1,38 +1,28 @@
 ---
-# Olla role variables
+# Olla role defaults.
+#
+# These are defaults (not vars/) so the environment layer can override them:
+# the real cluster node list lives in environments/<env>/ansible/group_vars/,
+# never in this committed file (docs/client-data-policy.md). The nodes below
+# are RFC 5737 documentation-range placeholders showing the expected shape.
 olla_image: "ghcr.io/thushan/olla:latest"
 olla_container_name: "olla"
 olla_port: 40114
 olla_log_path: "/var/log/olla.log"
 
-# Ollama cluster nodes (from inventory)
+# Ollama cluster nodes — override per environment.
 # Priority: higher = preferred first
 olla_nodes:
-  - name: "cluster-llm"
-    url: "http://10.99.0.201:11434"
+  - name: "hub-example"
+    url: "http://192.0.2.10:11434"
     priority: 100
     check_interval: 15s
     check_timeout: 5s
-  - name: "lab1"
-    url: "http://10.99.0.211:11434"
+  - name: "spoke-example"
+    url: "http://192.0.2.11:11434"
     priority: 75
     check_interval: 15s
     check_timeout: 5s
-  - name: "lab2"
-    url: "http://10.99.0.212:11434"
-    priority: 75
-    check_interval: 15s
-    check_timeout: 5s
-  - name: "lab4"
-    url: "http://10.99.0.214:11434"
-    priority: 75
-    check_interval: 15s
-    check_timeout: 5s
-  - name: "nuk1"
-    url: "http://10.99.0.215:11434"
-    priority: 50
-    check_interval: 20s
-    check_timeout: 10s
 
 # LiteLLM cloud gateway (deployed in Phase 2)
 olla_litellm_url: "http://localhost:4000"
