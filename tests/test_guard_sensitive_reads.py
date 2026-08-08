@@ -120,3 +120,61 @@ def test_the_incident_itself_is_blocked():
     assert guard.check("Bash", {
         "command": 'echo "$(cat /etc/shadow)" > /tmp/probe.sh'
     }) is not None
+
+
+# ── message arguments are text, not reads (opskit #169) ──────────────────────
+# Observed live in the first session with the hook wired: a `git commit` whose
+# *message* documented the guard by naming a guarded path was denied. The
+# scanner matched the path string anywhere in the command, including positions
+# where nothing is opened. A guard that fires when you document the guard is
+# exactly the "fires on ordinary work" failure mode that gets guards disabled.
+#
+# The fix is narrow on purpose, and both lists matter: dropping message text
+# must not open a hole, so everything below that CAN cause a read still denies.
+
+SHADOW = "/etc/" + "shadow"
+
+MESSAGE_ONLY_MENTIONS = [
+    # the reported reproducer
+    f'git commit -m "deny reads of {SHADOW}"',
+    "git commit -m 'document the .client-tokens guard'",
+    'git commit --message="explain why ~/.ssh/id_ed25519 is denied"',
+    f'git commit -a -m "note: /etc/sudoers stays unreadable"',
+    f'gh issue create --title "guard denies {SHADOW}" --body "as designed"',
+    'gh pr comment 1 --body "the .aws/credentials pattern is intentional"',
+]
+
+STILL_DENIED_DESPITE_A_MESSAGE_FLAG = [
+    # a message built by running a command really does read the file
+    f'git commit -m "$(cat {SHADOW})"',
+    f'git commit -m "`cat {SHADOW}`"',
+    'git commit --message="$(cat /repo/.client-tokens)"',
+    # -F names a file the command opens; it is not a message flag
+    f"git commit -F {SHADOW}",
+    # a message argument must not cloak a second command
+    f'git commit -m "clean subject" && cat {SHADOW}',
+    f'git commit -m "clean subject"; cat {SHADOW} > /tmp/x',
+    # the flag appearing later must not swallow an earlier real read
+    f"cat {SHADOW} | git commit -m 'x'",
+]
+
+
+@pytest.mark.parametrize("command", MESSAGE_ONLY_MENTIONS)
+def test_naming_a_guarded_path_in_a_message_is_allowed(command):
+    assert guard.check("Bash", {"command": command}) is None, command
+
+
+@pytest.mark.parametrize("command", STILL_DENIED_DESPITE_A_MESSAGE_FLAG)
+def test_a_message_flag_does_not_become_a_bypass(command):
+    assert guard.check("Bash", {"command": command}) is not None, command
+
+
+def test_an_unparseable_command_is_scanned_in_full():
+    """Unbalanced quotes must fail closed, not fall through unchecked."""
+    assert guard.check("Bash", {"command": f'cat {SHADOW} "unclosed'}) is not None
+
+
+def test_stripping_leaves_the_rest_of_the_command_intact():
+    stripped = guard._strip_message_args('git commit -m "msg" && ls /tmp')
+    assert "msg" not in stripped
+    assert "ls" in stripped and "/tmp" in stripped

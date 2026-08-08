@@ -76,6 +76,32 @@ switched off — the same reasoning that keeps `[^{]` in the secret-scan pattern
 so they do not fire on Jinja placeholders. This narrows the blast radius of an
 over-broad agent; it is not a sandbox.
 
+### Message arguments are text, not reads
+
+Also not covered, and for the same reason: the argument of a *message* flag
+(`-m`, `--message`, `--body`, `--title`, `--notes`). Documenting the guard by
+naming a guarded path in a commit message used to be denied (#169) — a guard
+that fires when you document the guard is precisely the failure mode above.
+
+The strip is kept narrow, because distinguishing "mentions a path" from "reads
+a path" in arbitrary shell is the sort of cleverness that hollows out a guard:
+
+- Only the flag's own argument is dropped; the rest of the command is still
+  scanned, so `git commit -m "subject" && cat <guarded path>` still denies.
+- A message argument containing command or process substitution is **not**
+  treated as text — `git commit -m "$(cat <guarded path>)"` really does read
+  the file, and still denies.
+- `-F` / `--body-file` are **not** message flags. They name a file the command
+  opens, so `git commit -F <guarded path>` reads it and still denies.
+- A command that cannot be parsed (unbalanced quotes) is scanned in full
+  rather than trusted.
+
+**Heredoc bodies are deliberately not stripped.** A heredoc looks like inert
+data, but `bash <<'EOF'` feeds an interpreter, so stripping bodies would let any
+command through. Naming a guarded path inside a heredoc still denies; put it in
+a `-m` message, or write the file with an editor tool instead of a shell
+here-document.
+
 ## Adding a credential store
 
 Add the pattern to `SENSITIVE_PATHS` in `bin/guard-sensitive-reads.py` and a case

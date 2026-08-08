@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 
 # Credential stores and private keys. Patterns, not exact paths: /etc/shadow-
@@ -50,12 +51,64 @@ REASON = (
 )
 
 
+# Flags whose argument is a *message* — text that is written, never opened
+# (opskit #169). Documenting the guard by naming a guarded path in a commit
+# message was denied, which is the "fires on ordinary work" failure mode the
+# design doc warns gets guards switched off.
+#
+# Deliberately a short list of flags that cannot cause a read. `-F`/`--body-file`
+# are excluded on purpose: they name a file the command opens, so
+# `git commit -F /etc/shadow` really does read it.
+MESSAGE_FLAGS = {"-m", "--message", "-b", "--body", "-t", "--title", "--notes"}
+
+# A message argument is only inert if the shell will not run anything to build
+# it. `git commit -m "$(cat /etc/shadow)"` reads the file, so a token carrying
+# command or process substitution is never treated as a message.
+_SUBSTITUTION = re.compile(r"\$\(|`|<\(|>\(")
+
+
+def _strip_message_args(command: str) -> str:
+    """Drop message-flag arguments from a shell command, keeping everything else.
+
+    Returns the original command unchanged if it cannot be parsed — an
+    unparseable command is scanned in full rather than trusted.
+    """
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        return command  # unbalanced quotes: fail closed
+
+    kept: list[str] = []
+    skip_next = False
+    for token in tokens:
+        if skip_next:
+            skip_next = False
+            if _SUBSTITUTION.search(token):
+                kept.append(token)  # not inert — inspect it
+            continue
+
+        if token in MESSAGE_FLAGS:
+            skip_next = True
+            continue
+
+        # --message=... / --body=... in one token
+        flag, sep, value = token.partition("=")
+        if sep and flag in MESSAGE_FLAGS:
+            if _SUBSTITUTION.search(value):
+                kept.append(token)
+            continue
+
+        kept.append(token)
+
+    return " ".join(kept)
+
+
 def _targets(tool: str, tool_input: dict) -> list[str]:
     """The strings worth inspecting for this tool."""
     if tool == "Read":
         return [str(tool_input.get("file_path", ""))]
     if tool == "Bash":
-        return [str(tool_input.get("command", ""))]
+        return [_strip_message_args(str(tool_input.get("command", "")))]
     # Unknown tool: inspect nothing rather than guess and produce noise.
     return []
 
