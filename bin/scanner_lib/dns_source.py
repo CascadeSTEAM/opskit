@@ -33,7 +33,8 @@ import yaml
 # Names the scanner invents when it learns nothing: host-192-0-2-50, and the
 # dataset_writer's occasional unknown-N form. These are placeholders to be
 # replaced, not identities to be preserved.
-_STUB_NAME = re.compile(r'^(host-\d+-\d+-\d+-\d+|unknown-\d+)$')
+STUB_NAME = re.compile(r'^(host-\d+-\d+-\d+-\d+|unknown-\d+)$')
+_STUB_NAME = STUB_NAME  # module-local alias
 
 # Names a DHCP server hands out that identify nothing.
 _USELESS_LEASE_NAMES = {'', '-', 'unknown', 'localhost', 'dhcp', 'client'}
@@ -81,10 +82,35 @@ def _lease_ip(lease: dict) -> str:
     return str(lease.get('ipAddress') or lease.get('address') or '').strip()
 
 
+def _lease_expiry(lease: dict) -> str:
+    """Sortable expiry string, or '' when the server did not supply one.
+
+    Compared as text on purpose: Technitium emits ISO-8601, which sorts
+    correctly as a string, and a lease whose format we do not recognise should
+    lose to one we do rather than crash the run.
+    """
+    return str(lease.get('leaseExpires') or lease.get('leaseExpiry') or '').strip()
+
+
+def _freshest_first(leases: list[dict]) -> list[dict]:
+    """Most recently expiring lease first — that is the current one.
+
+    Without this, whichever lease the server happened to return first won, so
+    a device that had been renamed could be renamed *back* by a stale record.
+    A silent wrong rename in the dataset is exactly the corruption this module
+    must not cause.
+    """
+    return sorted(leases, key=_lease_expiry, reverse=True)
+
+
 def index_leases(leases: list[dict]) -> tuple[dict, dict]:
-    """(by_mac, by_ip) → hostname, skipping leases that name nothing."""
+    """(by_mac, by_ip) → hostname, skipping leases that name nothing.
+
+    Fresh leases win: entries are indexed newest-first and `setdefault` keeps
+    the first seen, so a renewal beats the record it replaced.
+    """
     by_mac, by_ip = {}, {}
-    for lease in leases:
+    for lease in _freshest_first(leases):
         name = _lease_name(lease)
         if not name:
             continue
@@ -125,18 +151,25 @@ def find_duplicate_hostnames(leases: list[dict]) -> list[dict]:
     ]
 
 
-def _device_macs_and_ips(dev: dict) -> tuple[set[str], set[str]]:
-    macs, ips = set(), set()
+def _device_macs_and_ips(dev: dict) -> tuple[list[str], list[str]]:
+    """MACs and addresses in **interface order**, de-duplicated.
+
+    Order is preserved rather than sorted because it is the only signal about
+    which interface is the primary one. Sorting would tie-break on the hex
+    value of the MAC, so a device with two leased NICs would take whichever
+    address happened to sort lower — deterministic, but meaningless.
+    """
+    macs, ips = [], []
     net = dev.get('device', {}).get('networking', {})
     for iface in net.get('interfaces', []) or []:
         if not isinstance(iface, dict):
             continue
         mac = _norm_mac(iface.get('mac'))
-        if mac:
-            macs.add(mac)
+        if mac and mac not in macs:
+            macs.append(mac)
         addr = str(iface.get('ipv4') or '').split('/')[0].strip()
-        if addr:
-            ips.add(addr)
+        if addr and addr not in ips:
+            ips.append(addr)
     return macs, ips
 
 
@@ -163,10 +196,12 @@ def resolve_hostnames(devices: dict[str, dict], leases: list[dict]) -> dict:
             continue
         macs, ips = _device_macs_and_ips(dev)
 
-        found = next((by_mac[m] for m in sorted(macs) if m in by_mac), '')
+        # First matching interface wins, in interface order (see
+        # _device_macs_and_ips) — the primary NIC names the device.
+        found = next((by_mac[m] for m in macs if m in by_mac), '')
         source = 'dhcp_mac'
         if not found:
-            found = next((by_ip[i] for i in sorted(ips) if i in by_ip), '')
+            found = next((by_ip[i] for i in ips if i in by_ip), '')
             source = 'dhcp_ip'
         if not found:
             continue
@@ -196,7 +231,7 @@ def flag_duplicate_leases(devices: dict[str, dict], leases: list[dict]) -> list[
 
     for dev in devices.values():
         macs, _ = _device_macs_and_ips(dev)
-        hit = next((by_mac[m] for m in sorted(macs) if m in by_mac), None)
+        hit = next((by_mac[m] for m in macs if m in by_mac), None)
         if hit:
             problems = dev.setdefault('device', {}).setdefault('problems', {})
             problems['duplicate_dhcp_hostname'] = {

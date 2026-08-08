@@ -95,7 +95,12 @@ def _load_all_devices(devices_dir: Path) -> dict[str, dict]:
     return devices
 
 
-_STUB_NAME = re.compile(r'^host-\d+-\d+-\d+-\d+$')
+# One owner for "is this a scanner placeholder": dns_source defines it, because
+# it also has to answer "does this record still need a real name" (#145 review).
+# The two definitions had drifted — this one missed dataset_writer's
+# `unknown-<n>` form, so those records scored as curated in dedup and escaped
+# scanner-stub tagging despite being pure placeholders.
+_STUB_NAME = dns_source.STUB_NAME
 
 
 def _load_bmc_pairing(ds_path: Path) -> tuple[Optional[str], Optional[str]]:

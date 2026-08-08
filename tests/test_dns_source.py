@@ -125,6 +125,54 @@ class HostnameResolutionTestCase(unittest.TestCase):
                          "matched")
 
 
+class LeasePrecedenceTestCase(unittest.TestCase):
+    """Which lease wins when several describe the same thing (#145 review)."""
+
+    def test_a_renewal_beats_the_lease_it_replaced(self):
+        """Whichever lease the server returned first used to win, so a device
+        that had been renamed could be renamed *back* by a stale record — a
+        silent wrong rename in the dataset."""
+        stale = dict(_lease("old-name", "aa:bb:cc:00:00:01", "192.0.2.50"),
+                     leaseExpires="2020-01-01T00:00:00Z")
+        current = dict(_lease("current-name", "aa:bb:cc:00:00:01", "192.0.2.50"),
+                       leaseExpires="2026-08-08T00:00:00Z")
+
+        for order in ([stale, current], [current, stale]):
+            devices = {"h": _device("host-192-0-2-50", mac="AA:BB:CC:00:00:01")}
+            dns_source.resolve_hostnames(devices, order)
+            self.assertEqual(devices["h"]["device"]["hostname"], "current-name",
+                             f"stale lease won for order {order is order}")
+
+    def test_a_lease_with_no_expiry_loses_to_one_that_has_it(self):
+        undated = _lease("undated", "aa:bb:cc:00:00:01", "192.0.2.50")
+        dated = dict(_lease("dated", "aa:bb:cc:00:00:01", "192.0.2.50"),
+                     leaseExpires="2026-08-08T00:00:00Z")
+
+        devices = {"h": _device("host-192-0-2-50", mac="AA:BB:CC:00:00:01")}
+        dns_source.resolve_hostnames(devices, [undated, dated])
+
+        self.assertEqual(devices["h"]["device"]["hostname"], "dated")
+
+    def test_the_first_interface_names_a_multi_nic_device(self):
+        """With two leased NICs the match used to tie-break on the hex value of
+        the MAC — deterministic but meaningless. Interface order is the only
+        signal about which NIC is primary."""
+        doc = _device("host-192-0-2-50")
+        doc["device"]["networking"]["interfaces"] = [
+            {"name": "eth0", "mac": "AA:BB:CC:00:00:02"},
+            {"name": "eth1", "mac": "AA:BB:CC:00:00:01"},
+        ]
+        leases = [
+            _lease("primary-nic", "aa:bb:cc:00:00:02", "192.0.2.50"),
+            _lease("secondary-nic", "aa:bb:cc:00:00:01", "192.0.2.51"),
+        ]
+
+        devices = {"h": doc}
+        dns_source.resolve_hostnames(devices, leases)
+
+        self.assertEqual(devices["h"]["device"]["hostname"], "primary-nic")
+
+
 class DuplicateHostnameTestCase(unittest.TestCase):
     def test_two_macs_one_name_is_reported(self):
         leases = [
