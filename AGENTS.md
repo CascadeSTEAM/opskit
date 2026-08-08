@@ -81,6 +81,7 @@ All scripts are data-driven — they read from `environments/$ACTIVE_ENV/env.yml
 | `bin/ap.sh <playbook>` | Run Ansible playbook with `--limit` scoped to ACTIVE_ENV |
 | `bin/open-ticket.sh [subject]` | Manage helpdesk tickets (reads env.yml for prefix/endpoint) |
 | `bin/scan.py` | Nmap discovery, enrich YAML device datasets |
+| `bin/fetch-dhcp-leases.py` | Cache the environment's DHCP leases so `scan` can resolve hostnames reverse-PTR misses and flag duplicate-lease identity clashes |
 | `bin/automation-ladder.py` | Track manual processes → escalate to scripts/playbooks |
 | `bin/lifecycle-processor.py` | Manage lifecycle transitions |
 | `bin/frappe-exec.py` | Sanctioned Path B Frappe/ERPNext exec (SSH + docker exec + bench venv python); see `frappe-access` skill |

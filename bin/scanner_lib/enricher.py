@@ -22,6 +22,8 @@ from datetime import date, datetime, timezone
 from collections import defaultdict
 from typing import Optional
 
+from . import dns_source
+
 
 def _today() -> str:
     return date.today().isoformat()
@@ -93,7 +95,12 @@ def _load_all_devices(devices_dir: Path) -> dict[str, dict]:
     return devices
 
 
-_STUB_NAME = re.compile(r'^host-\d+-\d+-\d+-\d+$')
+# One owner for "is this a scanner placeholder": dns_source defines it, because
+# it also has to answer "does this record still need a real name" (#145 review).
+# The two definitions had drifted — this one missed dataset_writer's
+# `unknown-<n>` form, so those records scored as curated in dedup and escaped
+# scanner-stub tagging despite being pure placeholders.
+_STUB_NAME = dns_source.STUB_NAME
 
 
 def _load_bmc_pairing(ds_path: Path) -> tuple[Optional[str], Optional[str]]:
@@ -482,6 +489,8 @@ def enrich_dataset(ds_path: Path) -> dict:
         'stubs_tagged': 0,
         'swarm_links': 0,
         'bmc_links': 0,
+        'hostnames_resolved': 0,
+        'duplicate_hostnames': [],
     }
 
     # Phase 1: Deduplication
@@ -737,6 +746,14 @@ def enrich_dataset(ds_path: Path) -> dict:
 
     summary['stale_refs_removed'] = stale_removed
 
+    # Phase 8b: DNS/DHCP source (#145). Reverse PTR is empty for most LAN
+    # clients, so without this the dataset keeps a pile of host-a-b-c-d stubs
+    # while the DHCP server knows every one of those names. No-op when no
+    # lease cache has been fetched for this dataset.
+    lease_summary = dns_source.enrich_from_leases(ds_path, devices)
+    summary['hostnames_resolved'] = lease_summary['hostnames_resolved']
+    summary['duplicate_hostnames'] = lease_summary['duplicate_hostnames']
+
     # Phase 9: Write ONLY devices whose content actually changed
     written = 0
     for name, dev in devices.items():
@@ -771,6 +788,13 @@ def print_summary(summary: dict) -> None:
 
     if summary['stubs_tagged']:
         print(f"  Scanner stubs:  {summary['stubs_tagged']} tagged")
+
+    if summary.get('hostnames_resolved'):
+        print(f"  DHCP hostnames: {summary['hostnames_resolved']} resolved")
+
+    for dup in summary.get('duplicate_hostnames', []):
+        print(f"  DUPLICATE HOSTNAME: '{dup['hostname']}' claimed by "
+              f"{len(dup['macs'])} devices — set DHCP reservations")
 
     if summary['parent_child_links']:
         print(f"  Parent→Child:   {summary['parent_child_links']} links added")
