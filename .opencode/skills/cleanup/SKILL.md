@@ -44,6 +44,12 @@ That is the whole cycle. The tool holds the safety rules; this skill holds the
   ledger and the environment layers are out of scope — a cleanup that edits
   those is a different and much riskier thing.
 
+**One limitation, stated rather than hidden:** "in use" means *this clone*. If a
+teammate on another machine has a branch checked out, deleting its remote still
+removes their upstream. That is judged acceptable because the branch is only
+offered when its PR is already merged or closed, so the content is in the
+default branch and nothing is lost — but it is a real edge, not an oversight.
+
 ## Why remote branches matter
 
 A branch name is published the moment it is pushed: it appears in the remote

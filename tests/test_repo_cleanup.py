@@ -237,6 +237,51 @@ def test_an_unreachable_remote_still_allows_local_cleanup(repo, capsys):
     assert "merged-branch" in out, "local cleanup must still be offered"
 
 
+def test_a_detached_worktree_protects_the_branch_at_that_commit(repo, tmp_path):
+    """A review agent pins a worktree to a SHA rather than a branch, so the
+    worktree reports `detached` and matching only on branch lines would delete
+    the named ref out from under whoever is reading it."""
+    mod = _load(repo)
+    sha = git(repo, "rev-parse", "merged-branch").stdout.strip()
+    git(repo, "worktree", "add", "-q", "--detach", str(tmp_path / "det"), sha)
+
+    assert "merged-branch" in mod.branches_in_use()
+    assert "merged-branch" not in [n for n, _ in mod.merged_local_branches()]
+
+
+def test_an_undeterminable_default_branch_does_not_take_the_run_down(tmp_path):
+    """A clone with origin/HEAD unset and no local main is not exotic — it is
+    what a bare repo plus linked worktrees looks like, the very topology this
+    tool exists for. It must report, not exit 1 having done nothing."""
+    root = tmp_path / "odd"
+    root.mkdir()
+    git(root, "init", "-q", "-b", "trunk")
+    (root / "f.txt").write_text("x\n")
+    git(root, "add", "-A")
+    git(root, "commit", "-q", "-m", "init")
+
+    mod = _load(root)
+
+    assert mod.default_branch() == "", "no main/master exists here"
+    state = mod.survey()
+    assert state["local_error"], "the failure must be reported, not raised"
+    assert mod.main([]) == 0, "the run must still complete"
+
+
+def test_a_default_branch_named_master_is_found_and_protected(tmp_path):
+    root = tmp_path / "legacy"
+    root.mkdir()
+    git(root, "init", "-q", "-b", "master")
+    (root / "f.txt").write_text("x\n")
+    git(root, "add", "-A")
+    git(root, "commit", "-q", "-m", "init")
+
+    mod = _load(root)
+
+    assert mod.default_branch() == "master"
+    assert "master" not in [n for n, _ in mod.merged_local_branches()]
+
+
 def test_it_touches_nothing_but_branches_and_worktrees():
     """Session notes, the idea ledger and the environment layers are not this
     tool's business — a cleanup that edits them is a different, riskier thing."""

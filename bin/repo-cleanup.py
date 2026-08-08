@@ -57,31 +57,77 @@ def _git(*args: str, check: bool = True) -> str:
     return proc.stdout
 
 
+def _ref_exists(name: str) -> bool:
+    return subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{name}"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    ).returncode == 0
+
+
 def default_branch() -> str:
-    """The branch everything else is measured against."""
+    """The branch everything else is measured against, or '' if unknowable.
+
+    A guess is verified before use. Returning an unresolvable name would make
+    `git branch --merged <name>` fail and take the whole run down with it — and
+    a clone with `origin/HEAD` unset and no local `main` is not exotic: it is
+    what a bare repo plus linked worktrees looks like, which is the very
+    topology this tool is written for.
+    """
     out = _git("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD", check=False).strip()
     if out:
-        return out.rsplit("/", 1)[-1]
-    return "main"
+        name = out.rsplit("/", 1)[-1]
+        if _ref_exists(name):
+            return name
+    for candidate in ("main", "master"):
+        if _ref_exists(candidate):
+            return candidate
+    return ""
 
 
 def branches_in_use() -> set[str]:
-    """Every branch checked out in any worktree, including this one.
+    """Every branch a worktree depends on, including this one.
 
-    This is the rule that matters most: agent sessions and review worktrees
-    share this clone, and deleting a branch out from under one of them turns a
-    tidy-up into an outage.
+    The rule that matters most: agent sessions and review worktrees share this
+    clone, and deleting a branch out from under one turns a tidy-up into an
+    outage.
+
+    Detached worktrees count too. A worktree pinned to a commit by SHA — how a
+    review agent isolates itself — reports `detached` rather than a branch, so
+    matching only on branch lines would let the branch sitting at that same
+    commit be deleted. Nothing breaks immediately, but the named ref someone is
+    reviewing disappears underneath them.
     """
-    in_use = set()
+    in_use: set[str] = set()
+    detached_heads: set[str] = set()
+
+    head = ""
     for line in _git("worktree", "list", "--porcelain").splitlines():
-        if line.startswith("branch "):
+        if line.startswith("HEAD "):
+            head = line.split(" ", 1)[1].strip()
+        elif line.startswith("branch "):
             in_use.add(line.split("refs/heads/", 1)[-1].strip())
+            head = ""
+        elif line.strip() == "detached" and head:
+            detached_heads.add(head)
+            head = ""
+
+    if detached_heads:
+        for line in _git("branch", "--format=%(refname:short) %(objectname)").splitlines():
+            name, _, sha = line.strip().partition(" ")
+            if sha in detached_heads:
+                in_use.add(name)
+
     return in_use
 
 
 def merged_local_branches() -> list[tuple[str, str]]:
     """(name, sha) for local branches fully merged into the default branch."""
     base = default_branch()
+    if not base:
+        raise RuntimeError(
+            "cannot determine the default branch (origin/HEAD unset, and no "
+            "local main or master) — refusing to guess what 'merged' means"
+        )
     protected = branches_in_use() | {base, "main", "master"}
 
     out = []
@@ -148,16 +194,28 @@ def remote_branches() -> tuple[list[tuple[str, str]], list[str]]:
 
 
 def survey() -> dict:
+    """Both halves, each degrading independently.
+
+    Neither half may take the other down. Being unable to reach the remote is
+    no reason to refuse to tidy local branches, and vice versa — a tool that
+    fails wholesale stops being used, which is how the mess accumulates.
+    """
     try:
         dead_remote, undecided = remote_branches()
         remote_error = ""
     except RuntimeError as exc:
         dead_remote, undecided, remote_error = [], [], str(exc)
 
+    try:
+        local, local_error = merged_local_branches(), ""
+    except RuntimeError as exc:
+        local, local_error = [], str(exc)
+
     return {
         "default_branch": default_branch(),
         "in_use": sorted(branches_in_use()),
-        "local_merged": merged_local_branches(),
+        "local_merged": local,
+        "local_error": local_error,
         "remote_dead": dead_remote,
         "remote_no_pr": undecided,
         "remote_error": remote_error,
@@ -194,8 +252,12 @@ def report(state: dict) -> None:
         state["local_merged"], state["remote_dead"], state["remote_no_pr"],
     )
 
-    print(f"Cleanup survey (against {state['default_branch']}):\n")
-    print(f"  {len(local):>3} merged local branch(es)")
+    base = state["default_branch"] or "unknown"
+    print(f"Cleanup survey (against {base}):\n")
+    if state.get("local_error"):
+        print("    - local not surveyed: " + state["local_error"])
+    else:
+        print(f"  {len(local):>3} merged local branch(es)")
     if state.get("remote_error"):
         print("    - remote not surveyed: " + state["remote_error"])
         print("      (local branches can still be cleaned)")
