@@ -259,13 +259,14 @@ Both must be updated at session end — do not skip. **Route by session type
 ## Helpdesk Ticket Tracking (Hard Rule)
 
 **Every infra change must reference a helpdesk ticket. Pre-commit enforces this.**
-The hook reads `ACTIVE_ENV` from `.env` and ticket prefix from `environments/<env>/env.yml`.
+The hook resolves `ACTIVE_ENV` and the active ticket through `bin/active_env.py` / `bin/active_ticket.py`, and reads the ticket prefix from `environments/<env>/env.yml`. **An exported `OPSKIT_TICKET` pins a session's ticket and wins over `.current-ticket`** — both are one shared mutable file per clone, so without pinning a concurrent `switch-env.sh` clears the ticket out from under you.
 
 ### Session start sequence (required before any infra change)
 
 ```bash
 bash bin/switch-env.sh <env>               # sets ACTIVE_ENV, clears .current-ticket
 bash bin/open-ticket.sh "what you're doing" # creates ticket → writes .current-ticket
+export OPSKIT_TICKET=<ID>                  # pin it, if another session shares this clone
 ```
 
 ### Commit format

@@ -44,9 +44,13 @@ HELPDESK_ENDPOINT=$(read_env_field helpdesk_endpoint)
 HELPDESK_TENANT=$(read_env_field helpdesk_tenant)
 
 show_current() {
-    if [ -f "$TICKET_FILE" ] && [ -s "$TICKET_FILE" ]; then
-        TICKET=$(tr -d '[:space:]' < "$TICKET_FILE")
-        echo -e "${GREEN}Active ticket: $TICKET${NC}  (env: ${ACTIVE_ENV:-unset})"
+    # Resolved through bin/active_ticket.py so an exported OPSKIT_TICKET pins
+    # this session, same precedence as ACTIVE_ENV (#158). Reading the file
+    # directly would report a ticket a concurrent switch-env had cleared.
+    if TICKET=$(python3 "$REPO_ROOT/bin/active_ticket.py" 2>/dev/null) \
+        && [ -n "$TICKET" ]; then
+        SRC=$(python3 "$REPO_ROOT/bin/active_ticket.py" --source 2>/dev/null || echo "?")
+        echo -e "${GREEN}Active ticket: $TICKET${NC}  (env: ${ACTIVE_ENV:-unset}, from $SRC)"
     else
         echo -e "${YELLOW}No active ticket.${NC}"
         echo "Run: bin/open-ticket.sh <TICKET-ID>    to select one"
@@ -57,6 +61,14 @@ show_current() {
 set_ticket() {
     echo "$1" > "$TICKET_FILE"
     echo -e "${GREEN}Active ticket: $1${NC}"
+    # Writing the shared file does not change a shell that pinned itself, and
+    # silence here would make this look broken — the same trap switch-env.sh
+    # documents for ACTIVE_ENV (#126).
+    if [ -n "${OPSKIT_TICKET:-}" ] && [ "${OPSKIT_TICKET}" != "$1" ]; then
+        echo -e "  ${YELLOW}This shell is PINNED to ${OPSKIT_TICKET} by an exported OPSKIT_TICKET.${NC}"
+        echo "  To follow the file:      unset OPSKIT_TICKET"
+        echo "  To pin this shell here:  export OPSKIT_TICKET=$1"
+    fi
 }
 
 usage() {
@@ -119,6 +131,10 @@ if [ "$1" = "close" ]; then
         echo -e "${YELLOW}Cleared active ticket ($TICKET).${NC}"
     else
         echo "No active ticket to close."
+    fi
+    if [ -n "${OPSKIT_TICKET:-}" ]; then
+        echo -e "  ${YELLOW}This shell stays pinned to ${OPSKIT_TICKET} (exported OPSKIT_TICKET).${NC}"
+        echo "  To stop using it here:  unset OPSKIT_TICKET"
     fi
     exit 0
 fi
