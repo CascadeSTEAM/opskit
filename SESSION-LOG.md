@@ -13,6 +13,48 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-08-07 — the guard goes live, and a peer lineage is founded
+
+**Key decisions:**
+- **The conserved core now actually guards.** The operator wired the #160
+  PreToolUse hook — the one step deliberately left to human hands. It proved
+  itself binding within minutes by denying a commit whose *message* mentioned
+  a guarded path: confirmation and a new false-positive class in one event
+  (#169). Per standing doctrine the deny was answered by rewording, not by
+  allowlisting past the guard.
+- **The self-modification question got its frame.** Evolution is variation
+  plus *external* selection, and it conserves the selection machinery itself —
+  replication enzymes are the most conserved sequences in biology because a
+  mutation there breaks selection rather than producing a variant. OpsKit
+  keeps the doctrine: agents propose everywhere; settings, hooks, and the
+  governing files remain the operator-gated core. The design question worth
+  carrying forward: how small can the conserved core be?
+- **Self-empowerment goes in a peer project, not here.** Tinker founded
+  (private repo growlf/tinker): a three-node lineage — Crone (full memory,
+  rules, final judge), Mother (selection, merge, succession-by-proof), Maid
+  (memory-empty explorer clone) — under a constitution with three gates that
+  ramp toward autonomy while the operator keeps permanent override. The
+  operator's observe-and-converse requirement settled the architecture: one
+  persisted bus is transport, memory substrate, audit trail, gate mechanism,
+  and kill switch.
+- **The boundary is a law, not a hope.** Tinker's charter restricts it to its
+  own vault collection, repo, and containers; #168 requests exactly that
+  scoped slice (environment entry, vault collection, provision/clone/rebuild
+  playbooks, guard-hook inheritance) and states the boundary explicitly.
+  OpsKit's collaboration surface stays human-gated regardless of how
+  autonomous Tinker becomes.
+
+**Completed:** #160 hook wired (operator) and verified live. Tinker repo
+founded — charter, architecture, orientation; `crone` as the blessed default
+branch. Filed #168 (Tinker's scoped slice) and #169 (guard string-mention
+false positive).
+
+**Open threads:** #168 blocks Tinker genesis (its phase 2); Tinker phase 1
+(bus + gatekeeper + web UI) can start now in the tinker repo. Prior threads
+unchanged: #134 inventory, #131, #138, #159, #166 sweep.
+
+---
+
 ## 2026-08-07 — /plow: batch backlog orchestration as a skill
 
 Session note: `docs/session-notes/2026-08-07-plow-skill.md`
