@@ -99,27 +99,59 @@
       register: cluster_fw
       failed_when: false
 
+    # `| bool` is NOT used on the opt-out. Ansible's bool filter maps any
+    # unrecognised string to false without complaint, so a typo —
+    # `-e require_datacenter_firewall=treu`, or an empty value — would silently
+    # switch the guard off. That is the same "reports success while not
+    # guarding" failure this whole change exists to remove, reproduced inside
+    # its own escape hatch. Only the exact literals are accepted.
+    - name: Reject an unrecognised value for the isolation requirement
+      ansible.builtin.assert:
+        that:
+          - require_datacenter_firewall in [true, false, 'true', 'false', 'True', 'False']
+        fail_msg: >-
+          require_datacenter_firewall is
+          '{{ require_datacenter_firewall }}', which is neither true nor false.
+          Refusing to guess: an unrecognised value would otherwise be read as
+          false and quietly disable the isolation check.
+
     - name: Establish whether the datacenter firewall is enabled
+      # The LAST enable: under [OPTIONS] wins, not the first match anywhere in
+      # the file. A leftover second [OPTIONS] block from a bad edit or restore
+      # would otherwise let an earlier `enable: 1` mask the effective `enable: 0`.
       ansible.builtin.set_fact:
         datacenter_firewall_on: >-
           {{ (cluster_fw.content is defined)
-             and ((cluster_fw.content | b64decode)
-                  is search('(?m)^\s*enable:\s*1\s*$')) }}
+             and (((cluster_fw.content | b64decode)
+                   | regex_findall('(?m)^\s*enable:\s*([01])\s*$')
+                   | last | default('0')) == '1') }}
+        datacenter_firewall_unreadable: >-
+          {{ (cluster_fw.content is not defined)
+             and ('No such file' not in (cluster_fw.msg | default(''))) }}
 
     - name: Refuse to claim isolation the datacenter firewall would not deliver
       ansible.builtin.assert:
         that:
-          - datacenter_firewall_on or not (require_datacenter_firewall | bool)
+          - datacenter_firewall_on or not require_datacenter_firewall
+          - not (datacenter_firewall_unreadable | bool)
         fail_msg: >-
-          The datacenter firewall is not enabled on {{ target_host }}
-          (/etc/pve/firewall/cluster.fw has no `enable: 1`), so a per-container
-          firewall does nothing: this container would be fully reachable while
-          this playbook reported it isolated. Enable it at
-          Datacenter -> Firewall -> Options — cluster-wide state, so decide it
-          deliberately rather than as a side effect of provisioning one
-          container. To provision WITHOUT isolation anyway, re-run with
-          -e require_datacenter_firewall=false; the report will then say
-          plainly that the container is not isolated.
+          {{ 'Could NOT READ /etc/pve/firewall/cluster.fw on ' ~ target_host ~
+             ' (' ~ (cluster_fw.msg | default('unknown error')) ~ '). The
+             firewall may well be enabled — this is most likely a permissions
+             or connection problem, so fix that rather than disabling the
+             check. Do NOT reach for require_datacenter_firewall=false here:
+             that would turn a read failure into a real loss of isolation.'
+             if (datacenter_firewall_unreadable | bool)
+             else 'The datacenter firewall is NOT enabled on ' ~ target_host ~
+             ' (/etc/pve/firewall/cluster.fw has no effective `enable: 1`), so
+             a per-container firewall does nothing: this container would be
+             fully reachable while this playbook reported it isolated. Enable
+             it at Datacenter -> Firewall -> Options — cluster-wide state, so
+             decide it deliberately rather than as a side effect of
+             provisioning one container (opskit #189). To provision WITHOUT
+             isolation anyway, re-run with
+             -e require_datacenter_firewall=false; the report will then say
+             plainly that the container is not isolated.' }}
 
     - name: Read the existing container config, if any
       ansible.builtin.command: "pct config {{ ct_id }}"
