@@ -21,7 +21,7 @@ cd opskit
 bash install.sh              # symlink to PATH, install completions, preflight deps
 opskit check                 # verify everything
 opskit setup                 # install pip deps + git hooks
-opskit init homelab --subnets 192.168.1.0/24
+opskit init homelab --subnets 192.0.2.0/24
 opskit env homelab
 opskit scan                  # nmap → YAML → enrich → resolve topology
 opskit status                # inventory summary
@@ -87,7 +87,7 @@ Every environment is a self-contained directory tree. Nothing is hardcoded.
 
 **`environments/<env>/env.yml`** declares:
 - **name, display_name** — identity
-- **subnets** — named CIDR blocks (`mgmt: 10.0.0.0/24, servers: 10.0.1.0/24, ...`)
+- **subnets** — named CIDR blocks (`mgmt: 192.0.2.0/24, servers: 198.51.100.0/24, ...`)
 - **connectivity.probes** — reachability checks (host + port)
 - **ticket** — helpdesk integration (prefix, endpoint, tenant)
 - **vault** — secrets backend (vaultwarden, openbao, none)
@@ -101,7 +101,7 @@ device:
   name: my-router
   hostname: my-router.local
   mac_address: AA:BB:CC:DD:EE:FF
-  ip_address: 10.0.0.1
+  ip_address: 192.0.2.1
   role: router
   status: active
   maturity: 3

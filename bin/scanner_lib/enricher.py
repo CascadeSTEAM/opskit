@@ -38,7 +38,7 @@ def _normalize_type(dtype: str) -> str:
 
 
 def _clean_mac(mac: str) -> str:
-    """Extract clean MAC from compound strings like 'AA:BB:CC:00:00:98,IP=10.99.0.22/16,TYPE=VETH'."""
+    """Extract clean MAC from compound strings like 'AA:BB:CC:00:00:98,IP=192.0.2.22/24,TYPE=VETH'."""
     if not mac:
         return ''
     # Take first part before comma
@@ -95,9 +95,30 @@ def _load_all_devices(devices_dir: Path) -> dict[str, dict]:
 
 _STUB_NAME = re.compile(r'^host-\d+-\d+-\d+-\d+$')
 
-# BMC pairing heuristic prefixes — site-specific convention (adjust per environment; see Phase 7 note)
-_BMC_MGMT_PREFIX = '10.99.5.'
-_BMC_MAIN_PREFIX = '10.99.0.'
+
+def _load_bmc_pairing(ds_path: Path) -> tuple[Optional[str], Optional[str]]:
+    """BMC pairing prefixes from the dataset's network.yml, if configured.
+
+    Site-specific convention — real subnet prefixes are environment data and
+    never live in this committed module (opskit #134). Configure per dataset:
+
+        network:
+          bmc_pairing:
+            mgmt_prefix: "192.0.2."      # BMC/management subnet
+            main_prefix: "198.51.100."   # matching host subnet
+
+    Returns (None, None) when unconfigured, which disables the heuristic.
+    """
+    meta_file = ds_path / 'network.yml'
+    if not meta_file.is_file():
+        return None, None
+    try:
+        with open(meta_file) as fh:
+            meta = yaml.safe_load(fh) or {}
+    except Exception:
+        return None, None
+    pairing = (meta.get('network') or {}).get('bmc_pairing') or {}
+    return pairing.get('mgmt_prefix'), pairing.get('main_prefix')
 
 
 def _count_references(name: str, devices: dict[str, dict]) -> int:
@@ -670,20 +691,21 @@ def enrich_dataset(ds_path: Path) -> dict:
             summary['swarm_links'] += len(peers)
 
     # Phase 7: BMC → physical host linking.
-    # SITE-SPECIFIC HEURISTIC (adjust per environment): assumes mgmt subnet _BMC_MGMT_PREFIX and
-    # a same-last-octet host on _BMC_MAIN_PREFIX. Octet pairing is a guess —
-    # links are marked inferred. TODO: move the prefixes to per-dataset meta
-    # (network.yml) instead of module constants.
+    # SITE-SPECIFIC HEURISTIC, configured per dataset in network.yml (see
+    # _load_bmc_pairing): assumes a mgmt-subnet BMC and a same-last-octet host
+    # on the main subnet. Octet pairing is a guess — links are marked inferred.
+    bmc_mgmt_prefix, bmc_main_prefix = _load_bmc_pairing(ds_path)
     bmc_hosts = {}  # bmc_name → physical_host_name
-    for name, dev in devices.items():
-        dtype = dev.get('device', {}).get('type', '')
-        if dtype == 'bmc':
-            for ip in _extract_ips(dev):
-                if ip.startswith(_BMC_MGMT_PREFIX):
-                    last_octet = ip.split('.')[-1]
-                    main_ip = f"{_BMC_MAIN_PREFIX}{last_octet}"
-                    if main_ip in ip_to_device:
-                        bmc_hosts[name] = ip_to_device[main_ip]
+    if bmc_mgmt_prefix and bmc_main_prefix:
+        for name, dev in devices.items():
+            dtype = dev.get('device', {}).get('type', '')
+            if dtype == 'bmc':
+                for ip in _extract_ips(dev):
+                    if ip.startswith(bmc_mgmt_prefix):
+                        last_octet = ip.split('.')[-1]
+                        main_ip = f"{bmc_main_prefix}{last_octet}"
+                        if main_ip in ip_to_device:
+                            bmc_hosts[name] = ip_to_device[main_ip]
 
     for bmc, host in bmc_hosts.items():
         dev = devices[bmc]
