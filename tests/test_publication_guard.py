@@ -343,6 +343,90 @@ def test_tree_overrides_narrow_it_to_one_check(repo):
     assert run_tree_guard(repo, allow_tokens=True, allow_ips=True).returncode == 0
 
 
+# ── the reuse contract (issue #138) ───────────────────────────────────────────
+# Sibling repos consume this guard by reference rather than reimplementing it
+# (docs/reuse-contract.md). These three modes exist so a consumer never has to:
+# --repo names the tree under test without overloading OPSKIT_ROOT,
+# --contract-version lets a consumer fail closed on a stale OpsKit, and
+# --token-count lets it fail closed on an empty token list without forking
+# collect_tokens(). buildsmith had already hand-rolled workarounds for all three.
+
+def guard(*args, cwd=None, **env_extra):
+    env = {"PATH": "/usr/bin:/bin", **env_extra}
+    return subprocess.run(["bash", str(GUARD), *args], cwd=cwd or ROOT,
+                          capture_output=True, text=True, env=env)
+
+
+def test_contract_version_is_an_integer():
+    result = guard("--contract-version")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().isdigit()
+
+
+def test_token_count_reports_a_number_and_never_the_tokens(repo):
+    result = guard("--token-count", CLIENT_TOKENS="alpha bravo charlie",
+                   OPSKIT_ROOT=str(repo))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "3"
+    for secret in ("alpha", "bravo", "charlie"):
+        assert secret not in result.stdout, "the tokens are the secret"
+
+
+def test_token_count_is_zero_when_nothing_resolves(repo):
+    """The count a consumer fails closed on: an empty list makes the token
+    check a no-op indistinguishable from passing."""
+    result = guard("--token-count", OPSKIT_ROOT=str(repo))
+
+    assert result.stdout.strip() == "0"
+
+
+def test_repo_checks_the_named_tree_not_opskit(repo, tmp_path):
+    """A consumer's tree is checked, while tokens still come from OpsKit."""
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=consumer, check=True)
+    commit(consumer, "docs/leak.md", "the acme cluster\n")
+
+    result = guard("--repo", str(consumer), "--tree",
+                   CLIENT_TOKENS="acme", OPSKIT_ROOT=str(repo))
+
+    assert result.returncode == 1
+    assert "acme" in result.stdout
+
+
+def test_repo_leaves_the_default_behavior_alone(repo):
+    """Without --repo the tree under test is still OPSKIT_ROOT, which is why
+    this repo's own hooks pass no arguments."""
+    commit(repo, "docs/clean.md", "an example host at 192.0.2.10\n")
+
+    assert guard("--tree", cwd=repo, OPSKIT_ROOT=str(repo)).returncode == 0
+
+
+def test_a_bad_repo_path_fails_loudly_rather_than_passing(repo):
+    """Exit 2, not 0 — a consumer must never read 'could not run' as 'clean'."""
+    result = guard("--repo", str(repo / "nope"), "--tree", OPSKIT_ROOT=str(repo))
+
+    assert result.returncode == 2
+    assert "does not exist" in result.stderr
+
+
+def test_tokens_come_from_opskit_not_from_the_tree_under_test(repo, tmp_path):
+    """Otherwise the tree being checked could influence what it is checked
+    against — a consumer repo has no environments/ of its own."""
+    (repo / ".client-tokens").write_text("acme\n")
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=consumer, check=True)
+    (consumer / ".client-tokens").write_text("something-else\n")
+    commit(consumer, "docs/leak.md", "the acme cluster\n")
+
+    result = guard("--repo", str(consumer), "--tree", OPSKIT_ROOT=str(repo))
+
+    assert result.returncode == 1, "OpsKit's token list must be the one applied"
+
+
 def test_this_repos_tracked_tree_is_free_of_private_addresses():
     """The #134 deliverable, enforced: the real tree stays scrubbed. Token
     hygiene tree-wide is tracked separately — pre-existing hits need an owner
