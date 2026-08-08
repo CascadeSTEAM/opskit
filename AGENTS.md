@@ -125,9 +125,15 @@ python3 bin/automation-ladder.py sync-agents   # then restart the agent session
   hook is the tighter follow-up.
 
 ## Skills (load with: opencode tool skill use <name>)
-`lifecycle` | `git` | `security` | `backup` | `infra` | `check-connectivity` | `templates` | `tools` | `endsession` | `idea-triage` | `baseline` | `gh` | `helpdesk-ticket` | `frappe-access` | `dogfood-cycle` | `plow`
+`lifecycle` | `git` | `security` | `backup` | `infra` | `check-connectivity` | `templates` | `tools` | `endsession` | `idea-triage` | `baseline` | `gh` | `helpdesk-ticket` | `frappe-access` | `dogfood-cycle` | `plow` | `zabbix`
 
 Load the relevant skill before working in its domain.
+
+**One tree, not two.** `.opencode/skills/` is the only skill tree; Claude Code
+reaches the same files through `.claude/skills/<name>` symlinks. A second
+tracked tree (`skills/`) existed until #131 and every shared skill had drifted,
+so an agent got one of two procedures depending on its harness. New skills go
+in `.opencode/skills/` — use `@skill-builder`.
 
 ## Two layers — know which one you are changing
 
@@ -137,7 +143,7 @@ both. Establish which layer you are in *before* citing any principle.
 | Layer | What it is | What governs it |
 |-------|-----------|-----------------|
 | **Product** | What OpsKit does *to environments*: provisioning, devices, services, DNS, records | The Core Rules, the IaC rule, and Development Principle #2's vehicle rule below |
-| **Collaboration surface** | The operator, the agent, and the OpsKit CLI between them: this file, `CLAUDE.md`, `skills/`, `agents/`, harness wiring, self-improvement machinery | **Principle #2 does not apply.** No Ansible dimension exists here. The default vehicle is an **MCP tool**, because that is what an LLM reaches for reliably — discoverable, typed schema, harness-agnostic — and `bin/mcp-call.py` makes MCP tools shell-reachable too, so they are strictly more accessible than a script, not less |
+| **Collaboration surface** | The operator, the agent, and the OpsKit CLI between them: this file, `CLAUDE.md`, `.opencode/skills/`, `agents/`, harness wiring, self-improvement machinery | **Principle #2 does not apply.** No Ansible dimension exists here. The default vehicle is an **MCP tool**, because that is what an LLM reaches for reliably — discoverable, typed schema, harness-agnostic — and `bin/mcp-call.py` makes MCP tools shell-reachable too, so they are strictly more accessible than a script, not less |
 
 **Why this table exists:** an agent applied Principle #2 to a proposal about improving
 this very file, concluded "script, not MCP tool", and cited the doctrine as though it

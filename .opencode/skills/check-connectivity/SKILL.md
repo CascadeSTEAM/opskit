@@ -14,4 +14,9 @@ bash bin/check-connectivity.sh
 ```
 
 - Exit 0 (on-site or VPN up): proceed normally.
-- Exit 1 (unreachable): stop. Tell the operator which hosts are down and the exact command to restore connectivity. Do not attempt infrastructure operations until the probe passes.
+- Exit 1 (unreachable): stop. Tell the operator which hosts are down and the
+  exact command to restore connectivity — including which VPN interface to
+  bring up, when the environment reaches its network over a VPN (`env.yml`
+  records the bring-up command). Do not attempt infrastructure operations
+  until the probe passes: no DNS, hypervisor, router, or Ansible calls, since
+  each one just fails slowly and obscures the real cause.

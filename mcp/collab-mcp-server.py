@@ -4,7 +4,7 @@
 opskit #136. This repo has two layers. The *product* layer is what OpsKit does to
 environments, and Development Principle #2 arbitrates its vehicles. The
 *collaboration* layer is the operator, the agent, and the OpsKit CLI between them:
-AGENTS.md, CLAUDE.md, skills/, agents/, harness wiring. Principle #2 does not govern
+AGENTS.md, CLAUDE.md, .opencode/skills/, agents/, harness wiring. Principle #2 does not govern
 it, and until now nothing improved it either — there is a self-improvement ladder for
 the product and nothing at all for the surface every session depends on.
 

@@ -30,5 +30,11 @@ triggers: backup,recovery,restore,snapshot,disaster
 ## Key Rules
 
 - Always verify backup after creation
-- Alert on failure
-- Prune old backups — avoid disk full
+- Alert on failure — wire it to the environment's monitoring/alerting stack
+- Prune old backups — avoid disk full on the backup target
+
+## Related
+
+- `ansible/playbooks/zabbix-backup.yml` — codified backup play
+- Storage locations, retention targets, and offsite config are env-specific:
+  read them from `environments/<env>/` (never committed here)
