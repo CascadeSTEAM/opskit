@@ -29,6 +29,9 @@ sudo oscap xccdf eval --profile cis_level1_server \
   /usr/share/xml/scap/ssg/content/ssg-ubuntu2404-ds.xml
 ```
 
+Install: `sudo apt install openscap-scanner scap-security-guide`. Expect
+server-focused false positives — triage before acting.
+
 ## auditd Key Commands
 
 ```bash

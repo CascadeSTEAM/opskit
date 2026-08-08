@@ -18,6 +18,11 @@ triggers: credential,password,vlan,firewall,vault,secret,ssh,access,token
 - Vault is the primary credential store — resolve secrets through it, never
   hardcode or hand-hunt them
 - Store new credentials in vault immediately after creation
+- **Ask the resolver; do not test `BW_SESSION` yourself** — `python3
+  bin/bw_session.py --check` is the one place that knows whether a usable
+  session exists and how it was obtained
+- A persistent unlock goes to a mode-600 file, never to shell history:
+  `(umask 077; bw unlock --raw > ~/.cache/opskit/bw-session)`
 
 ## VLAN Reference (template)
 

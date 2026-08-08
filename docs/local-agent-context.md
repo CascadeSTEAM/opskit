@@ -12,7 +12,7 @@ document describes how to have both.
 Committed (public)                      Generated (gitignored, per environment)
 ──────────────────                      ────────────────────────────────────────
 agents/*.md          generic behavior   environments/<env>/context/
-skills/*/SKILL.md    + "read context    ├── critical-facts.md     ← site facts, host tables
+.opencode/skills/    + "read context    ├── critical-facts.md     ← site facts, host tables
 rules/*.md             at runtime"      ├── ssh-access.md         ← alias → host → user map
 docs/ + templates    methodology        └── <domain>-devices.md   ← per-agent device tables
 bin/scan.py etc.     generators
