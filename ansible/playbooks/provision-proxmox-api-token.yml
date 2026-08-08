@@ -1,0 +1,183 @@
+---
+# provision-proxmox-api-token.yml — Issue a scoped Proxmox API token (opskit #103)
+#
+# Service accounts and their tokens are part of the rebuild path: a rebuilt node
+# with no tokens has no working automation. Per .opencode/rules/iac-required.md
+# that makes provisioning them a playbook, not a session note.
+#
+# THE TRAP THIS ENCODES
+#   With privsep=1 the effective rights are the INTERSECTION of the token ACL
+#   and the user ACL. Granted on the token only, reads succeed but listings come
+#   back as an empty array rather than an error — indistinguishable from "there
+#   is nothing here". So the role is granted to BOTH the user and the token,
+#   and the play verifies both grants exist before reporting success.
+#
+# NARROW BY DEFAULT, STRUCTURALLY
+#   token_path defaults to nothing and must be given. Granting write at '/' is
+#   refused unless allow_root_grant=true is passed explicitly, so the narrow
+#   default is enforced rather than remembered.
+#
+# IDEMPOTENT
+#   Re-running never mints a second token and never fails on an existing one.
+#   A token value is displayed exactly once, at creation, so a re-run reports
+#   "already exists" and tells you to read the secret from the vault.
+#
+# Run from this repo root:
+#   ansible-playbook -i environments/$ACTIVE_ENV/ansible/inventory.yml \
+#     ansible/playbooks/provision-proxmox-api-token.yml \
+#     -e target_host=<proxmox-node> -e token_user=<name> \
+#     -e token_name=<id> -e token_path=/vms/100 -e token_role=PVEAuditor
+#
+# Afterwards, store the value in the vault under the codified name the play
+# prints, and record it with:  bin/token-inventory.py add --help
+
+- name: Provision a scoped Proxmox API token
+  # target_host is supplied at run time with `-e target_host=<host>`; the
+  # linter cannot know that, and the assert below fails loudly if it is
+  # missing. A per-line ignore, never skip_list — syntax-check is unskippable
+  # and listing it there stops ansible-lint running at all (#83).
+  hosts: "{{ target_host }}"  # noqa: syntax-check[specific]
+  gather_facts: false
+
+  vars:
+    token_realm: pve
+    token_role: PVEAuditor        # read-only by default
+    token_comment: "Provisioned by opskit provision-proxmox-api-token.yml"
+    allow_root_grant: false
+    # token_user, token_name, token_path: required, no defaults (see assert)
+
+  tasks:
+    - name: Require the parameters that define the token's scope
+      ansible.builtin.assert:
+        that:
+          - token_user is defined
+          - token_name is defined
+          - token_path is defined
+        fail_msg: >-
+          Pass -e token_user=<name> -e token_name=<id> -e token_path=<acl path>.
+          token_path has no default on purpose: a token's scope is the whole
+          point of it, and a default would be someone else's guess.
+
+    - name: Refuse a root-path grant unless it was asked for explicitly
+      ansible.builtin.assert:
+        that:
+          - token_path != '/' or (allow_root_grant | bool)
+        fail_msg: >-
+          token_path is '/', which grants {{ token_role }} across the entire
+          datacenter. If that is genuinely intended, re-run with
+          -e allow_root_grant=true. Narrow scope is the default by design.
+
+    # Every existence check below compares PARSED FIELDS, never substrings of
+    # the raw JSON. Substring matching silently collides: 'svc@pve' is inside
+    # 'xsvc@pve', and a token named 'mcp' is inside an existing 'mcp-readonly'
+    # — so the create task is skipped and no such credential is ever issued,
+    # while the play goes on to report success.
+    - name: Read the existing users
+      ansible.builtin.command: "pveum user list --output-format json"
+      register: user_list
+      changed_when: false
+
+    - name: Collect the existing user ids
+      ansible.builtin.set_fact:
+        existing_userids: "{{ (user_list.stdout | from_json) | map(attribute='userid') | list }}"
+
+    - name: Create the service account (no password — token auth only)
+      ansible.builtin.command:
+        cmd: >-
+          pveum user add {{ token_user }}@{{ token_realm }}
+          --comment "{{ token_comment }}"
+      changed_when: true
+      when: (token_user ~ '@' ~ token_realm) not in existing_userids
+
+    - name: Read the tokens already issued to this account
+      ansible.builtin.command:
+        cmd: "pveum user token list {{ token_user }}@{{ token_realm }} --output-format json"
+      register: token_list
+      changed_when: false
+      failed_when: false
+
+    - name: Collect the token ids this account already has
+      ansible.builtin.set_fact:
+        existing_tokenids: >-
+          {{ (token_list.stdout | default('[]') | from_json)
+             | map(attribute='tokenid') | list
+             if token_list.rc == 0 else [] }}
+
+    - name: Create the token
+      # privsep=1 is the safer default and the reason for the dual grant below.
+      ansible.builtin.command:
+        cmd: >-
+          pveum user token add {{ token_user }}@{{ token_realm }} {{ token_name }}
+          --privsep 1 --comment "{{ token_comment }}" --output-format json
+      register: token_created
+      changed_when: true
+      when: token_name not in existing_tokenids
+
+    # Both grants, because privsep=1 intersects them. Granting only the token
+    # produces empty listings rather than permission errors — a silent
+    # half-working credential is worse than one that plainly fails.
+    - name: Grant the role to the user
+      ansible.builtin.command:
+        cmd: >-
+          pveum acl modify {{ token_path }}
+          --users {{ token_user }}@{{ token_realm }} --roles {{ token_role }}
+      changed_when: true
+
+    - name: Grant the role to the token
+      ansible.builtin.command:
+        cmd: >-
+          pveum acl modify {{ token_path }}
+          --tokens {{ token_user }}@{{ token_realm }}!{{ token_name }}
+          --roles {{ token_role }}
+      changed_when: true
+
+    - name: Read back the ACL
+      ansible.builtin.command: "pveum acl list --output-format json"
+      register: acl_list
+      changed_when: false
+
+    - name: Extract the grants at this path
+      # Exact ugid matches on parsed entries. Checking `token_name in
+      # acl_list.stdout` would be satisfied by an unrelated 'mcp-readonly'
+      # grant — the verification would confirm a credential that is not there.
+      ansible.builtin.set_fact:
+        acl_ugids: >-
+          {{ (acl_list.stdout | from_json)
+             | selectattr('path', 'equalto', token_path)
+             | selectattr('roleid', 'equalto', token_role)
+             | map(attribute='ugid') | list }}
+
+    - name: Verify BOTH grants landed
+      ansible.builtin.assert:
+        that:
+          - (token_user ~ '@' ~ token_realm) in acl_ugids
+          - (token_user ~ '@' ~ token_realm ~ '!' ~ token_name) in acl_ugids
+        fail_msg: >-
+          The ACL at {{ token_path }} does not show BOTH a user grant and a
+          token grant for role {{ token_role }}. Found: {{ acl_ugids }}.
+          With privsep=1 the effective rights are the intersection of the two,
+          and a token missing the user grant reads as "no results" rather than
+          "denied" — so this is failed deliberately rather than left to be
+          discovered weeks later.
+
+    - name: Report the new token value, once
+      ansible.builtin.debug:
+        msg: >-
+          Token {{ token_user }}@{{ token_realm }}!{{ token_name }} created.
+          Store the value NOW under vault item
+          'proxmox-token-{{ token_user }}-{{ token_name }}' — Proxmox displays it
+          exactly once. Then record it:
+          bin/token-inventory.py add --service proxmox
+          --identity {{ token_user }}@{{ token_realm }}!{{ token_name }}
+          --scope {{ token_path }} --role {{ token_role }}
+          Value: {{ (token_created.stdout | from_json).value | default('(see above)') }}
+      when: token_created is changed
+
+    - name: Report that the token already exists
+      ansible.builtin.debug:
+        msg: >-
+          Token {{ token_user }}@{{ token_realm }}!{{ token_name }} already
+          exists; its value is shown only at creation. Read it from vault item
+          'proxmox-token-{{ token_user }}-{{ token_name }}', or revoke and
+          reissue: bin/token-inventory.py revoke --help
+      when: token_created is not changed

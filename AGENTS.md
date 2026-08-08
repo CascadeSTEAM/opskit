@@ -92,6 +92,7 @@ All scripts are data-driven — they read from `environments/$ACTIVE_ENV/env.yml
 | `bin/gen-mikromcp-config.py` | Generate mikromcp's `routers.yaml` from device datasets (`--check` fails on drift, `--env-prefixes` lists the vault-map variables) |
 | `bin/mcp-call.py` | Call one MCP tool from a shell via `mcp-run.sh` (`--servers`, `<server> --list`, `--arg`/`--str`). The sanctioned path when an MCP namespace is not loaded. **`--probe` starts every server and reports which cannot actually serve tools** — `mcp-run.sh --check` validates the launch path only |
 | `bin/setup-hooks.sh` | Point git at `.githooks` (`--check` for session-start verification) |
+| `bin/token-inventory.py` | Inventory of issued API tokens — scope, role, purpose, ticket, revocation (metadata only; the vault owns the secret). See `docs/credential-lifecycle.md` |
 | `bin/publication-guard.sh` | Publication guards (tokens + RFC1918) for staged changes, a range, a branch name, or the whole tree. **Consumed by sibling repos** via `--repo`/`--contract-version`/`--token-count` — see `docs/reuse-contract.md` |
 
 ## Subagents (invoke with @name)
