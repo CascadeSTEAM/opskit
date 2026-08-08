@@ -20,13 +20,14 @@ triggers: credential,password,vlan,firewall,vaultwarden,secret,ssh,access,token
 
 ## VLAN Reference
 
+Real VLAN/subnet tables are environment data and never live in this committed
+skill (docs/client-data-policy.md). Read them from
+`environments/<env>/env.yml` (`subnets:`) and the environment's own docs.
+Example shape only:
+
 | ID | Name | Subnet | Notes |
 |----|------|--------|-------|
-| 1 | Infrastructure Management | 10.99.0.0/16 | Full access |
-| 10 | Guest WiFi / DMZ | 10.99.10.0/24 | Cannot reach infra |
-| 20 | Internal WiFi trusted | 10.99.20.0/24 | — |
-| 30 | Infrastructure Internal | 10.99.30.0/24 | — |
-| 40 | IoT / Untrusted | 10.99.40.0/24 | Internet + whitelist only |
+| 10 | Guest / DMZ | 192.0.2.0/24 | documentation-range example row |
 
 ## SSH
 
@@ -38,9 +39,11 @@ triggers: credential,password,vlan,firewall,vaultwarden,secret,ssh,access,token
 
 | Service | How to get | Storage |
 |---------|-----------|---------|
-| Proxmox | Datacenter → Permissions → API Tokens (PVEAdmin role) | Bitwarden |
-| MikroTik REST | `http://10.99.0.1/rest/` | Bitwarden |
-| VaultWarden | `/home/gemini/.bw-credentials` | On host |
+| Proxmox | Datacenter → Permissions → API Tokens (PVEAdmin role) | Vaultwarden |
+| MikroTik REST | router REST endpoint — resolve the device address from the environment's datasets | Vaultwarden |
+
+Credential file locations and endpoint addresses are environment data — read
+them from the vault and `environments/<env>/`, never from a committed skill.
 
 ## Key Rules
 

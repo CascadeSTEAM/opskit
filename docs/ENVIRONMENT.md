@@ -25,8 +25,8 @@ print('valid')
 | `display_name` | string | `Home Lab` | Human-readable |
 | `ticket.prefix` | string | `HL` | 2-4 uppercase letters for commit messages |
 | `domains.primary` | string | `homelab.local` | Primary DNS domain |
-| `subnets` | object | `{mgmt: 10.0.0.0/24}` | Named CIDRs, key=role |
-| `connectivity.probes` | array | `[{host: 10.0.0.1}]` | Reachability checks |
+| `subnets` | object | `{mgmt: 192.0.2.0/24}` | Named CIDRs, key=role |
+| `connectivity.probes` | array | `[{host: 192.0.2.1}]` | Reachability checks |
 | `vault.backend` | string | `vaultwarden` | `vaultwarden`, `openbao`, or `none` |
 | `source_of_truth.type` | string | `git-yaml` | `netbox` or `git-yaml` |
 | `execution.type` | string | `cli` | `cli` or `semaphore` |
@@ -66,16 +66,16 @@ domains:
   primary: homelab.local
 
 subnets:
-  mgmt: 10.0.0.0/24
-  servers: 10.0.10.0/24
-  iot: 10.0.20.0/24
+  mgmt: 192.0.2.0/24
+  servers: 198.51.100.0/24
+  iot: 203.0.113.0/24
 
 connectivity:
   probes:
-    - host: 10.0.0.1
+    - host: 192.0.2.1
       port: 22
       description: router SSH
-    - host: 10.0.10.10
+    - host: 198.51.100.10
       description: DNS server
   vpn_bringup: sudo wg-quick up homelab
 

@@ -243,3 +243,114 @@ def test_hook_checks_every_ref_in_a_multi_ref_push(repo):
 
     assert result.returncode == 1
     assert "acme" in result.stdout
+
+
+# ── whole-tree audit (issue #134) ─────────────────────────────────────────────
+# The delta modes only ever see changes: anything committed before the guard
+# existed is grandfathered in unexamined. --tree checks the state of the thing
+# the guard guards, not the latest delta.
+#
+# The private-range fixture is assembled at runtime so this file itself stays
+# clean under its own audit.
+
+PRIVATE_IP = "192.168" + ".7.1"
+
+def run_tree_guard(repo_dir, token="acme", allow_tokens=False, allow_ips=False):
+    env = {"PATH": "/usr/bin:/bin", "CLIENT_TOKENS": token,
+           "OPSKIT_ROOT": str(repo_dir)}
+    if allow_tokens:
+        env["ALLOW_CLIENT_TOKENS"] = "1"
+    if allow_ips:
+        env["ALLOW_PRIVATE_IPS"] = "1"
+    return subprocess.run(["bash", str(GUARD), "--tree"], cwd=repo_dir,
+                          capture_output=True, text=True, env=env)
+
+
+def commit(repo_dir, relpath, content):
+    p = repo_dir / relpath
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(content)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                    "add", relpath], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-q", "-m", "x"], cwd=repo_dir, check=True,
+                   capture_output=True)
+
+
+def test_tree_catches_an_address_committed_long_ago(repo):
+    commit(repo, "docs/topology.md", f"gateway is at {PRIVATE_IP}\n")
+    commit(repo, "docs/later.md", "a clean change on top\n")
+
+    result = run_tree_guard(repo)
+
+    assert result.returncode == 1
+    assert PRIVATE_IP in result.stdout
+
+
+def test_tree_catches_a_committed_client_token(repo):
+    commit(repo, "docs/notes.md", "the acme cluster\n")
+
+    result = run_tree_guard(repo)
+
+    assert result.returncode == 1
+    assert "acme" in result.stdout
+
+
+def test_tree_passes_a_clean_repo_with_documentation_ranges(repo):
+    commit(repo, "docs/example.md", "an example host at 192.0.2.10\n")
+
+    result = run_tree_guard(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_tree_token_check_ignores_the_private_environment_layers(repo):
+    """environments/<env>/ is where real data is SUPPOSED to live — it is
+    gitignored, and staging violations are the isolation check's job."""
+    commit(repo, "environments/acme/env.yml", "name: acme\n")
+
+    result = run_tree_guard(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_tree_token_check_still_covers_the_tracked_example_layer(repo):
+    """environments/example/ is tracked and published like anything else, so
+    the layer-wide exemption must not swallow it."""
+    commit(repo, "environments/example/env.yml", "name: acme\n")
+
+    result = run_tree_guard(repo)
+
+    assert result.returncode == 1
+    assert "acme" in result.stdout
+
+
+def test_tree_reports_the_offending_path_not_just_a_count(repo):
+    """A path-only hit used to print an error with nothing to act on."""
+    commit(repo, "notes/acme-facts.md", "clean content\n")
+
+    result = run_tree_guard(repo)
+
+    assert result.returncode == 1
+    assert "acme-facts.md" in result.stdout
+
+
+def test_tree_overrides_narrow_it_to_one_check(repo):
+    commit(repo, "docs/notes.md", f"acme at {PRIVATE_IP}\n")
+
+    assert run_tree_guard(repo, allow_tokens=True).returncode == 1  # IP still caught
+    assert run_tree_guard(repo, allow_ips=True).returncode == 1     # token still caught
+    assert run_tree_guard(repo, allow_tokens=True, allow_ips=True).returncode == 0
+
+
+def test_this_repos_tracked_tree_is_free_of_private_addresses():
+    """The #134 deliverable, enforced: the real tree stays scrubbed. Token
+    hygiene tree-wide is tracked separately — pre-existing hits need an owner
+    decision, and a check that cannot pass gets disabled."""
+    result = subprocess.run(
+        ["bash", str(GUARD), "--tree"],
+        cwd=ROOT, capture_output=True, text=True,
+        env={"PATH": "/usr/bin:/bin", "ALLOW_CLIENT_TOKENS": "1",
+             "OPSKIT_ROOT": str(ROOT)},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

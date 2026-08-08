@@ -20,19 +20,21 @@ triggers: lxc,proxmox,deploy,placement,commission,decommission,vm,container
 
 ## Node Roles
 
+Real node tables are environment data and never live in this committed skill
+(docs/client-data-policy.md). Read them from the active environment layer:
+`environments/<env>/datasets/devices/` (canonical records) and
+`environments/<env>/context/` (generated fact sheets — see
+`bin/generate-network-docs.py`). Example shape only:
+
 | Node | IP | Role | Notes |
 |------|----|------|-------|
-| frank | 10.99.0.13 | Proxmox host | GPU, AI compute |
-| cluster-llm | 10.99.0.201 | LXC | Ollama hub (only hypervisor exception) |
-| lab1–3 | 10.99.0.211–213 | Proxmox + Ollama | Distributed inference |
-| lab4 | 10.99.0.214 | Proxmox + Ollama | Currently unreachable — verify before use |
-| nuk1 | 10.99.0.215 | Proxmox + Ollama | Backup inference |
+| hv-example | 192.0.2.5 | Proxmox host | documentation-range example row |
 
 ## Reliability (N+1)
 
 - Critical services run on 2+ nodes
 - Health checks every 60s; auto-failover for DNS, Monitoring, Ollama
-- Technitium DNS at 10.99.0.4
+- DNS server address: read from `environments/<env>/env.yml` connectivity probes
 
 ## Key Rules
 
