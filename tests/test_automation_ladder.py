@@ -8,6 +8,7 @@ from the test venv is guaranteed available.
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -203,3 +204,41 @@ class TestCanonicalAgentsAreLoadable:
             "agent cannot reach any MikroTik device"
         )
         assert linux.get("mikromcp_*") == "deny"
+
+
+class TestNewSkillTemplate:
+    """The scaffolded template's step 0 must be runnable (#166).
+
+    Every scaffolded skill opens by ticking the ladder. The template named
+    `scripts/automation-ladder.py`, but the tool lives in `bin/` and
+    `scripts/` has never existed here — so step 0 of every new skill failed
+    on its first command, silently defeating the usage tracking the whole
+    ladder depends on.
+    """
+
+    SCRIPT_RE = re.compile(r"`?python3 ([\w./-]+automation-ladder\.py)")
+
+    def _scaffold(self, repo) -> str:
+        result = run(repo, "new-skill", "--name", "demo-skill",
+                     "--description", "d", "--triggers", "t")
+        assert result.returncode == 0, result.stdout + result.stderr
+        return (repo / ".opencode" / "skills" / "demo-skill" / "SKILL.md").read_text()
+
+    def test_every_emitted_command_resolves_to_a_real_file(self, repo):
+        body = self._scaffold(repo)
+
+        paths = set(self.SCRIPT_RE.findall(body))
+        assert paths, "template no longer invokes the ladder — step 0 is the point"
+        for rel in paths:
+            assert (ROOT / rel).is_file(), (
+                f"scaffolded skill invokes {rel}, which does not exist in this "
+                f"repo; step 0 would fail on its first command"
+            )
+
+    def test_the_template_does_not_resurrect_the_scripts_path(self, repo):
+        assert "scripts/" not in self._scaffold(repo)
+
+    def test_the_mute_hint_is_emitted_too(self, repo):
+        """The mute hint is the other half of step 0 and had the same path."""
+        body = self._scaffold(repo)
+        assert "mute --skill demo-skill" in body

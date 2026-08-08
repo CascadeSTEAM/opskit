@@ -5,8 +5,8 @@ Ported from ~/Projects/M5Stack/lilyetibot (dev rule 2, "Escalate
 repetition into automation") per operator directive 2026-07-14.
 
 Manual processes that keep recurring should climb the ladder: first a
-skill, then a repo-tracked script/tool, then a DocWright MCP tool
-(scripts/mcp-server.py). This script is the deterministic engine behind
+skill, then a repo-tracked script/tool, then an MCP tool under
+`mcp/`. This script is the deterministic engine behind
 that: agents journal what they do, the journal is scanned for repetition
 at session start, and skills tick their own usage so escalation
 thresholds are measured, not remembered.
@@ -71,7 +71,7 @@ triggers: {triggers}
 
 # {title}
 
-<!-- Scaffolded by scripts/automation-ladder.py. Replace the placeholder
+<!-- Scaffolded by bin/automation-ladder.py. Replace the placeholder
      steps but KEEP step 0: it is how the automation ladder measures
      whether this skill deserves a codified script/tool. -->
 
@@ -80,7 +80,7 @@ triggers: {triggers}
 0. **Usage tracking (always, before anything else):**
 
    ```bash
-   python3 scripts/automation-ladder.py tick --skill {name}
+   python3 bin/automation-ladder.py tick --skill {name}
    ```
 
    If the output has `"offer_upgrade": true`, tell the operator this
@@ -88,9 +88,9 @@ triggers: {triggers}
    selection (IaC rule): if this skill changes the state of ANY system —
    remote host or the local workstation — the codified form is an
    **Ansible playbook/role** in `ansible/`; a plain script only for
-   repo/dev workflow. Offer a DocWright MCP tool if a playbook/script
-   already backs it. If they decline permanently, run
-   `python3 scripts/automation-ladder.py mute --skill {name}`
+   repo/dev workflow. Offer an MCP tool under `mcp/` if a
+   playbook/script already backs it. If they decline permanently, run
+   `python3 bin/automation-ladder.py mute --skill {name}`
    so they are never asked again.
 
 1. <replace: the exact command(s) or procedure this skill performs —
