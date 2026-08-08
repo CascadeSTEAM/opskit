@@ -20,6 +20,7 @@ Three failure modes are silent and expensive, which is why each gets a test:
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -109,10 +110,13 @@ def test_it_refuses_a_container_id_that_belongs_to_something_else():
 
 
 # Modules that only read or report. Anything else in this play changes state.
+# Keep this list honest: an entry here exempts a task from the guard below, so
+# adding one is a claim that the module cannot change the target.
 READ_ONLY_MODULES = {
     "ansible.builtin.assert",
     "ansible.builtin.debug",
     "ansible.builtin.set_fact",
+    "ansible.builtin.slurp",   # fetches a file's contents; writes nothing
 }
 
 
@@ -197,10 +201,124 @@ def test_docker_in_lxc_features_are_set():
 
 def test_the_container_is_network_isolated_by_default():
     """No port forwarding, no default-permit rules — it will later hold a
-    clone of Confidential data."""
+    clone of Confidential data.
+
+    All THREE conditions Proxmox requires, not two of them (#187). Asserting
+    only the guest-side pair locked in a configuration that a disabled
+    datacenter firewall makes entirely inert, while the run still reported the
+    container isolated."""
     text = PLAYBOOK.read_text()
-    assert "policy_in: DROP" in text
-    assert "firewall=1" in text
+    assert "policy_in: DROP" in text          # guest rules file
+    assert "firewall=1" in text               # vNIC flag
+    assert "cluster.fw" in text               # datacenter switch
+
+
+def test_the_datacenter_firewall_is_checked_before_anything_is_created():
+    """A refusal must cost nothing. Checking after `pct create` would leave a
+    half-provisioned node behind on every failure."""
+    names = [str(t.get("name", "")) for t in _flatten(_tasks())]
+    check = next(i for i, n in enumerate(names) if "datacenter firewall" in n.lower())
+    create = next(i for i, n in enumerate(names) if n == "Create the container")
+
+    assert check < create, "the precondition is asserted too late to be free"
+
+
+def test_the_isolation_claim_is_conditional_on_the_precondition():
+    """The wording must track reality: an unconditional 'network-isolated' is
+    the statement an operator relies on when deciding not to look further."""
+    reports = [
+        str(t["ansible.builtin.debug"]["msg"])
+        for t in _flatten(_tasks()) if "ansible.builtin.debug" in t
+    ]
+    isolation_claims = [r for r in reports if "ISOLATED" in r.upper()]
+    assert isolation_claims, "the report says nothing about isolation at all"
+
+    for claim in isolation_claims:
+        assert "datacenter_firewall_on" in claim, (
+            "an isolation claim that does not depend on the precondition is a "
+            "claim about outcome made from a check that was never done"
+        )
+
+
+# ── the detection itself, rendered rather than grepped (#187 review) ─────────
+
+def _render_firewall_detection(cluster_fw_text=None, msg=""):
+    """Render the real set_fact expression against a fixture cluster.fw."""
+    import base64
+    import jinja2
+
+    task = next(t for t in _flatten(_tasks())
+                if "Establish whether" in str(t.get("name", "")))
+    expr = task["ansible.builtin.set_fact"]["datacenter_firewall_on"]
+
+    env = jinja2.Environment()
+    env.filters["b64decode"] = lambda s: base64.b64decode(s).decode()
+    env.filters["regex_findall"] = lambda s, p: re.findall(p, s)
+    env.filters["last"] = lambda seq: seq[-1] if seq else None
+
+    ctx = {"cluster_fw": {"msg": msg}}
+    if cluster_fw_text is not None:
+        ctx["cluster_fw"]["content"] = base64.b64encode(
+            cluster_fw_text.encode()).decode()
+    return env.from_string(expr).render(**ctx).strip() == "True"
+
+
+@pytest.mark.parametrize("content,expected", [
+    ("[OPTIONS]\nenable: 1\n", True),
+    ("[OPTIONS]\nenable: 0\n", False),
+    ("[OPTIONS]\nenable:1\n", True),          # no space
+    ("[OPTIONS]\n# enable: 1\n", False),      # commented out
+    ("", False),                              # empty file
+    ("[RULES]\n", False),                     # no OPTIONS section
+    ("[OPTIONS]\r\nenable: 1\r\n", True),     # CRLF
+    # A leftover second block from a bad edit or restore: the LAST value is the
+    # effective one, so an earlier `enable: 1` must not mask it. Matching the
+    # first occurrence anywhere in the file gave the wrong answer in the
+    # dangerous direction.
+    ("[OPTIONS]\nenable: 1\n\n[RULES]\n\n[OPTIONS]\nenable: 0\n", False),
+    ("[OPTIONS]\nenable: 0\n\n[OPTIONS]\nenable: 1\n", True),
+])
+def test_the_firewall_switch_is_read_correctly(content, expected):
+    assert _render_firewall_detection(content) is expected
+
+
+def test_an_absent_file_reads_as_off():
+    assert _render_firewall_detection(None, msg="No such file or directory") is False
+
+
+def test_an_unrecognised_opt_out_value_is_refused_not_read_as_false():
+    """Ansible's `bool` filter maps any unrecognised string to false without
+    complaint, so `-e require_datacenter_firewall=treu` would have silently
+    switched the guard off — the same failure this change exists to remove,
+    reproduced inside its own escape hatch."""
+    conditions = " ".join(
+        str(t["ansible.builtin.assert"].get("that", ""))
+        for t in _flatten(_tasks()) if "ansible.builtin.assert" in t
+    )
+    assert "require_datacenter_firewall in [" in conditions, (
+        "the opt-out must accept only exact literals"
+    )
+    assert "require_datacenter_firewall | bool" not in PLAYBOOK.read_text(), (
+        "| bool silently accepts a typo as false"
+    )
+
+
+def test_an_unreadable_file_is_not_reported_as_a_disabled_firewall():
+    """A permissions error must not read as 'firewall off' — that message
+    sends the operator to the GUI, and nudges them toward disabling the check
+    to 'fix' a blocked run, turning a read failure into a real exposure."""
+    text = PLAYBOOK.read_text()
+    assert "datacenter_firewall_unreadable" in text
+    assert "Could NOT READ" in text
+    assert "Do NOT reach for require_datacenter_firewall=false" in text
+
+
+def test_proceeding_without_isolation_requires_saying_so():
+    text = PLAYBOOK.read_text()
+    assert "require_datacenter_firewall" in text
+    assert _play()["vars"]["require_datacenter_firewall"] is True, (
+        "the safe posture must be the default, not the opt-in"
+    )
 
 
 def test_sizing_defaults_are_generous_and_overridable():

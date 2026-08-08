@@ -9,8 +9,11 @@
 #   - Idempotent: an existing container is never recreated or destroyed. If the
 #     target ID is in use by something that does not look like this container,
 #     the play FAILS rather than adopting or overwriting it.
-#   - Network-isolated by default: no port forwarding, no permit rules. This
-#     container will later hold a clone of Confidential production data;
+#   - Default-deny firewall: no port forwarding, no permit rules. Proxmox needs
+#     THREE things for that to mean anything — the datacenter firewall switch,
+#     the vNIC's firewall=1, and the guest rules file — so the play asserts the
+#     first before creating anything and reports honestly if it is off (#187).
+#     This container will later hold a clone of Confidential production data;
 #     hardening and the data restore are separate tasks and out of scope here.
 #   - No infrastructure values are hardcoded. Every address, node, and pool is
 #     a variable, and ct_ip has NO default — the address is not yet allocated,
@@ -58,6 +61,10 @@
     ct_onboot: false
     ct_start_after_create: false
 
+    # A container firewall is only real when the datacenter firewall is on.
+    # Set false to provision knowingly WITHOUT isolation (#187).
+    require_datacenter_firewall: true
+
   tasks:
     - name: Require the parameters that must never be guessed
       ansible.builtin.assert:
@@ -78,6 +85,73 @@
         fail_msg: >-
           ct_ip must include a prefix length (e.g. 192.0.2.50/24). Without one
           pct assumes /24, which is a guess about someone else's network.
+
+    # A guest firewall is inert unless the DATACENTER firewall is on. Proxmox
+    # needs all three: this switch, the vNIC's firewall=1, and the guest's own
+    # rules file. With the switch off, the other two are configuration no packet
+    # ever meets — and the run would still report "network-isolated" (#187).
+    #
+    # Checked BEFORE the container is created, so a refusal costs nothing and
+    # never leaves a half-provisioned node behind.
+    - name: Read the datacenter firewall switch
+      ansible.builtin.slurp:
+        src: /etc/pve/firewall/cluster.fw
+      register: cluster_fw
+      failed_when: false
+
+    # `| bool` is NOT used on the opt-out. Ansible's bool filter maps any
+    # unrecognised string to false without complaint, so a typo —
+    # `-e require_datacenter_firewall=treu`, or an empty value — would silently
+    # switch the guard off. That is the same "reports success while not
+    # guarding" failure this whole change exists to remove, reproduced inside
+    # its own escape hatch. Only the exact literals are accepted.
+    - name: Reject an unrecognised value for the isolation requirement
+      ansible.builtin.assert:
+        that:
+          - require_datacenter_firewall in [true, false, 'true', 'false', 'True', 'False']
+        fail_msg: >-
+          require_datacenter_firewall is
+          '{{ require_datacenter_firewall }}', which is neither true nor false.
+          Refusing to guess: an unrecognised value would otherwise be read as
+          false and quietly disable the isolation check.
+
+    - name: Establish whether the datacenter firewall is enabled
+      # The LAST enable: under [OPTIONS] wins, not the first match anywhere in
+      # the file. A leftover second [OPTIONS] block from a bad edit or restore
+      # would otherwise let an earlier `enable: 1` mask the effective `enable: 0`.
+      ansible.builtin.set_fact:
+        datacenter_firewall_on: >-
+          {{ (cluster_fw.content is defined)
+             and (((cluster_fw.content | b64decode)
+                   | regex_findall('(?m)^\s*enable:\s*([01])\s*$')
+                   | last | default('0')) == '1') }}
+        datacenter_firewall_unreadable: >-
+          {{ (cluster_fw.content is not defined)
+             and ('No such file' not in (cluster_fw.msg | default(''))) }}
+
+    - name: Refuse to claim isolation the datacenter firewall would not deliver
+      ansible.builtin.assert:
+        that:
+          - datacenter_firewall_on or not require_datacenter_firewall
+          - not (datacenter_firewall_unreadable | bool)
+        fail_msg: >-
+          {{ 'Could NOT READ /etc/pve/firewall/cluster.fw on ' ~ target_host ~
+             ' (' ~ (cluster_fw.msg | default('unknown error')) ~ '). The
+             firewall may well be enabled — this is most likely a permissions
+             or connection problem, so fix that rather than disabling the
+             check. Do NOT reach for require_datacenter_firewall=false here:
+             that would turn a read failure into a real loss of isolation.'
+             if (datacenter_firewall_unreadable | bool)
+             else 'The datacenter firewall is NOT enabled on ' ~ target_host ~
+             ' (/etc/pve/firewall/cluster.fw has no effective `enable: 1`), so
+             a per-container firewall does nothing: this container would be
+             fully reachable while this playbook reported it isolated. Enable
+             it at Datacenter -> Firewall -> Options — cluster-wide state, so
+             decide it deliberately rather than as a side effect of
+             provisioning one container (opskit #189). To provision WITHOUT
+             isolation anyway, re-run with
+             -e require_datacenter_firewall=false; the report will then say
+             plainly that the container is not isolated.' }}
 
     - name: Read the existing container config, if any
       ansible.builtin.command: "pct config {{ ct_id }}"
@@ -142,11 +216,11 @@
       changed_when: true
       when: existing_ct.rc != 0
 
-    - name: Leave the container firewalled with no rules
-      # An empty rules file with a default-DROP policy is the isolation this
-      # issue asks for: the interface has firewall=1 above, so with no permit
-      # rules nothing reaches the container until someone deliberately adds a
-      # rule. Hardening beyond this posture is a separate task.
+    - name: Write a default-deny firewall rules file for the container
+      # Third of the three things Proxmox needs, the other two being the vNIC's
+      # firewall=1 and the datacenter switch asserted above. An empty rules file
+      # with policy_in: DROP means nothing reaches the container until a rule is
+      # added deliberately. Hardening beyond this posture is a separate task.
       #
       # No `mode:` here, deliberately. /etc/pve is pmxcfs, a FUSE cluster
       # filesystem that hardcodes its own permissions and rejects chmod() with
@@ -162,8 +236,8 @@
           policy_out: ACCEPT
 
           [RULES]
-          # Intentionally empty. This container is network-isolated by default
-          # (opskit #150). Add rules deliberately, never by default-permit.
+          # Intentionally empty: default-deny. Add rules deliberately, never by
+          # default-permit (opskit #150, #187).
         force: false
       when: existing_ct.rc != 0
 
@@ -179,7 +253,12 @@
         msg: >-
           CT {{ ct_id }} ({{ ct_hostname }}) provisioned on {{ target_host }}:
           {{ ct_cores }} cores, {{ ct_memory_mb }} MB RAM, {{ ct_disk_gb }} GB disk,
-          nesting+keyctl enabled, firewalled with no permit rules.
+          nesting+keyctl enabled.
+          Firewall: default-deny rules written and vNIC firewall enabled —
+          {{ 'ISOLATED (datacenter firewall is on).'
+             if datacenter_firewall_on
+             else 'NOT ISOLATED: the datacenter firewall is off, so these rules
+                   are inert and this container is reachable.' }}
           Next: install Docker and deploy the ERPNext compose stack — separate
           tasks, deliberately not done here.
       when: existing_ct.rc != 0
