@@ -133,7 +133,10 @@
         body_format: form-urlencoded
         body:
           zone: "{{ item[0].name }}"
-          domain: "{{ item[1].name }}.{{ item[0].name }}"
+          # A record named "@" (or empty) is the zone apex itself, not a
+          # child called "@" — "@.example.org" would be a real, wrong record.
+          domain: "{{ item[0].name if item[1].name in ['@', '']
+                      else item[1].name ~ '.' ~ item[0].name }}"
           type: "{{ item[1].type }}"
           value: "{{ item[1].value }}"
           # Technitium expects type-specific params; ipAddress covers A/AAAA
@@ -150,7 +153,8 @@
       failed_when: record_add_results.json.status != "ok" and "record already exists" not in (record_add_results.json.errorMessage | default(""))
       loop: "{{ effective_dns_zones | subelements('records') }}"
       loop_control:
-        label: "{{ item[1].name }}.{{ item[0].name }}"
+        label: "{{ item[0].name if item[1].name in ['@', '']
+                   else item[1].name ~ '.' ~ item[0].name }}"
 
     # ------------------------------------------------------------------
     # Step 5: Verify resolution via the DNS server itself
@@ -160,7 +164,11 @@
         cmd: |
           {% for zone in effective_dns_zones %}
           {% for record in zone.records %}
-          echo "{{ record.name }}.{{ zone.name }} -> $(dig +short @{{ ansible_host }} {{ record.name }}.{{ zone.name }} 2>/dev/null || echo 'FAILED')"
+          {# Same apex rule as the add step: "@" or empty names the zone itself.
+             Querying "@.example.org" always fails, and failed_when below turns
+             that into a failed run for exactly the records this supports. #}
+          {% set fqdn = zone.name if record.name in ['@', ''] else record.name ~ '.' ~ zone.name %}
+          echo "{{ fqdn }} -> $(dig +short @{{ ansible_host }} {{ fqdn }} 2>/dev/null || echo 'FAILED')"
           {% endfor %}
           {% endfor %}
       register: dns_verify
