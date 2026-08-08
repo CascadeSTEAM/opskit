@@ -13,6 +13,55 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-08-08 (later) — a cleanup cycle, and three near-misses in my own work
+
+**Key decisions:**
+
+- **Cleanup is a named cycle** (#182), run at the end of every `/plow` and invokable on
+  its own. Operator's calls: scope is merged local branches plus remote branches whose
+  PR is merged or closed; authorization is report-then-one-confirmation, so it is
+  deliberately **not** on `/plow`'s pre-authorized list, which stays at two items.
+- **A branch is judged by what it holds, not by its PR state** (#185). `MERGED` is
+  believed only when the tip is still what was merged *and* it went into the default
+  branch; `CLOSED` means rejected, so it gets the same scrutiny as no PR at all.
+- **A security claim must track the check that establishes it** (#187). The provisioning
+  playbook asserted two of Proxmox's three isolation conditions and reported the third
+  as achieved. Wording that describes an action stays unconditional; wording that
+  asserts an outcome now depends on the check.
+- **Enabling the datacenter firewall is a separate decision** (#189) — cluster-wide
+  state affecting every guest should not be a side effect of provisioning one container.
+
+**What this session actually taught:**
+
+- **I shipped a branch-deleting tool that could delete unmerged work three ways**, and
+  adversarial review found all three within the hour. A rejected PR's branch treated as
+  merged; a branch force-pushed after its merge; a stacked PR merged into a non-default
+  base. None had fired in anger — that is luck, not design, and the confirm-before-delete
+  default the operator chose is what made it survivable.
+- **The same failure mode appeared inside its own fix.** #188 removes a guard that
+  reported success without guarding; its opt-out then used Ansible's `| bool`, which
+  reads any typo as `false` and silently disabled the guard.
+- **A rescued fix was half-ported** and would have failed every run using the feature it
+  restored. The tests I wrote covered the half I ported.
+- The through-line: every one of these was caught by *running* the thing rather than
+  reading it. Mutation-verification — revert the fix, watch the test fail — is now
+  standard here and exposed several tests that passed against their own bug.
+
+**Also:** four items of real field work were rescued from a branch abandoned 18 days
+earlier with no PR (#184), found only because the new cleanup tool refused to delete a
+branch carrying unmerged commits. Among them a diagnosis worth keeping: `ansible.builtin.uri`
+imports python-cryptography on the *target* and fails where `_cffi_backend` does not
+match.
+
+**Completed:** #182, #185, #187, #184 closed; PRs #183, #186, #188, #190 merged; suite
+891 passed / 1 skipped. 15 dead remote branches and 10 local ones pruned.
+
+**Open threads:** see `RESUME.md`, added this session as the pick-up point. Live risk
+carried forward: the datacenter firewall's real state is unverified everywhere, so
+containers provisioned before #188 may be reachable while their config says otherwise.
+
+---
+
 ## 2026-08-08 — /plow: eight issues closed, and review earns its keep
 
 **Key decisions:**
