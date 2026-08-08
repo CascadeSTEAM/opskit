@@ -39,6 +39,65 @@ Session note: `docs/session-notes/2026-08-07-plow-skill.md`
 
 ---
 
+## 2026-08-07 — one definition per rule, and guards that had never guarded
+
+Merged #153, #156, #161, #162, #163, #165. Closed #143, #146, #149 (duplicate),
+#151, #152, #154, #155, #157, #158, #160. Ledger rows 4, 14, 19, 27, 41–44
+resolved or accepted; rows 5+9 consolidated into one issue, row 22 into #103.
+Suite 588 → 718.
+
+**Key decisions:**
+- **A rule with two implementations has already forked; the only question is
+  when you find out.** Four separate defects this session were the same shape —
+  secret patterns defined twice (hook vs CI), vault-session resolution defined
+  once but consumed three ways, ticket precedence read straight from a shared
+  file by three callers, and a review agent's tool policy that only one spawn
+  path honoured. Each fix collapses the rule to one definition and adds a test
+  that fails if a caller re-inlines it, because in every case a *comment*
+  claiming the thing was shared is what had failed.
+- **`|| true` turns a broken guard into a passing one.** The private-key pattern
+  in the pre-commit hook had never matched anything: it starts with `-`, so grep
+  parsed it as options, errored, and the swallow made it look clean. The same
+  shape then bit again inside one change — removing an inline block orphaned a
+  variable a later check read, and that check silently stopped seeing files while
+  the hook still printed "All checks passed". Dead guards now have their own
+  tests.
+- **Fix the guard, don't allowlist yourself past it.** A structural test flagged
+  a new resolver for mirroring the pattern it was told to mirror, because it
+  keyed on a constant *name*. Tightening it to key on the actual lookup made it
+  strictly more targeted; adding an exemption would have made it weaker forever.
+  Same call on test fixtures: they are composed at runtime so the scanner can
+  scan its own test file, rather than the test path being excluded.
+- **Say when a deliverable would be theatre.** An issue asked for restricted
+  agent definitions; definitions alone could not have prevented the incident that
+  prompted it, because the built-in review workflow spawns default-tool agents
+  and never reads them. The definition shipped, but the load-bearing half is a
+  PreToolUse hook — and the wiring step is deliberately the operator's, since a
+  session that can grant its own permissions can also revoke that guard.
+- **A guard narrow enough to survive.** The credential-store hook covers
+  credential stores, not "anything outside the repo". A guard that fires on
+  ordinary work gets switched off, which is why the secret patterns still ignore
+  Jinja placeholders.
+- **Review before merge is not optional sequencing.** A PR was merged while its
+  own review was still running; that review then found two regressions the merge
+  had shipped, costing a second issue, PR and review cycle to undo. Standing rule
+  now: unrequested actions get offered, not performed — and waiting for work
+  already in flight is part of the task.
+
+**Completed:** seven PRs, 9/9 CI on each, every fix verified by running it rather
+than reasoning about it — which is how the code-root/data-root conflation, an
+`ipaddress` stdlib edge on host routes, and an exported variable defeating its own
+source-reporting were each caught before review.
+
+**Open threads:** #134 needs a file-by-file inventory before any scrub — the call
+on which files are real versus illustrative is the operator's. #131 and #138 have
+owner decisions recorded and are ready to start. #159 is scoped as a comparison
+first, with an explicit stop-and-discuss gate. The PreToolUse hook from #160 is
+inert until wired into settings.
+
+
+---
+
 ## 2026-08-05, continued — the collaboration layer gets its own tooling
 
 Merged #129, #132, #135, #137. Closed #128, #130, #133, #136. Filed #131, #134, #138.
