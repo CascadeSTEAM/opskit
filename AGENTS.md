@@ -92,6 +92,7 @@ All scripts are data-driven — they read from `environments/$ACTIVE_ENV/env.yml
 | `bin/gen-mikromcp-config.py` | Generate mikromcp's `routers.yaml` from device datasets (`--check` fails on drift, `--env-prefixes` lists the vault-map variables) |
 | `bin/mcp-call.py` | Call one MCP tool from a shell via `mcp-run.sh` (`--servers`, `<server> --list`, `--arg`/`--str`). The sanctioned path when an MCP namespace is not loaded. **`--probe` starts every server and reports which cannot actually serve tools** — `mcp-run.sh --check` validates the launch path only |
 | `bin/setup-hooks.sh` | Point git at `.githooks` (`--check` for session-start verification) |
+| `bin/repo-cleanup.py` | Survey (and with `--apply` remove) merged local branches, remote branches whose PR is closed, and orphaned worktree metadata. Reports by default; never touches a branch checked out in a worktree, an unmerged branch, or a remote branch with no PR. See the `cleanup` skill |
 | `bin/token-inventory.py` | Inventory of issued API tokens — scope, role, purpose, ticket, revocation (metadata only; the vault owns the secret). See `docs/credential-lifecycle.md` |
 | `bin/publication-guard.sh` | Publication guards (tokens + RFC1918) for staged changes, a range, a branch name, or the whole tree. **Consumed by sibling repos** via `--repo`/`--contract-version`/`--token-count` — see `docs/reuse-contract.md` |
 
@@ -128,7 +129,7 @@ python3 bin/automation-ladder.py sync-agents   # then restart the agent session
   hook is the tighter follow-up.
 
 ## Skills (load with: opencode tool skill use <name>)
-`lifecycle` | `git` | `security` | `backup` | `infra` | `check-connectivity` | `templates` | `tools` | `endsession` | `idea-triage` | `baseline` | `gh` | `helpdesk-ticket` | `frappe-access` | `dogfood-cycle` | `plow` | `zabbix`
+`lifecycle` | `git` | `security` | `backup` | `infra` | `check-connectivity` | `templates` | `tools` | `endsession` | `idea-triage` | `baseline` | `gh` | `helpdesk-ticket` | `frappe-access` | `dogfood-cycle` | `plow` | `zabbix` | `cleanup`
 
 Load the relevant skill before working in its domain.
 

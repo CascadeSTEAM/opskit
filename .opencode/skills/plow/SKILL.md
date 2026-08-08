@@ -55,9 +55,19 @@ triggers: plow, /plow, plow through, clear the backlog, backlog sweep, work the 
   relaxation: reviewer ≠ author is satisfied by *requesting* the external
   reviewer — a pending review does not block a /plow merge (step 4).
 - /plow pre-authorizes exactly two things: merging per step 4 and closing
-  unambiguous duplicates. Anything else unrequested is offered, not done.
+  unambiguous duplicates. Anything else unrequested is offered, not done —
+  including the phase-4 cleanup, which asks before deleting anything.
 - An issue needing live-infrastructure work is not plow material — skip it and
   say why (env, ticket, and session-start sequence need a dedicated session).
+
+## Phase 4 — cleanup
+
+9. **Prune what the run left behind.** Load the `cleanup` skill. A plow run
+   creates a branch per issue and a worktree per review agent, and none of the
+   leftovers break anything — which is why they accumulate until a branch list
+   is mostly dead. Survey with `bin/repo-cleanup.py`, show the operator the
+   list, and remove on one go-ahead. **Cleanup is NOT pre-authorized by /plow**
+   (see Rules): it deletes published refs, so it asks.
 
 ## Failure handling
 
@@ -65,4 +75,4 @@ triggers: plow, /plow, plow through, clear the backlog, backlog sweep, work the 
 - Two failed attempts at the same fix → stop that item (cycle-detection rule),
   record progress on the issue, move on.
 - Always end with a report: PRs merged, duplicates closed, issues completed,
-  items skipped + why.
+  items skipped + why, and what cleanup removed (or was declined).
