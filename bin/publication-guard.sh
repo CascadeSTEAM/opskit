@@ -27,61 +27,25 @@
 #   bin/publication-guard.sh --branch [name]       # a branch name (default: HEAD)
 #   bin/publication-guard.sh --tree                # every tracked file's content
 #
-# Consumed by other repos (docs/reuse-contract.md). Those three exist so a
-# consumer never has to reimplement any of this:
-#   bin/publication-guard.sh --repo <path> <mode>  # check a DIFFERENT tree,
-#                                                  # with token sources still
-#                                                  # read from OPSKIT_ROOT
-#   bin/publication-guard.sh --contract-version    # integer; bumped on change
-#   bin/publication-guard.sh --token-count         # how many tokens resolved,
-#                                                  # never the tokens themselves
-#
 # Overrides (reviewed false positives only):
 #   ALLOW_PRIVATE_IPS=1   skip check 1
 #   ALLOW_CLIENT_TOKENS=1 skip checks 2 and 3
 set -euo pipefail
 
-# Bump when the contract changes in a way a consumer can observe: a new mode, a
-# changed exit code, a changed output shape. Consumers assert a minimum and fail
-# closed below it (docs/reuse-contract.md).
-CONTRACT_VERSION=1
-
-# OPSKIT_ROOT is where OpsKit itself lives — the source of the token list.
-# It also defaults to the tree under test, which is why the repo's own hooks
-# need no arguments. `--repo` separates the two for consumers.
-OPSKIT_HOME="${OPSKIT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-REPO_ROOT="$OPSKIT_HOME"
-
-if [ "${1:-}" = "--repo" ]; then
-    REPO_ROOT="${2:?usage: publication-guard.sh --repo <path> <mode> [args]}"
-    if [ ! -d "$REPO_ROOT" ]; then
-        echo "ERROR: --repo path does not exist: $REPO_ROOT" >&2
-        exit 2
-    fi
-    REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
-    shift 2
-fi
-
-if [ "${1:-}" = "--contract-version" ]; then
-    echo "$CONTRACT_VERSION"
-    exit 0
-fi
-
+# OPSKIT_ROOT override exists for tests (point at a temp repo root).
+REPO_ROOT="${OPSKIT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$REPO_ROOT"
 
 RFC1918='\b(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})\b'
 
 collect_tokens() {
     local tokens=""
-    # Token sources come from OpsKit, never from the tree under test: a consumer
-    # repo has no environments/ of its own, and reading one would let the tree
-    # being checked influence what it is checked against.
-    if [ -d "$OPSKIT_HOME/environments" ]; then
-        tokens=$(find "$OPSKIT_HOME/environments" -mindepth 1 -maxdepth 1 -type d ! -name example ! -name '.*' -printf '%f\n')
+    if [ -d environments ]; then
+        tokens=$(find environments -mindepth 1 -maxdepth 1 -type d ! -name example ! -name '.*' -printf '%f\n')
     fi
-    if [ -f "$OPSKIT_HOME/.client-tokens" ]; then
+    if [ -f .client-tokens ]; then
         tokens="$tokens
-$(grep -vE '^\s*(#|$)' "$OPSKIT_HOME/.client-tokens")"
+$(grep -vE '^\s*(#|$)' .client-tokens)"
     fi
     if [ -n "${CLIENT_TOKENS:-}" ]; then
         tokens="$tokens
@@ -89,15 +53,6 @@ $(echo "$CLIENT_TOKENS" | tr ', ' '\n')"
     fi
     echo "$tokens" | sed '/^\s*$/d' | sort -u
 }
-
-if [ "${1:-}" = "--token-count" ]; then
-    # A count, never the list: the tokens are the secret this guard protects,
-    # and consumers only need to know whether the list is non-empty. An empty
-    # list makes the token check a silent no-op, indistinguishable from passing,
-    # so a consumer that fails closed needs exactly this number.
-    collect_tokens | grep -c . || true
-    exit 0
-fi
 
 MODE="${1:---cached}"
 
