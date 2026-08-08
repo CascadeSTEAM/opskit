@@ -140,8 +140,13 @@ def test_removal_prints_a_sha_so_a_mistake_is_recoverable(repo, capsys):
 
 # ── remote branches: the gh seam is supplied, never called ───────────────────
 
-def _fake_remote(mod, monkeypatch, refs: dict[str, str], states: dict[str, str]):
-    """refs: branch -> sha as ls-remote would report; states: branch -> PR state."""
+def _pr(state, base="main", head_oid=None, sha=None):
+    """A gh pr record. head_oid defaults to the branch tip, i.e. unmoved."""
+    return {"state": state, "base": base, "head_oid": head_oid or sha or ""}
+
+
+def _fake_remote(mod, monkeypatch, refs: dict[str, str], states: dict[str, dict]):
+    """refs: branch -> sha as ls-remote would report; states: branch -> PR record."""
     real_git = mod._git
 
     def fake_git(*args, **kwargs):
@@ -151,12 +156,15 @@ def _fake_remote(mod, monkeypatch, refs: dict[str, str], states: dict[str, str])
 
     monkeypatch.setattr(mod, "_git", fake_git)
     monkeypatch.setattr(mod, "_pr_states", lambda: states)
+    monkeypatch.setattr(mod, "_fetch", lambda: "")
+    # The scratch repo has no origin, so compare against the local base.
+    monkeypatch.setattr(mod, "_remote_ref_exists", lambda name: False)
 
 
 def test_a_remote_branch_with_a_merged_pr_is_offered(repo, monkeypatch):
     mod = _load(repo)
     _fake_remote(mod, monkeypatch,
-                 {"feature-x": "a" * 40}, {"feature-x": "MERGED"})
+                 {"feature-x": "a" * 40}, {"feature-x": _pr("MERGED", sha="a" * 40)})
 
     dead, undecided = mod.remote_branches()
 
@@ -167,7 +175,7 @@ def test_a_remote_branch_with_a_merged_pr_is_offered(repo, monkeypatch):
 def test_a_remote_branch_with_an_open_pr_is_kept(repo, monkeypatch):
     mod = _load(repo)
     _fake_remote(mod, monkeypatch,
-                 {"feature-x": "a" * 40}, {"feature-x": "OPEN"})
+                 {"feature-x": "a" * 40}, {"feature-x": _pr("OPEN", sha="a" * 40)})
 
     dead, undecided = mod.remote_branches()
 
@@ -210,7 +218,7 @@ def test_a_closed_pr_does_not_authorize_deleting_unmerged_work(repo, monkeypatch
     merge but might still want."""
     mod = _load(repo)
     sha = git(repo, "rev-parse", "unmerged-branch").stdout.strip()
-    _fake_remote(mod, monkeypatch, {"rejected": sha}, {"rejected": "CLOSED"})
+    _fake_remote(mod, monkeypatch, {"rejected": sha}, {"rejected": _pr("CLOSED", sha=sha)})
 
     dead, undecided = mod.remote_branches()
 
@@ -221,12 +229,79 @@ def test_a_closed_pr_does_not_authorize_deleting_unmerged_work(repo, monkeypatch
 def test_a_closed_pr_whose_work_is_already_in_the_base_is_removable(repo, monkeypatch):
     mod = _load(repo)
     sha = git(repo, "rev-parse", "main").stdout.strip()
-    _fake_remote(mod, monkeypatch, {"closed-empty": sha}, {"closed-empty": "CLOSED"})
+    _fake_remote(mod, monkeypatch, {"closed-empty": sha}, {"closed-empty": _pr("CLOSED", sha=sha)})
 
     dead, undecided = mod.remote_branches()
 
     assert [n for n, _ in dead] == ["closed-empty"]
     assert undecided == []
+
+
+def test_a_branch_force_pushed_after_its_merge_is_not_deleted(repo, monkeypatch):
+    """gh still reports MERGED, but the tip is no longer what was merged — the
+    commits added afterwards were in no PR and are in no base branch. Trusting
+    the state string alone deleted them."""
+    mod = _load(repo)
+    moved_tip = git(repo, "rev-parse", "unmerged-branch").stdout.strip()
+    _fake_remote(mod, monkeypatch, {"reused": moved_tip},
+                 {"reused": _pr("MERGED", head_oid="0" * 40)})
+
+    dead, undecided = mod.remote_branches()
+
+    assert dead == [], "the post-merge commits would have been lost"
+    assert undecided[0]["state"] == "moved since the merge"
+
+
+def test_a_pr_merged_into_another_branch_is_not_treated_as_landed(repo, monkeypatch):
+    """A stacked PR merged into a feature branch reports MERGED exactly like
+    one merged into the default branch, though its work never reached it."""
+    mod = _load(repo)
+    sha = git(repo, "rev-parse", "unmerged-branch").stdout.strip()
+    _fake_remote(mod, monkeypatch, {"stacked": sha},
+                 {"stacked": _pr("MERGED", base="some-feature", sha=sha)})
+
+    dead, undecided = mod.remote_branches()
+
+    assert dead == []
+    assert "not main" in undecided[0]["state"]
+
+
+def test_a_stacked_pr_whose_work_did_reach_the_base_is_removable(repo, monkeypatch):
+    """The check is 'is the work in the base', not 'was the PR shaped oddly'."""
+    mod = _load(repo)
+    sha = git(repo, "rev-parse", "main").stdout.strip()
+    _fake_remote(mod, monkeypatch, {"stacked-landed": sha},
+                 {"stacked-landed": _pr("MERGED", base="some-feature", sha=sha)})
+
+    dead, undecided = mod.remote_branches()
+
+    assert [n for n, _ in dead] == ["stacked-landed"]
+    assert undecided == []
+
+
+def test_a_commit_absent_from_the_local_store_is_never_counted_wrongly(repo, monkeypatch):
+    """A branch pushed since the last fetch has no local object, so git cannot
+    answer either question. The operator must see 'unknown', never a number
+    that looks authoritative."""
+    mod = _load(repo)
+    _fake_remote(mod, monkeypatch, {"never-fetched": "b" * 40}, {})
+
+    dead, undecided = mod.remote_branches()
+
+    assert dead == [], "an unresolvable commit must never be deleted"
+    assert undecided[0]["unique_commits"] == -1, "must read as unknown, not 0"
+
+
+def test_a_failed_fetch_is_surfaced_rather_than_silently_degrading(repo, monkeypatch):
+    """Without a fetch the ancestry answers are about the local store, not
+    origin — the operator has to know the survey was made on stale data."""
+    mod = _load(repo)
+    _fake_remote(mod, monkeypatch, {}, {})
+    monkeypatch.setattr(mod, "_fetch", lambda: "network unreachable")
+
+    _, undecided = mod.remote_branches()
+
+    assert any("fetch failed" in e["state"] for e in undecided)
 
 
 def test_a_squash_merged_branch_is_still_removable(repo, monkeypatch):
@@ -235,7 +310,7 @@ def test_a_squash_merged_branch_is_still_removable(repo, monkeypatch):
     ancestor of the base. Requiring one here would stop removing anything."""
     mod = _load(repo)
     sha = git(repo, "rev-parse", "unmerged-branch").stdout.strip()  # not an ancestor
-    _fake_remote(mod, monkeypatch, {"squashed": sha}, {"squashed": "MERGED"})
+    _fake_remote(mod, monkeypatch, {"squashed": sha}, {"squashed": _pr("MERGED", sha=sha)})
 
     dead, undecided = mod.remote_branches()
 
@@ -257,14 +332,14 @@ def test_a_reopened_ref_is_kept_even_if_an_older_pr_merged(repo, monkeypatch):
     monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: type(
         "R", (), {"returncode": 0, "stdout": fake_list(), "stderr": ""})())
 
-    assert mod._pr_states()["reused"] == "OPEN"
+    assert mod._pr_states()["reused"]["state"] == "OPEN"
 
 
 def test_a_remote_branch_in_a_worktree_is_kept_however_dead_its_pr(repo, monkeypatch):
     """Deleting the remote of a branch someone is working on breaks their push."""
     mod = _load(repo)
     _fake_remote(mod, monkeypatch,
-                 {"in-a-worktree": "a" * 40}, {"in-a-worktree": "MERGED"})
+                 {"in-a-worktree": "a" * 40}, {"in-a-worktree": _pr("MERGED", sha="a" * 40)})
 
     dead, _ = mod.remote_branches()
 

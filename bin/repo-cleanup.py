@@ -46,9 +46,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(os.environ.get("OPSKIT_ROOT") or Path(__file__).resolve().parents[1])
 
-# PR states that mean the branch has served its purpose. A branch with no PR is
-# deliberately absent: "never had a PR" is not the same as "finished".
-DEAD_PR_STATES = {"MERGED", "CLOSED"}
+# NOTE: there is deliberately no "these states mean deletable" set. State alone
+# never authorizes a deletion here — see _pr_states() and remote_branches().
 
 
 def _git(*args: str, check: bool = True) -> str:
@@ -144,24 +143,59 @@ def merged_local_branches() -> list[tuple[str, str]]:
     return out
 
 
-def _pr_states() -> dict[str, str]:
-    """headRefName -> PR state, in one call rather than one per branch."""
+def _pr_states() -> dict[str, dict]:
+    """headRefName -> {state, base, head_oid}, in one call rather than per branch.
+
+    `state` alone is not enough to authorize a deletion, and asking only for it
+    was a real hole:
+
+      * a branch force-pushed AFTER its PR merged still reports MERGED, so the
+        commits added afterwards were never in any PR and are not in the base;
+      * a stacked PR merged into another feature branch also reports MERGED,
+        though its work never reached the default branch.
+
+    So the head SHA that was actually merged, and the base it merged into, are
+    fetched too. Both are checked before MERGED is believed.
+    """
     proc = subprocess.run(
         ["gh", "pr", "list", "--state", "all", "--limit", "500",
-         "--json", "headRefName,state"],
+         "--json", "headRefName,state,baseRefName,headRefOid"],
         cwd=REPO_ROOT, capture_output=True, text=True,
     )
     if proc.returncode != 0:
         raise RuntimeError(f"gh pr list failed: {proc.stderr.strip()}")
 
-    states: dict[str, str] = {}
+    states: dict[str, dict] = {}
     for pr in json.loads(proc.stdout or "[]"):
-        ref, state = pr["headRefName"], pr["state"]
+        ref = pr["headRefName"]
         # An open PR anywhere on the ref keeps the branch, whatever else exists.
-        if states.get(ref) == "OPEN":
+        if states.get(ref, {}).get("state") == "OPEN":
             continue
-        states[ref] = state
+        states[ref] = {
+            "state": pr["state"],
+            "base": pr.get("baseRefName", ""),
+            "head_oid": pr.get("headRefOid", ""),
+        }
     return states
+
+
+def _fetch() -> str:
+    """Refresh remote refs. Returns '' on success, else the error.
+
+    Read-only, and load-bearing: without it a commit that exists only on origin
+    is absent from the local object store, so every ancestry question about it
+    answers "no" for want of the object rather than on the merits.
+    """
+    proc = subprocess.run(["git", "fetch", "--quiet", "--prune", "origin"],
+                          cwd=REPO_ROOT, capture_output=True, text=True)
+    return "" if proc.returncode == 0 else proc.stderr.strip()
+
+
+def _remote_ref_exists(name: str) -> bool:
+    return subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{name}"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    ).returncode == 0
 
 
 def _is_ancestor(sha: str, base: str) -> bool:
@@ -207,6 +241,14 @@ def remote_branches() -> tuple[list[tuple[str, str]], list[dict]]:
     protected = branches_in_use() | {base, "main", "master"}
     states = _pr_states()
 
+    # Ancestry is judged against what origin ACTUALLY has, not a local ref that
+    # may be behind — or, if the default branch was ever rewritten, may still
+    # contain a lineage origin has dropped, which would make unmerged work look
+    # like an ancestor. Refreshed first so remote-only commits are present to
+    # compare at all.
+    fetch_error = _fetch()
+    base_ref = f"origin/{base}" if base and _remote_ref_exists(base) else base
+
     dead, no_pr = [], []
     for line in _git("ls-remote", "--heads", "origin").splitlines():
         if not line.strip():
@@ -216,27 +258,47 @@ def remote_branches() -> tuple[list[tuple[str, str]], list[dict]]:
         if name in protected:
             continue
 
-        state = states.get(name)
+        pr = states.get(name) or {}
+        state = pr.get("state")
 
-        if state == "MERGED":
-            # GitHub says the content landed. Do NOT ask whether the tip is an
-            # ancestor: a squash merge rewrites it into a new commit, so a
-            # correctly-merged branch is never an ancestor of the base.
-            dead.append((name, sha[:9]))
+        # An open PR is live work. Not dead, and not the operator's problem.
+        if state == "OPEN":
             continue
 
-        # CLOSED means the PR was rejected or abandoned, NOT that the work
-        # landed — so it gets the same scrutiny as a branch with no PR at all.
-        if state in (None, "CLOSED"):
-            if base and _is_ancestor(sha, base):
+        # MERGED is believed only when BOTH hold: the tip is still exactly what
+        # was merged, and it was merged into the default branch. A squash merge
+        # rewrites the commits, so an ancestry check cannot substitute for this
+        # — but neither can the bare state string.
+        if state == "MERGED":
+            moved = bool(pr.get("head_oid")) and pr["head_oid"] != sha
+            elsewhere = bool(pr.get("base")) and pr["base"] != base
+            if not moved and not elsewhere:
                 dead.append((name, sha[:9]))
-            else:
-                no_pr.append({
-                    "name": name,
-                    "sha": sha[:9],
-                    "state": state or "no PR",
-                    "unique_commits": _unique_commits(sha, base) if base else -1,
-                })
+                continue
+            reason = ("moved since the merge" if moved
+                      else f"merged into {pr.get('base')}, not {base}")
+        else:
+            # CLOSED means rejected or abandoned, NOT that the work landed, so
+            # it gets the same scrutiny as a branch with no PR at all.
+            reason = state or "no PR"
+
+        if base_ref and _is_ancestor(sha, base_ref):
+            dead.append((name, sha[:9]))
+        else:
+            no_pr.append({
+                "name": name,
+                "sha": sha[:9],
+                "state": reason,
+                "unique_commits": _unique_commits(sha, base_ref) if base_ref else -1,
+            })
+
+    if fetch_error:
+        no_pr.append({
+            "name": "(remote refs not refreshed)",
+            "sha": "-",
+            "state": f"fetch failed: {fetch_error}",
+            "unique_commits": -1,
+        })
     return dead, no_pr
 
 
