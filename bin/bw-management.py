@@ -9,10 +9,18 @@ import subprocess
 import base64
 import os
 
+# The session-resolution rule lives in bin/bw_session.py, shared with
+# mcp-run.sh and install.sh. Reading BW_SESSION directly here is what made this
+# tool report "not set" for a session the launcher happily accepted (#155).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from bw_session import resolve, SessionError  # noqa: E402
+
+
 def run_bw(args, stdin_data=None):
-    session = os.environ.get("BW_SESSION")
-    if not session:
-        print("ERROR: BW_SESSION environment variable not set.")
+    try:
+        session, _source = resolve()
+    except SessionError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
     
     cmd = ["bw"] + args + ["--session", session]

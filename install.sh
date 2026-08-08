@@ -205,11 +205,14 @@ check_cmd gh       optional "issue/PR workflow, bin/fix-issue.sh" "apt install g
 check_cmd jq       optional "JSON handling in shell tooling" "apt install jq"
 
 if command -v bw &>/dev/null; then
-    if [ -n "${BW_SESSION:-}" ]; then
-        note_ok "BW_SESSION" "set — MCP wrappers can resolve secrets"
+    # Asks bin/bw_session.py rather than testing the env var: a session supplied
+    # by file is equally valid, and reporting it missing here contradicted the
+    # setup this repo documents (#155).
+    if BW_SOURCE=$(python3 "$REPO_ROOT/bin/bw_session.py" --source 2>/dev/null); then
+        note_ok "vault session" "available (from $BW_SOURCE)"
     else
-        note_warn "BW_SESSION" "not set — every MCP wrapper will abort at launch" \
-            "export BW_SESSION=\$(bw unlock --raw)  # before starting the agent runtime"
+        note_warn "vault session" "not available — every MCP wrapper will abort at launch" \
+            "export BW_SESSION=\$(bw unlock --raw)  # or write it to ~/.cache/opskit/bw-session"
     fi
 fi
 

@@ -641,23 +641,10 @@ def test_empty_session_file_does_not_reach_secret_resolution(tmp_path):
     assert "s3cret" not in result.stdout
 
 
-def test_unverifiable_file_mode_is_refused_not_trusted(tmp_path):
-    """Fail closed: if the mode cannot be read, the guard cannot prove
-    owner-only access, and an unverifiable guard must not report success."""
-    root = _make_root(tmp_path, {"demo": {"DEMO_A": {"item": "i1"}}})
-    bw = _make_bw_stub(tmp_path, {"i1": _login_item()})
-    # A `stat` earlier in PATH that always fails, so neither form yields a mode.
-    stub = tmp_path / "nostat"
-    stub.mkdir()
-    (stub / "stat").write_text("#!/bin/sh\nexit 1\n")
-    (stub / "stat").chmod(0o755)
-
-    result = _run(root, "demo", "--check", bw=bw, session=None,
-                  session_file=_session_file(tmp_path), path_prepend=stub)
-
-    assert result.returncode != 0
-    assert "cannot read the file mode" in result.stderr
-    assert "export BW_SESSION" in result.stderr
+# The "unverifiable mode is refused" property moved to
+# tests/test_bw_session.py when the rule moved into bin/bw_session.py (#155).
+# It used to be exercised by stubbing the `stat` BINARY in PATH; the resolver
+# now uses a stat syscall, so that mechanism tests nothing.
 
 
 def test_list_works_even_when_the_session_file_is_unusable(tmp_path):

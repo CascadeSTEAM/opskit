@@ -43,6 +43,12 @@
 # Override the file path with BW_SESSION_FILE.
 set -euo pipefail
 
+# CODE root: where this script and its siblings live. Distinct from REPO_ROOT
+# on purpose — REPO_ROOT is the caller-overridable DATA root, and locating code
+# from it is a conflation that has broken this repo before (a caller pointing
+# OPSKIT_ROOT at a data directory must still get THIS checkout's helpers).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 REPO_ROOT="${OPSKIT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$REPO_ROOT"
 REPO_ROOT="$(pwd)"
@@ -52,88 +58,52 @@ VAULT_MAP="${OPSKIT_VAULT_MAP:-$MCP_DIR/vault-map.local.json}"
 EXTERNAL_MAP="${OPSKIT_EXTERNAL_MAP:-$MCP_DIR/external-servers.json}"
 VENV_PYTHON="${OPSKIT_VENV_PYTHON:-$REPO_ROOT/.venv/bin/python3}"
 BW="${OPSKIT_BW:-bw}"
-# An explicit override always wins. Otherwise the default lives under HOME —
-# which is NOT guaranteed to be set: `env -i`, cron, and systemd units with a
-# scrubbed environment all run without it, and dereferencing it under `set -u`
-# aborted the whole script there (#154). No HOME means no discoverable default,
-# which disables the fallback rather than killing the run.
-if [ -z "${BW_SESSION_FILE:-}" ]; then
-    if [ -n "${HOME:-}" ]; then
-        BW_SESSION_FILE="$HOME/.cache/opskit/bw-session"
-    else
-        BW_SESSION_FILE=""
-    fi
-fi
-
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 
 die() { echo -e "${RED}ERROR${NC}: $*" >&2; exit 1; }
 
 # Where the session came from, for --check to report honestly.
 BW_SESSION_SOURCE="environment"
-BW_SESSION_FILE_EMPTY=0
+BW_SESSION_PROBLEM=""
 
-# Remediation must name the source actually in play. Telling a file-based setup
-# to `export BW_SESSION=...` fixes only the operator's own shell: the stale file
-# stays stale, the agent runtime keeps reading the dead token, and the export
-# then shadows the file forever in that shell (#154).
+# Remediation must name the source actually in play: telling a file-based setup
+# to `export BW_SESSION=...` fixes only the operator's own shell while the agent
+# runtime keeps reading the stale file (#154). The wording lives in the resolver
+# with everything else about sessions — two copies of it here and there is the
+# duplication #155 exists to remove.
 refresh_hint() {
-    if [ "$BW_SESSION_SOURCE" = "environment" ]; then
-        echo "re-run: export BW_SESSION=\$(bw unlock --raw)"
-    else
-        echo "refresh the session FILE it came from: (umask 077; bw unlock --raw > $BW_SESSION_SOURCE)"
-    fi
+    # --source-is is required, not cosmetic: this script exports BW_SESSION once
+    # it resolves, so a resolver subprocess would then report "environment" and
+    # tell the operator to refresh the wrong thing.
+    "$(json_python)" "$SCRIPT_DIR/bw_session.py" --refresh-hint \
+        --source-is "$BW_SESSION_SOURCE" 2>/dev/null \
+        || echo "re-run: export BW_SESSION=\$(bw unlock --raw)"
 }
 
-# Requiring BW_SESSION in the environment forces every credentialed shell call
-# into the form `BW_SESSION=$(cat ...) bin/mcp-call.py ...`. Permission allow
-# rules match from the command's first character, so that prefix defeats any
-# rule pre-approving the sanctioned MCP path (#152). Falling back to a file
-# keeps the canonical invocation prefix-free.
-#
-# Fail closed on loose permissions: the file is used only when its mode can be
-# READ and proves owner-only access. A session token is a live key to the whole
-# vault, so "could not determine the mode" is a refusal, not a pass — an
-# unverifiable guard that reports success is worse than no guard.
+# Session resolution (env var, else a mode-checked file) lives in
+# bin/bw_session.py, shared with bw-management.py and install.sh so the rule has
+# exactly one definition (#155). It used to live only here, which is why those
+# tools reported a file-based session missing while this launcher accepted it.
 load_session_file() {
     [ -n "${BW_SESSION:-}" ] && return 0
-    [ -n "$BW_SESSION_FILE" ] || return 0
-    [ -f "$BW_SESSION_FILE" ] || return 0
 
-    # -L on purpose: a symlink's own mode is 0777 on Linux and says nothing
-    # about who can read the token. What governs readability is the TARGET's
-    # mode — and judging the link instead refused legitimate setups while
-    # printing a `chmod 600 <link>` fix that chmod dereferences, so it could
-    # never clear the error (#154).
-    local mode
-    mode=$(stat -L -c '%a' "$BW_SESSION_FILE" 2>/dev/null \
-        || stat -L -f '%Lp' "$BW_SESSION_FILE" 2>/dev/null || echo "")
-    if [ -z "$mode" ]; then
-        die "cannot read the file mode of $BW_SESSION_FILE (no usable stat), so
-  its permissions cannot be verified and it will not be used.
-  Export the session instead:  export BW_SESSION=\$(bw unlock --raw)"
-    fi
-    if [ "$((8#$mode & 8#077))" -ne 0 ]; then
-        die "$BW_SESSION_FILE is mode $mode — readable beyond its owner.
-  A vault session token is a live key to every secret. Fix:
-    chmod 600 $BW_SESSION_FILE"
-    fi
+    local resolver="$SCRIPT_DIR/bw_session.py"
+    [ -f "$resolver" ] || return 0
 
-    local token
-    token="$(cat "$BW_SESSION_FILE")"
-    # An empty file is the expected residue of a FAILED unlock: the shell
-    # creates the file for `bw unlock --raw > file` before bw runs, so a wrong
-    # master password leaves a well-permissioned empty file behind. Leave
-    # BW_SESSION unset and record why, so --check names the real cause instead
-    # of telling the operator to write the file they just wrote.
-    if [ -z "$token" ]; then
-        BW_SESSION_FILE_EMPTY=1
+    # --source first: it prints a path or the word "environment", never a
+    # secret, so capturing stderr with it is safe. Only then ask for the token.
+    local out rc
+    out=$("$(json_python)" "$resolver" --source 2>&1) && rc=0 || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        # Keep the resolver's message verbatim: it distinguishes an empty file,
+        # a loose-mode file and an absent one, and each has a different fix.
+        BW_SESSION_PROBLEM="$out"
         return 0
     fi
 
-    BW_SESSION="$token"
+    BW_SESSION_SOURCE="$out"
+    BW_SESSION="$("$(json_python)" "$resolver" --token)"
     export BW_SESSION
-    BW_SESSION_SOURCE="$BW_SESSION_FILE"
 }
 
 # Any python3 will do for reading JSON. The repo venv is preferred so secret
@@ -297,10 +267,8 @@ fi
 # a hidden master-password prompt, which presents as a hang rather than an error.
 if [ "$NEEDS_SECRETS" = "0" ]; then
     :                       # no secrets to resolve, so no session is required
-elif [ "$BW_SESSION_FILE_EMPTY" = "1" ]; then
-    report 0 "BW_SESSION" "$BW_SESSION_FILE exists but is EMPTY — a redirect creates the file before bw runs, so a failed unlock leaves it empty. Re-run: bw unlock --raw > $BW_SESSION_FILE"
 elif [ -z "${BW_SESSION:-}" ]; then
-    report 0 "BW_SESSION" "not set — export BW_SESSION=\$(bw unlock --raw), or write it to $BW_SESSION_FILE (mode 600)"
+    report 0 "BW_SESSION" "$(printf '%s' "${BW_SESSION_PROBLEM:-no vault session available}" | sed 's/^ERROR: //')"
 elif ! command -v "$BW" >/dev/null 2>&1; then
     report 0 "BW_SESSION" "set, but the bw CLI is missing so it cannot be validated"
 else
