@@ -47,8 +47,10 @@ success. Say so loudly and refuse.
 ```
 
 `--repo` sets the tree being checked while token sources still come from
-`OPSKIT_ROOT`. Without it, both default to `OPSKIT_ROOT` — which is why this
-repo's own hooks pass no arguments.
+`OPSKIT_ROOT`. It is accepted in **any** argument position — a trailing
+`--repo` used to be silently ignored, which made the guard report clean about
+a repo it never looked at. Without it, both default to `OPSKIT_ROOT` — which
+is why this repo's own hooks pass no arguments.
 
 Before `--repo` existed, a consumer had to point `OPSKIT_ROOT` at *itself* and
 feed tokens in through `CLIENT_TOKENS`, overloading one variable with two

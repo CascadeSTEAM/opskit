@@ -31,7 +31,9 @@
 # consumer never has to reimplement any of this:
 #   bin/publication-guard.sh --repo <path> <mode>  # check a DIFFERENT tree,
 #                                                  # with token sources still
-#                                                  # read from OPSKIT_ROOT
+#                                                  # read from OPSKIT_ROOT.
+#                                                  # Accepted in any position;
+#                                                  # omitted = check OPSKIT_ROOT
 #   bin/publication-guard.sh --contract-version    # integer; bumped on change
 #   bin/publication-guard.sh --token-count         # how many tokens resolved,
 #                                                  # never the tokens themselves
@@ -52,15 +54,31 @@ CONTRACT_VERSION=1
 OPSKIT_HOME="${OPSKIT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 REPO_ROOT="$OPSKIT_HOME"
 
-if [ "${1:-}" = "--repo" ]; then
-    REPO_ROOT="${2:?usage: publication-guard.sh --repo <path> <mode> [args]}"
-    if [ ! -d "$REPO_ROOT" ]; then
-        echo "ERROR: --repo path does not exist: $REPO_ROOT" >&2
-        exit 2
-    fi
-    REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
-    shift 2
-fi
+# --repo is accepted in ANY position, not just first. Recognising it only as $1
+# meant a caller who wrote `<mode> ... --repo <path>` got it silently ignored:
+# the flag and its path fell through as unused positional args, the tree under
+# test quietly reverted to OpsKit's own, and the guard reported clean about a
+# repo it never looked at. Silent success is the one failure this contract
+# exists to prevent.
+ARGS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --repo)
+            REPO_ROOT="${2:?usage: publication-guard.sh --repo <path> <mode> [args]}"
+            if [ ! -d "$REPO_ROOT" ]; then
+                echo "ERROR: --repo path does not exist: $REPO_ROOT" >&2
+                exit 2
+            fi
+            REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
+            shift 2
+            ;;
+        *)
+            ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+set -- ${ARGS[@]+"${ARGS[@]}"}
 
 if [ "${1:-}" = "--contract-version" ]; then
     echo "$CONTRACT_VERSION"

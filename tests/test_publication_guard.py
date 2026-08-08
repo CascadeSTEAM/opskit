@@ -396,6 +396,27 @@ def test_repo_checks_the_named_tree_not_opskit(repo, tmp_path):
     assert "acme" in result.stdout
 
 
+@pytest.mark.parametrize("argv", [
+    ["--repo", "{consumer}", "--tree"],   # leading, as documented
+    ["--tree", "--repo", "{consumer}"],   # trailing — used to be ignored
+])
+def test_repo_is_honored_in_any_position(argv, repo, tmp_path):
+    """Recognising --repo only as $1 meant a trailing one was silently dropped:
+    the tree under test reverted to OpsKit's own and the guard reported clean
+    about a repo it never looked at. Silent success is the failure this
+    contract exists to prevent."""
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=consumer, check=True)
+    commit(consumer, "docs/leak.md", "the acme cluster\n")
+
+    args = [a.format(consumer=str(consumer)) for a in argv]
+    result = guard(*args, CLIENT_TOKENS="acme", OPSKIT_ROOT=str(repo))
+
+    assert result.returncode == 1, f"{args} reported clean about the wrong tree"
+    assert "acme" in result.stdout
+
+
 def test_repo_leaves_the_default_behavior_alone(repo):
     """Without --repo the tree under test is still OPSKIT_ROOT, which is why
     this repo's own hooks pass no arguments."""
