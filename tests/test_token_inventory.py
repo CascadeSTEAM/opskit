@@ -79,10 +79,35 @@ def test_a_token_value_is_refused(repo):
 def test_the_vault_item_name_is_derived_not_invented(repo):
     mod = _load(repo)
 
-    assert mod.vault_item_name("proxmox", "svc@pve!mcp") == "proxmox-token-svc-pve-mcp"
+    name = mod.vault_item_name("proxmox", "svc@pve!mcp")
+    assert name.startswith("proxmox-token-svc-pve-mcp")
     # Stable across calls — the whole point is findability later.
-    assert mod.vault_item_name("proxmox", "svc@pve!mcp") == \
-        mod.vault_item_name("proxmox", "svc@pve!mcp")
+    assert name == mod.vault_item_name("proxmox", "svc@pve!mcp")
+
+
+@pytest.mark.parametrize("a,b", [
+    ("svc@pve!read-only", "svc@pve!read_only"),   # hyphen vs underscore
+    ("alice-pve!mcp", "alice@pve!mcp"),           # separator vs realm marker
+    ("svc@pve!a.b", "svc@pve!a-b"),
+])
+def test_distinct_identities_never_share_a_vault_item_name(repo, a, b):
+    """The readable slug is lossy — it collapses runs of punctuation. Two real
+    tokens told to live under one vault item is the opposite of findable, and
+    hyphen-vs-underscore is a very plausible naming choice."""
+    mod = _load(repo)
+
+    assert mod.vault_item_name("proxmox", a) != mod.vault_item_name("proxmox", b)
+
+
+def test_an_uppercase_token_value_is_refused_too(repo):
+    """A hand-pasted value may not preserve the server's lowercase hex."""
+    mod = _load(repo)
+
+    rc = run(mod, "add", "--service", "proxmox",
+             "--identity", "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+             "--scope", "/", "--role", "PVEAdmin")
+
+    assert rc == 2
 
 
 def test_revocation_is_recorded_not_deleted(repo):

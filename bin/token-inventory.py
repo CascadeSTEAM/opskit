@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import re
 import sys
@@ -46,7 +47,8 @@ INVENTORY_NAME = "api-tokens.json"
 # the services we issue from; a paste of one is rejected rather than stored.
 _SECRET_SHAPED = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"  # PVE token uuid
-    r"|^[A-Za-z0-9_\-]{40,}$"                                        # long opaque key
+    r"|^[A-Za-z0-9_\-]{40,}$",                                       # long opaque key
+    re.IGNORECASE,  # Proxmox emits lowercase, but a hand-pasted value may not
 )
 
 
@@ -77,9 +79,17 @@ def vault_item_name(service: str, identity: str) -> str:
     """The codified vault item name — one convention, so a token is findable.
 
     Mirrors the peer-naming rule from #90: derived, never invented per-session.
+
+    The readable slug is lossy — it collapses every run of punctuation, so
+    `svc@pve!read-only` and `svc@pve!read_only` produce the same text, as do
+    `alice-pve!mcp` and `alice@pve!mcp`. Two real, distinct tokens would then
+    be told to live under one vault item, which breaks exactly the findability
+    this function exists to give. A short digest of the *exact* identity is
+    appended so the name stays readable but cannot collide.
     """
     slug = re.sub(r"[^a-z0-9]+", "-", identity.lower()).strip("-")
-    return f"{service}-token-{slug}"
+    digest = hashlib.sha256(identity.encode()).hexdigest()[:8]
+    return f"{service}-token-{slug}-{digest}"
 
 
 def current_ticket() -> str:

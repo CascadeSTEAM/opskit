@@ -67,10 +67,19 @@
           datacenter. If that is genuinely intended, re-run with
           -e allow_root_grant=true. Narrow scope is the default by design.
 
+    # Every existence check below compares PARSED FIELDS, never substrings of
+    # the raw JSON. Substring matching silently collides: 'svc@pve' is inside
+    # 'xsvc@pve', and a token named 'mcp' is inside an existing 'mcp-readonly'
+    # — so the create task is skipped and no such credential is ever issued,
+    # while the play goes on to report success.
     - name: Read the existing users
       ansible.builtin.command: "pveum user list --output-format json"
       register: user_list
       changed_when: false
+
+    - name: Collect the existing user ids
+      ansible.builtin.set_fact:
+        existing_userids: "{{ (user_list.stdout | from_json) | map(attribute='userid') | list }}"
 
     - name: Create the service account (no password — token auth only)
       ansible.builtin.command:
@@ -78,7 +87,7 @@
           pveum user add {{ token_user }}@{{ token_realm }}
           --comment "{{ token_comment }}"
       changed_when: true
-      when: (token_user ~ '@' ~ token_realm) not in user_list.stdout
+      when: (token_user ~ '@' ~ token_realm) not in existing_userids
 
     - name: Read the tokens already issued to this account
       ansible.builtin.command:
@@ -86,6 +95,13 @@
       register: token_list
       changed_when: false
       failed_when: false
+
+    - name: Collect the token ids this account already has
+      ansible.builtin.set_fact:
+        existing_tokenids: >-
+          {{ (token_list.stdout | default('[]') | from_json)
+             | map(attribute='tokenid') | list
+             if token_list.rc == 0 else [] }}
 
     - name: Create the token
       # privsep=1 is the safer default and the reason for the dual grant below.
@@ -95,7 +111,7 @@
           --privsep 1 --comment "{{ token_comment }}" --output-format json
       register: token_created
       changed_when: true
-      when: token_name not in (token_list.stdout | default(''))
+      when: token_name not in existing_tokenids
 
     # Both grants, because privsep=1 intersects them. Granting only the token
     # produces empty listings rather than permission errors — a silent
@@ -120,16 +136,29 @@
       register: acl_list
       changed_when: false
 
+    - name: Extract the grants at this path
+      # Exact ugid matches on parsed entries. Checking `token_name in
+      # acl_list.stdout` would be satisfied by an unrelated 'mcp-readonly'
+      # grant — the verification would confirm a credential that is not there.
+      ansible.builtin.set_fact:
+        acl_ugids: >-
+          {{ (acl_list.stdout | from_json)
+             | selectattr('path', 'equalto', token_path)
+             | selectattr('roleid', 'equalto', token_role)
+             | map(attribute='ugid') | list }}
+
     - name: Verify BOTH grants landed
       ansible.builtin.assert:
         that:
-          - token_user ~ '@' ~ token_realm in acl_list.stdout
-          - token_name in acl_list.stdout
+          - (token_user ~ '@' ~ token_realm) in acl_ugids
+          - (token_user ~ '@' ~ token_realm ~ '!' ~ token_name) in acl_ugids
         fail_msg: >-
-          The ACL does not show both a user grant and a token grant at
-          {{ token_path }}. With privsep=1 a token missing the user grant reads
-          as "no results" rather than "denied", so this is failed deliberately
-          rather than left to be discovered later.
+          The ACL at {{ token_path }} does not show BOTH a user grant and a
+          token grant for role {{ token_role }}. Found: {{ acl_ugids }}.
+          With privsep=1 the effective rights are the intersection of the two,
+          and a token missing the user grant reads as "no results" rather than
+          "denied" — so this is failed deliberately rather than left to be
+          discovered weeks later.
 
     - name: Report the new token value, once
       ansible.builtin.debug:

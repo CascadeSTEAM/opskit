@@ -12,9 +12,11 @@ A playbook that silently produced that half-working credential would be worse
 than no playbook, so the dual grant is asserted here rather than trusted.
 """
 
+import json
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,9 +80,104 @@ def test_both_grants_are_verified_before_success_is_reported():
     asserts = [t for t in _tasks() if "ansible.builtin.assert" in t]
     verified = [
         t for t in asserts
-        if "acl_list" in str(t["ansible.builtin.assert"].get("that", ""))
+        if "acl_ugids" in str(t["ansible.builtin.assert"].get("that", ""))
     ]
     assert verified, "nothing reads back the ACL to confirm both grants landed"
+
+
+# ── the conditions are evaluated, not just grepped for (#103 review) ─────────
+# The first version of these tests only checked that certain substrings
+# appeared in the playbook source. That could not distinguish a correct
+# condition from a broken one — and did not, in fact, catch the substring
+# collisions below. These render the real Jinja against realistic fixtures.
+
+import jinja2  # a declared test dependency: a skipped test guards nothing
+
+
+def _env():
+    """Jinja with the Ansible filters these expressions use.
+
+    `from_json` and `equalto` ship with Ansible rather than stock Jinja, so a
+    bare Environment cannot render the real conditions.
+    """
+    env = jinja2.Environment()
+    env.filters["from_json"] = json.loads
+    env.tests["equalto"] = lambda value, other: value == other
+    return env
+
+
+def _render(expression: str, **context):
+    return _env().from_string("{{ " + expression + " }}").render(**context) == "True"
+
+
+def _condition_of(name_fragment: str) -> str:
+    for task in _tasks():
+        if name_fragment.lower() in str(task.get("name", "")).lower():
+            return str(task.get("when", ""))
+    raise AssertionError(f"no task matching {name_fragment!r}")
+
+
+def _fact_of(name_fragment: str, key: str) -> str:
+    for task in _tasks():
+        if name_fragment.lower() in str(task.get("name", "")).lower():
+            return str(task["ansible.builtin.set_fact"][key])
+    raise AssertionError(f"no set_fact task matching {name_fragment!r}")
+
+
+def test_a_similar_user_does_not_suppress_creating_this_one():
+    """'svc@pve' is a substring of 'xsvc@pve'. Matching raw JSON text would
+    skip creating an account that does not exist, and the play would then
+    grant ACLs to a phantom user and report success."""
+    userids = ["xsvc@pve", "root@pam"]
+
+    should_create = _render(_condition_of("Create the service account"),
+                            token_user="svc", token_realm="pve",
+                            existing_userids=userids)
+
+    assert should_create, "creation was skipped for a user that does not exist"
+
+
+def test_an_existing_user_does_suppress_creating_it_again():
+    should_create = _render(_condition_of("Create the service account"),
+                            token_user="svc", token_realm="pve",
+                            existing_userids=["svc@pve"])
+
+    assert not should_create
+
+
+def test_a_similar_token_name_does_not_suppress_creating_this_one():
+    """A token 'mcp' is a substring of an existing 'mcp-readonly'."""
+    should_create = _render(_condition_of("Create the token"),
+                            token_name="mcp",
+                            existing_tokenids=["mcp-readonly"])
+
+    assert should_create, "no token named 'mcp' would ever have been issued"
+
+
+def test_an_existing_token_is_not_reissued():
+    should_create = _render(_condition_of("Create the token"),
+                            token_name="mcp", existing_tokenids=["mcp"])
+
+    assert not should_create
+
+
+def test_the_acl_extraction_matches_path_role_and_exact_ugid():
+    """A grant for an unrelated role or path must not satisfy verification."""
+    acl = json.dumps([
+        {"path": "/vms", "roleid": "PVEAuditor", "ugid": "svc@pve"},
+        {"path": "/vms", "roleid": "PVEAuditor", "ugid": "svc@pve!mcp"},
+        {"path": "/", "roleid": "PVEAdmin", "ugid": "other@pve"},
+        {"path": "/vms", "roleid": "PVEAdmin", "ugid": "wrong-role@pve"},
+    ])
+
+    # The set_fact value already carries its own {{ }}, so render it as-is.
+    rendered = _env().from_string(
+        _fact_of("Extract the grants", "acl_ugids")
+    ).render(acl_list={"stdout": acl}, token_path="/vms", token_role="PVEAuditor")
+
+    assert "svc@pve!mcp" in rendered
+    assert "wrong-role@pve" not in rendered
+    assert "other@pve" not in rendered
 
 
 def test_the_scope_has_no_default():
