@@ -412,6 +412,21 @@ def test_a_bad_repo_path_fails_loudly_rather_than_passing(repo):
     assert "does not exist" in result.stderr
 
 
+def test_environment_dirs_still_resolve_to_bare_names(repo):
+    """Token sources moved from CWD-relative to absolute OPSKIT_HOME paths.
+    `find -printf '%f'` must still yield 'acme', not the whole path — a silent
+    change here would make every environment-derived token stop matching."""
+    (repo / "environments" / "acme").mkdir(parents=True)
+    (repo / "environments" / "example").mkdir()
+
+    count = guard("--token-count", OPSKIT_ROOT=str(repo))
+    assert count.stdout.strip() == "1", "example/ is excluded, acme/ counted"
+
+    commit(repo, "docs/notes.md", "the acme cluster\n")
+    result = guard("--tree", cwd=repo, OPSKIT_ROOT=str(repo))
+    assert result.returncode == 1, "an environment-derived token must still match"
+
+
 def test_tokens_come_from_opskit_not_from_the_tree_under_test(repo, tmp_path):
     """Otherwise the tree being checked could influence what it is checked
     against — a consumer repo has no environments/ of its own."""
