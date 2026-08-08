@@ -20,8 +20,9 @@ Pure public-repo development; no live infrastructure touched, no env/ticket.
 
 ## Undo
 
-- Revert PR #167 (3 files: SKILL.md, symlink, AGENTS.md line) — no other state,
-  except a `plow` entry at count 0 in the gitignored `.local/` ladder ledger.
+- Revert PR #167 (5 files: SKILL.md, symlink, AGENTS.md line, SESSION-LOG.md
+  entry, this note — the revert removes the log entries too). Only other state
+  is a `plow` entry at count 0 in the gitignored `.local/` ladder ledger.
 
 ## Errors / gotchas
 
