@@ -92,7 +92,7 @@ Tests use:
 opskit ships with OpenCode integration in `.opencode/`:
 - `rules/` — 10 behavioral rules for AI agents
 - `skills/` — 16 domain-specific skills (the only skill tree; Claude Code reaches them via `.claude/skills/<name>` symlinks)
-- `agents/` — 7 subagent definitions (linux, mikrotik, lifecycle, incident, skill-builder, security-auditor, code-reviewer)
+- `agents/` — 6 subagent definitions (linux, mikrotik, lifecycle, incident, skill-builder, code-reviewer)
 - `AGENTS.md` — entry point for all AI coding agents
 
 To add a new skill, use `@skill-builder` or create
