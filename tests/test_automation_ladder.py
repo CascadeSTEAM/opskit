@@ -153,7 +153,10 @@ class TestSyncAgents:
         assert r.returncode != 0
         assert "does not exist" in r.stdout
 
-    def test_prunes_stale_renders_for_removed_agents(self, repo):
+    def test_reports_stale_renders_without_deleting_by_default(self, repo):
+        """A routine sync-agents run must not silently destroy a file someone
+        placed directly in the rendered dirs — reporting is opt-out, deleting
+        is opt-in."""
         run(repo, "sync-agents")
         assert (repo / ".opencode" / "agent" / "mikrotik.md").exists()
         assert (repo / ".claude" / "agents" / "mikrotik.md").exists()
@@ -161,11 +164,42 @@ class TestSyncAgents:
         (repo / "agents" / "mikrotik.md").unlink()
         out = json.loads(run(repo, "sync-agents").stdout)
 
+        assert out["stale"] == ["mikrotik"]
+        assert out["pruned"] == []
+        # still present, not deleted — a dangling symlink still counts as
+        # "not removed" (the canonical source is gone, but that's the report
+        # step's job to flag, not this run's job to act on unasked)
+        assert (repo / ".opencode" / "agent" / "mikrotik.md").is_symlink()
+        assert (repo / ".claude" / "agents" / "mikrotik.md").exists()
+        assert "--prune" in out["note"]
+
+    def test_prune_flag_deletes_stale_renders(self, repo):
+        run(repo, "sync-agents")
+        (repo / "agents" / "mikrotik.md").unlink()
+
+        out = json.loads(run(repo, "sync-agents", "--prune").stdout)
+
         assert out["pruned"] == ["mikrotik"]
         assert not (repo / ".opencode" / "agent" / "mikrotik.md").exists()
         assert not (repo / ".claude" / "agents" / "mikrotik.md").exists()
         # the agent that's still canonical is untouched
         assert (repo / ".claude" / "agents" / "lifecycle.md").exists()
+
+    def test_demoted_agent_render_is_also_pruned(self, repo):
+        """An agent whose mode changes away from 'subagent' (rather than being
+        deleted outright) is 'skipped', not 'synced' — its stale render from
+        when it WAS a subagent must not be protected just for being skipped."""
+        run(repo, "sync-agents")
+        assert (repo / ".claude" / "agents" / "mikrotik.md").exists()
+
+        (repo / "agents" / "mikrotik.md").write_text(
+            AGENT_WITH_TOOL_DENY.replace("mode: subagent", "mode: skill")
+        )
+        out = json.loads(run(repo, "sync-agents", "--prune").stdout)
+
+        assert "mikrotik" in out["skipped"]
+        assert "mikrotik" in out["pruned"]
+        assert not (repo / ".claude" / "agents" / "mikrotik.md").exists()
 
 
 class TestBackwardCompat:

@@ -29,3 +29,10 @@ Map real members in the gitignored `.project-remotes` (one
 - Its subagent reads member docs at runtime via `projects/<name>/...`; it must
   not duplicate that content into `agents/`.
 - Sandbox the subagent with `permission` in its `agents/*.md` definition.
+- If a member's own docs describe a dual-use or destructive procedure (e.g. a
+  credential-recovery skill), the mounting subagent's `agents/*.md` MUST write
+  down an explicit per-invocation approval gate for it — the member's docs are
+  not themselves a safety control, and nothing else in this repo enforces one.
+  A prior mount (`opencode-auditor`/`@security-auditor`, removed #193) carried
+  exactly this gate for a RustDesk stored-password recovery skill; re-add it
+  in whatever subagent mounts that member again, don't assume it's implied.

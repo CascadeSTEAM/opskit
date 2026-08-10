@@ -15,6 +15,9 @@
   This says which tool an *agent* reaches for; it does not exempt RouterOS from
   the IaC rule — device state still belongs in a playbook so it can be rebuilt.
 - Linux server ops → use `@linux` subagent (mikromcp tools denied at runtime)
+- Security audit / SOC2 / CVE / hardening on a Linux host → also `@linux` — it
+  already denies `mikromcp_*`, so a request in scope for one host with
+  MikroTik gear elsewhere in the environment stays unable to touch it.
 - Default task → use `build` agent (full tool access, bash: ask)
 
 If you are NOT in a domain-specific subagent and the task matches one, switch. Example: user asks about a router → invoke `@mikrotik` via Task tool.
@@ -100,7 +103,7 @@ All scripts are data-driven — they read from `environments/$ACTIVE_ENV/env.yml
 - `@incident` — incident, breach, outage, P1-P4 response
 - `@skill-builder` — create/fix/audit OpenCode skills
 - `@mikrotik` — RouterOS devices: switches, routers, WiFi APs, CAPsMAN (relay-shell denied, mikromcp only)
-- `@linux` — Linux server administration: Ubuntu, Ansible, Docker, Proxmox (mikromcp denied)
+- `@linux` — Linux server administration: Ubuntu, Ansible, Docker, Proxmox, and security audit/CVE/hardening on Linux hosts (mikromcp denied)
 - `@code-reviewer` — reviews this repo and verifies findings by reproducing them (repo-scoped reads + this repo's own tests; edit/write/webfetch and every infrastructure namespace denied)
 
 Always use `@skill-builder` for new skills — enforces 4-field frontmatter and 60-line limit.
