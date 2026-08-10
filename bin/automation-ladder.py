@@ -30,9 +30,10 @@ Subcommands (all print one JSON object; exit 0 unless noted):
   new-skill --name N --description D       scaffold .opencode/skills/<N>/
       --triggers T [--task SLUG]           SKILL.md + .claude/skills/<N>.md
       [--body-file F]                      pointer; --task marks it created
-  sync-agents                              render canonical agents/*.md into
+  sync-agents [--prune]                    render canonical agents/*.md into
                                            .opencode/agent + .claude/agents so
-                                           both harnesses discover the subagents
+                                           both harnesses discover the subagents;
+                                           reports stale renders, --prune deletes them
   status                                   dump the full ladder state
 
 Thresholds: a task journaled >= 3 times offers a skill; a skill ticked
@@ -402,7 +403,7 @@ def _render_claude_agent(name: str, fm: dict, body: str) -> tuple[str, bool]:
     return "".join(parts), has_soft
 
 
-def cmd_sync_agents(_: argparse.Namespace) -> dict:
+def cmd_sync_agents(args: argparse.Namespace) -> dict:
     """Render canonical agents/*.md into both harnesses' discovery locations.
 
     OpenCode discovers agents at .opencode/agent/<name>.md; Claude Code at
@@ -449,9 +450,36 @@ def cmd_sync_agents(_: argparse.Namespace) -> dict:
 
         synced.append(name)
 
+    # Stale renders: a rendered .md whose stem is not a currently-synced agent.
+    # Deliberately NOT `synced | skipped` — a skipped agent (still in agents/,
+    # but no longer mode: subagent) must not protect a render from a PRIOR run
+    # when it WAS a subagent; only a name currently rendered this run is safe.
+    current = set(synced)
+    stale: list[str] = []
+    for rendered_dir in (oc_dir, cc_dir):
+        for existing in rendered_dir.glob("*.md"):
+            if existing.stem not in current:
+                stale.append(existing.stem)
+    stale = sorted(set(stale))
+
+    # Deleting is opt-in: these directories are documented as generated and
+    # gitignored, but an operator or another tool can still drop a file there
+    # directly, and a routine "refresh the renders" run must not silently
+    # destroy it. Report by default; --prune to actually remove.
+    pruned: list[str] = []
+    if getattr(args, "prune", False):
+        for rendered_dir in (oc_dir, cc_dir):
+            for existing in rendered_dir.glob("*.md"):
+                if existing.stem in stale:
+                    existing.unlink()
+                    pruned.append(existing.stem)
+        pruned = sorted(set(pruned))
+
     return {
         "synced": synced,
         "skipped": skipped,
+        "stale": stale,
+        "pruned": pruned,
         "opencode_dir": str(oc_dir),
         "claude_dir": str(cc_dir),
         "soft_sandbox_warning": soft_sandbox,
@@ -460,6 +488,8 @@ def cmd_sync_agents(_: argparse.Namespace) -> dict:
             "permission deny-globs (see soft_sandbox_warning); a PreToolUse hook "
             "is the tighter follow-up. Restart the agent session so agents are "
             "re-discovered."
+            + (" Stale renders found but not removed — re-run with --prune."
+               if stale and not getattr(args, "prune", False) else "")
         ),
     }
 
@@ -524,6 +554,8 @@ def main() -> None:
         "sync-agents",
         help="render agents/*.md into .opencode/agent + .claude/agents",
     )
+    p.add_argument("--prune", action="store_true",
+                   help="delete stale renders (reported but kept by default)")
     p.set_defaults(fn=cmd_sync_agents)
 
     p = sub.add_parser("status", help="dump ladder state")
