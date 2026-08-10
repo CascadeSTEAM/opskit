@@ -153,6 +153,20 @@ class TestSyncAgents:
         assert r.returncode != 0
         assert "does not exist" in r.stdout
 
+    def test_prunes_stale_renders_for_removed_agents(self, repo):
+        run(repo, "sync-agents")
+        assert (repo / ".opencode" / "agent" / "mikrotik.md").exists()
+        assert (repo / ".claude" / "agents" / "mikrotik.md").exists()
+
+        (repo / "agents" / "mikrotik.md").unlink()
+        out = json.loads(run(repo, "sync-agents").stdout)
+
+        assert out["pruned"] == ["mikrotik"]
+        assert not (repo / ".opencode" / "agent" / "mikrotik.md").exists()
+        assert not (repo / ".claude" / "agents" / "mikrotik.md").exists()
+        # the agent that's still canonical is untouched
+        assert (repo / ".claude" / "agents" / "lifecycle.md").exists()
+
 
 class TestBackwardCompat:
     def test_status_still_works(self, repo):

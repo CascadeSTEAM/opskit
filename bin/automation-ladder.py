@@ -449,9 +449,22 @@ def cmd_sync_agents(_: argparse.Namespace) -> dict:
 
         synced.append(name)
 
+    # Prune renders for agents no longer in the canonical source — otherwise a
+    # deleted agents/*.md leaves its stale .opencode/agent and .claude/agents
+    # copies behind indefinitely, since neither harness distinguishes a
+    # deliberate removal from one this run just hasn't gotten to yet.
+    current = set(synced) | set(skipped)
+    pruned: list[str] = []
+    for rendered_dir in (oc_dir, cc_dir):
+        for existing in rendered_dir.glob("*.md"):
+            if existing.stem not in current:
+                existing.unlink()
+                pruned.append(existing.stem)
+
     return {
         "synced": synced,
         "skipped": skipped,
+        "pruned": sorted(set(pruned)),
         "opencode_dir": str(oc_dir),
         "claude_dir": str(cc_dir),
         "soft_sandbox_warning": soft_sandbox,
