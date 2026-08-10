@@ -75,6 +75,24 @@ acme    git@git.example.org:acme/env-acme.git
 `.env-remotes` is **gitignored** because environment names and repo URLs are
 client-identifying (see security rationale below).
 
+**Back it up** — this file otherwise has exactly one copy, on whatever
+workstation created it:
+
+```bash
+export BW_SESSION=$(bw unlock --raw)
+bin/env-sync.sh backup-remotes             # save it to a Vaultwarden secure note
+```
+
+Run it again after every edit to `.env-remotes` (new environment, changed
+URL). On a new or recovered workstation:
+
+```bash
+bin/env-sync.sh restore-remotes            # pull it back from the vault
+```
+
+`restore-remotes` refuses to overwrite a non-empty `.env-remotes` unless you
+pass `--force`.
+
 ### 3. Daily flows
 
 ```bash

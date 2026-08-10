@@ -326,8 +326,21 @@ Copy the config and every `IdentityFile` it names, then `chmod 600` the keys.
 ### 7.3 Environment repositories
 
 `environments/*` is gitignored except `example/`. Real environments live in
-their own private repos, mapped in the gitignored `.env-remotes` file. Copy
-that file across, then clone each environment:
+their own private repos, mapped in the gitignored `.env-remotes` file.
+
+If the old workstation is reachable, copy that file across. If it is not —
+lost, decommissioned, disk failure — restore it from its Vaultwarden backup
+instead (§6.4 for unlocking the vault):
+
+```bash
+bash bin/env-sync.sh restore-remotes
+```
+
+That only works if `backup-remotes` was ever run from a surviving
+workstation (`docs/environment-storage.md` §2) — it is not automatic, and a
+`.env-remotes` that was never backed up is unrecoverable by either path.
+
+Either way, then clone each environment:
 
 ```bash
 bash bin/env-sync.sh <env> clone
