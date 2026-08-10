@@ -28,6 +28,7 @@ REPO_ROOT = BIN_DIR.parent
 sys.path.insert(0, str(BIN_DIR))
 
 import active_env  # noqa: E402
+import device_notes  # noqa: E402
 
 
 def read_facts_file(filepath: Path):
@@ -57,25 +58,11 @@ def load_devices(env_dir: Path) -> dict:
     """Device records from the environment's datasets, name → record.
 
     Tolerates both the flat shape (top-level name/ip_address keys) and the
-    scanner's nested shape (everything under a 'device' key).
+    scanner's nested shape (everything under a 'device' key). Shared with
+    bin/generate-base-view.py via device_notes.py (opskit #192 review) so a
+    device-record-shape fix lands once instead of drifting between two copies.
     """
-    devices = {}
-    devices_dir = env_dir / 'datasets' / 'devices'
-    if not devices_dir.is_dir():
-        return devices
-    for f in sorted(devices_dir.glob('*.yml')):
-        try:
-            data = yaml.safe_load(f.read_text())
-        except Exception as e:
-            print(f"  WARNING: skipping unparseable {f.name}: {e}")
-            continue
-        if not isinstance(data, dict):
-            continue
-        record = data.get('device') if isinstance(data.get('device'), dict) else data
-        if record.get('_merged_into'):
-            continue
-        devices[record.get('name', f.stem)] = record
-    return devices
+    return device_notes.load_devices(env_dir / 'datasets' / 'devices')
 
 
 def render_value(lines: list, key, value, indent=''):
