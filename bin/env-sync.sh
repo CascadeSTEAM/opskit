@@ -162,7 +162,12 @@ backup_remotes() {
     fi
 
     local existing_id item_json
-    existing_id=$("$BW" list items --search "$REMOTES_BACKUP_ITEM_NAME" --session "$BW_SESSION" 2>/dev/null \
+    # --session is deliberately omitted: resolve_bw_session already exported
+    # BW_SESSION, which `bw` reads from the environment on its own. Passing it
+    # as a CLI argument instead would put a live vault-access token into this
+    # process's argv — readable by any other local user via `ps`/`/proc/*/cmdline`
+    # for as long as the subprocess runs (security review, PR #196).
+    existing_id=$("$BW" list items --search "$REMOTES_BACKUP_ITEM_NAME" 2>/dev/null \
         | "$(json_python)" -c "
 import json, sys
 for item in json.load(sys.stdin):
@@ -182,10 +187,10 @@ print(json.dumps({
 " "$REMOTES_FILE")
 
     if [ -n "$existing_id" ]; then
-        echo "$item_json" | "$BW" encode | "$BW" edit item "$existing_id" --session "$BW_SESSION" >/dev/null
+        echo "$item_json" | "$BW" encode | "$BW" edit item "$existing_id" >/dev/null
         echo -e "${GREEN}Updated existing secure note '$REMOTES_BACKUP_ITEM_NAME' ($existing_id).${NC}"
     else
-        echo "$item_json" | "$BW" encode | "$BW" create item --session "$BW_SESSION" >/dev/null
+        echo "$item_json" | "$BW" encode | "$BW" create item >/dev/null
         echo -e "${GREEN}Created secure note '$REMOTES_BACKUP_ITEM_NAME'.${NC}"
     fi
     echo "This secure note is now the only backup of $(basename "$REMOTES_FILE") — verify it in your vault."
@@ -208,7 +213,10 @@ restore_remotes() {
     # substitution strips ALL trailing newlines, which would silently corrupt
     # a restored .env-remotes that (like every text file) ends in one.
     local notes_b64
-    notes_b64=$("$BW" get item "$REMOTES_BACKUP_ITEM_NAME" --session "$BW_SESSION" 2>/dev/null \
+    # --session omitted for the same reason as in backup_remotes() above:
+    # BW_SESSION is already in the environment, so passing it as an argument
+    # too would needlessly expose it via ps/`/proc/*/cmdline`.
+    notes_b64=$("$BW" get item "$REMOTES_BACKUP_ITEM_NAME" 2>/dev/null \
         | "$(json_python)" -c "
 import base64, json, sys
 notes = (json.load(sys.stdin).get('notes') or '').encode()

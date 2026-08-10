@@ -453,6 +453,8 @@ def _make_bw_stub(tmp_path: Path, vault: list | None = None) -> Path:
         "def save():\n"
         "    vault_file.write_text(json.dumps(vault))\n"
         "args = sys.argv[1:]\n"
+        "with open(here / 'argv.log', 'a') as f:\n"
+        "    f.write(json.dumps(args) + '\\n')\n"
         "if args[:2] == ['list', 'items']:\n"
         "    term = args[args.index('--search') + 1] if '--search' in args else None\n"
         "    matches = [i for i in vault if term is None or term.lower() in i.get('name', '').lower()]\n"
@@ -507,6 +509,23 @@ class TestBackupRestoreRemotes:
     """.env-remotes has exactly one copy: whatever workstation created it
     (issue #195). backup-remotes/restore-remotes give it the same
     Vaultwarden-backed backup every other credential in this system has."""
+
+    def test_bw_session_is_never_passed_as_a_cli_argument(self, fixture_root):
+        """A vault session token is a live key to every secret in the vault
+        (bin/bw_session.py's own docstring). Passing it as a `bw` CLI argument
+        (rather than relying on the exported BW_SESSION env var, which `bw`
+        already reads) would expose it to any other local user via `ps` /
+        `/proc/*/cmdline` for the subprocess's lifetime (security review,
+        PR #196) — verified here by logging every argv `bw` is invoked with."""
+        bw = _make_bw_stub(fixture_root.parent)
+        canary_value = "CANARY-VALUE-MUST-NOT-APPEAR-IN-ARGV-LOG"
+
+        run_sync_with_bw(fixture_root, bw, "backup-remotes", session=canary_value)
+        run_sync_with_bw(fixture_root, bw, "restore-remotes", "--force", session=canary_value)
+
+        log = (bw.parent / "argv.log").read_text()
+        assert canary_value not in log
+        assert log.strip()  # the stub was actually invoked, not skipped entirely
 
     def test_backup_requires_a_bw_session(self, fixture_root):
         bw = _make_bw_stub(fixture_root.parent)
