@@ -33,10 +33,10 @@ import yaml
 
 BIN_DIR = Path(__file__).resolve().parent
 REPO_ROOT = Path(os.environ.get("OPSKIT_ROOT") or BIN_DIR.parent)
-ENVS_DIR = REPO_ROOT / "environments"
 
 sys.path.insert(0, str(BIN_DIR))
 import active_env  # noqa: E402
+import device_notes  # noqa: E402
 
 INDEX_FIELDS = ["name", "role", "status", "ip_address"]
 
@@ -50,25 +50,14 @@ def load_base_view(env_dir: Path) -> dict:
 
 
 def load_devices(env_dir: Path) -> dict:
-    """Device records from datasets/devices/*.yml and *.md, name -> record."""
-    devices = {}
-    devices_dir = env_dir / "datasets" / "devices"
-    if not devices_dir.is_dir():
-        return devices
-    files = sorted(devices_dir.glob("*.yml")) + sorted(devices_dir.glob("*.md"))
-    for f in files:
-        try:
-            data = yaml.safe_load(f.read_text())
-        except yaml.YAMLError as e:
-            print(f"  WARNING: skipping unparseable {f.name}: {e}", file=sys.stderr)
-            continue
-        if not isinstance(data, dict):
-            continue
-        record = data.get("device") if isinstance(data.get("device"), dict) else data
-        if record.get("_merged_into"):
-            continue
-        devices[record.get("name", f.stem)] = record
-    return devices
+    """Device records from datasets/devices/*.yml and *.md, name -> record.
+
+    Shared with bin/generate-network-docs.py via device_notes.py (opskit #192
+    review). .md notes are frontmatter + free-form prose, not a single YAML
+    document — device_notes.load_devices() strips the frontmatter before
+    parsing.
+    """
+    return device_notes.load_devices(env_dir / "datasets" / "devices", extra_glob="*.md")
 
 
 def field_value(record: dict, *names, default="-"):
@@ -77,6 +66,28 @@ def field_value(record: dict, *names, default="-"):
         if value:
             return value
     return default
+
+
+def group_key(record: dict, group_by: str) -> str:
+    """A sortable, always-comparable group key.
+
+    record.get(group_by, "unknown") only substitutes "unknown" when the key
+    is ABSENT — an explicit YAML null (`role:` with no value) or a non-string
+    value (an operator-configured group_by like `vlan`, an int) both slip
+    through as their raw type, so sorted(groups) crashes comparing a None or
+    an int against a str from a sibling record (opskit #192 review). Coercing
+    to str unconditionally makes every key comparable, always.
+    """
+    value = record.get(group_by)
+    return str(value) if value is not None else "unknown"
+
+
+def sort_key(record: dict, name: str, sort_field: str) -> str:
+    """Same class of fix as group_key(): stringify unconditionally so a null
+    or non-string sort field value never crashes sorted() against a sibling
+    record's string fallback."""
+    value = record.get(sort_field)
+    return str(value) if value is not None else name
 
 
 def build_index_base(title: str, sort_field: str) -> dict:
@@ -95,8 +106,7 @@ def build_index_md(title: str, devices: dict, group_by: str, sort_field: str) ->
 
     groups = {}
     for name, record in devices.items():
-        group = record.get(group_by, "unknown")
-        groups.setdefault(group, []).append((name, record))
+        groups.setdefault(group_key(record, group_by), []).append((name, record))
 
     if not groups:
         lines.append("_No device records found in the environment's datasets._")
@@ -108,12 +118,23 @@ def build_index_md(title: str, devices: dict, group_by: str, sort_field: str) ->
         lines.append("")
         lines.append("| Name | IP | Status | OS | Services |")
         lines.append("|------|-----|--------|----|----------|")
-        for name, record in sorted(groups[group], key=lambda item: item[1].get(sort_field, item[0])):
+        for name, record in sorted(groups[group], key=lambda item: sort_key(item[1], item[0], sort_field)):
             ip = field_value(record, "ip_address", "ip")
             status = field_value(record, "status")
             os_ = field_value(record, "os")
             services = record.get("services")
-            services = ", ".join(services) if isinstance(services, list) else field_value(record, "services")
+            if isinstance(services, list):
+                # Real device notes use both shapes: a plain string per
+                # service, or a richer dict with a 'name' (opskit #192
+                # review, found live in a real environment's own data —
+                # `", ".join(services)` crashes on the dict shape).
+                names = [s.get("name", str(s)) if isinstance(s, dict) else str(s) for s in services]
+                # An explicit `services: []` is "documented as having none",
+                # not "field absent" — both must render the same placeholder
+                # as a missing field, not a blank cell (opskit #192 review).
+                services = ", ".join(names) if names else "-"
+            else:
+                services = field_value(record, "services")
             lines.append(f"| [[{name}]] | {ip} | {status} | {os_} | {services} |")
         lines.append("")
 
@@ -126,7 +147,7 @@ def main() -> int:
     parser.add_argument("--write", action="store_true", help="Write files (default: dry run)")
     args = parser.parse_args()
 
-    repo_root = Path(os.environ.get("OPSKIT_ROOT") or REPO_ROOT)
+    repo_root = REPO_ROOT
     if args.env:
         env_name, source = args.env, "command line"
     else:
