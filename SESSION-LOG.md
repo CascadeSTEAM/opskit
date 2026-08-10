@@ -13,6 +13,16 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-08-10 — homelab workstation reliability diagnosis
+
+Diagnosed a hardware/driver hard-lockup on a personal homelab workstation outside
+any client environment, and began remediating it (kernel-level crash diagnostics
+now armed; graphics driver stack updated). A kernel version change was
+deliberately deferred to avoid confounding root-cause work. Full detail lives in
+that environment's private session-notes layer, not here.
+
+---
+
 ## 2026-08-08 (later) — a cleanup cycle, and three near-misses in my own work
 
 **Key decisions:**
