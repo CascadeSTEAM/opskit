@@ -389,7 +389,7 @@ except Exception: sys.exit(1)
         note_ok ".env-remotes" "environment → private repo map present"
     else
         note_warn ".env-remotes" "absent — environments cannot be synced or restored" \
-            "copy it from an existing workstation (gitignored by design)"
+            "bin/env-sync.sh restore-remotes (if ever backed up) or copy it from an existing workstation"
     fi
 fi
 

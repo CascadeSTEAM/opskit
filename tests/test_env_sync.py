@@ -4,6 +4,7 @@ The script's repo root is overridden via OPSKIT_ROOT so everything runs in
 tmp_path; no network, no real environments touched.
 """
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -432,3 +433,237 @@ class TestCoverageWording:
 
         assert "coverage" in out
         assert "reachability" in out
+
+
+def _make_bw_stub(tmp_path: Path, vault: list | None = None, get_item_error: str | None = None) -> Path:
+    """A fake `bw` answering list/get/encode/create/edit against a JSON file
+    it treats as the vault, so backup-remotes/restore-remotes round-trip fully
+    offline. Mirrors the base64-pipe flow the real Bitwarden CLI documents
+    (`bw encode` then `bw create item` / `bw edit item <id>`).
+
+    get_item_error, when set, makes `get item` always fail with that stderr
+    text regardless of vault content — for simulating a real bw failure
+    (ambiguous match, expired session) distinct from a genuine not-found."""
+    stub_dir = tmp_path / "bw-stub"
+    stub_dir.mkdir(exist_ok=True)
+    (stub_dir / "vault.json").write_text(json.dumps(vault or []))
+    bw = stub_dir / "bw"
+    get_item_error_repr = repr(get_item_error) if get_item_error else "None"
+    bw.write_text(
+        "#!/usr/bin/env python3\n"
+        "import base64, json, sys, pathlib\n"
+        "here = pathlib.Path(__file__).parent\n"
+        "vault_file = here / 'vault.json'\n"
+        "vault = json.loads(vault_file.read_text())\n"
+        f"GET_ITEM_ERROR = {get_item_error_repr}\n"
+        "def save():\n"
+        "    vault_file.write_text(json.dumps(vault))\n"
+        "args = sys.argv[1:]\n"
+        "with open(here / 'argv.log', 'a') as f:\n"
+        "    f.write(json.dumps(args) + '\\n')\n"
+        "if args[:2] == ['list', 'items']:\n"
+        "    term = args[args.index('--search') + 1] if '--search' in args else None\n"
+        "    matches = [i for i in vault if term is None or term.lower() in i.get('name', '').lower()]\n"
+        "    print(json.dumps(matches)); sys.exit(0)\n"
+        "if args[:2] == ['get', 'item']:\n"
+        "    if GET_ITEM_ERROR is not None:\n"
+        "        print(GET_ITEM_ERROR, file=sys.stderr); sys.exit(1)\n"
+        "    key = args[2]\n"
+        "    for i in vault:\n"
+        "        if i.get('id') == key or i.get('name') == key:\n"
+        "            print(json.dumps(i)); sys.exit(0)\n"
+        "    print('Not found.', file=sys.stderr); sys.exit(1)\n"
+        "if args[:1] == ['encode']:\n"
+        "    print(base64.b64encode(sys.stdin.read().encode()).decode()); sys.exit(0)\n"
+        "if args[:2] == ['create', 'item']:\n"
+        "    item = json.loads(base64.b64decode(sys.stdin.read().strip()))\n"
+        "    item['id'] = f'id-{len(vault) + 1}'\n"
+        "    vault.append(item); save()\n"
+        "    print(json.dumps(item)); sys.exit(0)\n"
+        "if args[:2] == ['edit', 'item']:\n"
+        "    item_id = args[2]\n"
+        "    updates = json.loads(base64.b64decode(sys.stdin.read().strip()))\n"
+        "    for i in vault:\n"
+        "        if i.get('id') == item_id:\n"
+        "            i.update(updates); save()\n"
+        "            print(json.dumps(i)); sys.exit(0)\n"
+        "    sys.exit(1)\n"
+        "sys.exit(2)\n"
+    )
+    bw.chmod(0o755)
+    return bw
+
+
+def run_sync_with_bw(root: Path, bw: Path, *args: str, session="test-session") -> subprocess.CompletedProcess:
+    env = os.environ.copy()
+    env.update(GIT_ENV)
+    env["OPSKIT_ROOT"] = str(root)
+    env["OPSKIT_BW"] = str(bw)
+    if session is not None:
+        env["BW_SESSION"] = session
+    else:
+        env.pop("BW_SESSION", None)
+        # Isolate from whatever real session file the operator running these
+        # tests happens to have — bin/bw_session.py falls back to reading one,
+        # and a "no session" test must not accidentally pass on a machine that
+        # has an unrelated real session cached.
+        env["BW_SESSION_FILE"] = str(bw.parent / "no-such-session-file")
+    return subprocess.run(
+        ["bash", str(ENV_SYNC), *args], capture_output=True, text=True, env=env
+    )
+
+
+class TestBackupRestoreRemotes:
+    """.env-remotes has exactly one copy: whatever workstation created it
+    (issue #195). backup-remotes/restore-remotes give it the same
+    Vaultwarden-backed backup every other credential in this system has."""
+
+    def test_bw_session_is_never_passed_as_a_cli_argument(self, fixture_root):
+        """A vault session token is a live key to every secret in the vault
+        (bin/bw_session.py's own docstring). Passing it as a `bw` CLI argument
+        (rather than relying on the exported BW_SESSION env var, which `bw`
+        already reads) would expose it to any other local user via `ps` /
+        `/proc/*/cmdline` for the subprocess's lifetime (security review,
+        PR #196) — verified here by logging every argv `bw` is invoked with."""
+        bw = _make_bw_stub(fixture_root.parent)
+        canary_value = "CANARY-VALUE-MUST-NOT-APPEAR-IN-ARGV-LOG"
+
+        run_sync_with_bw(fixture_root, bw, "backup-remotes", session=canary_value)
+        run_sync_with_bw(fixture_root, bw, "restore-remotes", "--force", session=canary_value)
+
+        log = (bw.parent / "argv.log").read_text()
+        assert canary_value not in log
+        assert log.strip()  # the stub was actually invoked, not skipped entirely
+
+    def test_backup_requires_a_bw_session(self, fixture_root):
+        bw = _make_bw_stub(fixture_root.parent)
+        result = run_sync_with_bw(fixture_root, bw, "backup-remotes", session=None)
+        assert result.returncode != 0
+        assert "BW_SESSION" in result.stderr
+
+    def test_backup_refuses_when_remotes_file_is_absent(self, tmp_path):
+        root = tmp_path / "opskit"
+        root.mkdir()
+        bw = _make_bw_stub(tmp_path)
+        result = run_sync_with_bw(root, bw, "backup-remotes")
+        assert result.returncode != 0
+        assert "does not exist" in result.stderr
+
+    def test_backup_creates_a_secure_note(self, fixture_root):
+        bw = _make_bw_stub(fixture_root.parent)
+        result = run_sync_with_bw(fixture_root, bw, "backup-remotes")
+        assert result.returncode == 0, result.stdout + result.stderr
+
+        vault = json.loads((bw.parent / "vault.json").read_text())
+        assert len(vault) == 1
+        assert vault[0]["name"] == "opskit-env-remotes"
+        assert vault[0]["type"] == 2
+        assert vault[0]["notes"] == (fixture_root / ".env-remotes").read_text()
+
+    def test_backup_updates_the_existing_note_instead_of_duplicating(self, fixture_root):
+        bw = _make_bw_stub(fixture_root.parent)
+        run_sync_with_bw(fixture_root, bw, "backup-remotes")
+
+        (fixture_root / ".env-remotes").write_text("testenv file:///changed.git\n")
+        result = run_sync_with_bw(fixture_root, bw, "backup-remotes")
+        assert result.returncode == 0, result.stdout + result.stderr
+
+        vault = json.loads((bw.parent / "vault.json").read_text())
+        assert len(vault) == 1  # updated in place, not duplicated
+        assert vault[0]["notes"] == "testenv file:///changed.git\n"
+
+    def test_restore_writes_the_note_back_to_env_remotes(self, tmp_path):
+        original_content = "testenv git@example.org:acme/env-testenv.git\n"
+        bw = _make_bw_stub(tmp_path, vault=[{
+            "id": "id-1", "name": "opskit-env-remotes", "type": 2,
+            "notes": original_content,
+        }])
+        root = tmp_path / "restored-opskit"
+        root.mkdir()
+
+        result = run_sync_with_bw(root, bw, "restore-remotes")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (root / ".env-remotes").read_text() == original_content
+
+    def test_restore_refuses_to_clobber_an_existing_nonempty_file(self, tmp_path):
+        bw = _make_bw_stub(tmp_path, vault=[{
+            "id": "id-1", "name": "opskit-env-remotes", "type": 2,
+            "notes": "from-the-vault\n",
+        }])
+        root = tmp_path / "opskit"
+        root.mkdir()
+        (root / ".env-remotes").write_text("local-and-different\n")
+
+        result = run_sync_with_bw(root, bw, "restore-remotes")
+        assert result.returncode != 0
+        assert "already exists" in result.stderr
+        assert (root / ".env-remotes").read_text() == "local-and-different\n"
+
+    def test_restore_force_overwrites_an_existing_file(self, tmp_path):
+        bw = _make_bw_stub(tmp_path, vault=[{
+            "id": "id-1", "name": "opskit-env-remotes", "type": 2,
+            "notes": "from-the-vault\n",
+        }])
+        root = tmp_path / "opskit"
+        root.mkdir()
+        (root / ".env-remotes").write_text("local-and-different\n")
+
+        result = run_sync_with_bw(root, bw, "restore-remotes", "--force")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (root / ".env-remotes").read_text() == "from-the-vault\n"
+
+    def test_restore_with_no_backup_present_errors_clearly(self, tmp_path):
+        bw = _make_bw_stub(tmp_path, vault=[])
+        root = tmp_path / "opskit"
+        root.mkdir()
+
+        result = run_sync_with_bw(root, bw, "restore-remotes")
+        assert result.returncode != 0
+        assert "No secure note" in result.stderr
+
+    def test_a_real_bw_error_is_not_misreported_as_never_backed_up(self, tmp_path):
+        """A racing backup-remotes from two workstations can leave two secure
+        notes with the same name — `bw get item` then fails with an
+        ambiguous-match error, not a not-found. That must surface as a real
+        error the operator can act on, not the generic 'never backed up'
+        message that reads as permanent, unrecoverable data loss."""
+        bw = _make_bw_stub(
+            tmp_path,
+            get_item_error="More than one result was found. Try getting the object by id instead.",
+        )
+        root = tmp_path / "opskit"
+        root.mkdir()
+
+        result = run_sync_with_bw(root, bw, "restore-remotes")
+        assert result.returncode != 0
+        assert "More than one result was found" in result.stderr
+        assert "No secure note" not in result.stderr
+        assert "ever run from another workstation" not in result.stderr
+
+    def test_restoring_a_legitimately_empty_backup_succeeds(self, tmp_path):
+        """A .env-remotes backed up while genuinely empty (e.g. right after
+        `touch`, before any environment was added) must restore as an empty
+        file, not be misreported as 'never backed up' — those are now
+        distinguished by bw's own exit code, not by string emptiness."""
+        bw = _make_bw_stub(tmp_path, vault=[{
+            "id": "id-1", "name": "opskit-env-remotes", "type": 2, "notes": "",
+        }])
+        root = tmp_path / "opskit"
+        root.mkdir()
+
+        result = run_sync_with_bw(root, bw, "restore-remotes")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (root / ".env-remotes").read_text() == ""
+
+    def test_full_roundtrip_backup_then_restore_on_a_fresh_machine(self, fixture_root, tmp_path):
+        bw = _make_bw_stub(fixture_root.parent)
+        original = (fixture_root / ".env-remotes").read_text()
+
+        backup = run_sync_with_bw(fixture_root, bw, "backup-remotes")
+        assert backup.returncode == 0, backup.stdout + backup.stderr
+
+        fresh_root = tmp_path / "new-workstation"
+        fresh_root.mkdir()
+        restore = run_sync_with_bw(fresh_root, bw, "restore-remotes")
+        assert restore.returncode == 0, restore.stdout + restore.stderr
+        assert (fresh_root / ".env-remotes").read_text() == original
