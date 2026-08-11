@@ -87,6 +87,7 @@ Run it again after every edit to `.env-remotes` (new environment, changed
 URL). On a new or recovered workstation:
 
 ```bash
+export BW_SESSION=$(bw unlock --raw)
 bin/env-sync.sh restore-remotes            # pull it back from the vault
 ```
 

@@ -135,13 +135,21 @@ json_python() {
 # reusing it here instead of re-deriving the same env-var-vs-file rule.
 resolve_bw_session() {
     [ -n "${BW_SESSION:-}" ] && return 0
-    local msg
-    if ! msg=$("$(json_python)" "$SCRIPT_DIR/bw_session.py" --check 2>&1); then
+    local py msg
+    py="$(json_python)"
+    if ! msg=$("$py" "$SCRIPT_DIR/bw_session.py" --check 2>&1); then
         echo -e "${RED}${msg#ERROR: }${NC}" >&2
         exit 1
     fi
-    BW_SESSION="$("$(json_python)" "$SCRIPT_DIR/bw_session.py" --token)"
+    BW_SESSION="$("$py" "$SCRIPT_DIR/bw_session.py" --token)"
     export BW_SESSION
+}
+
+require_bw_on_path() {
+    if ! command -v "$BW" >/dev/null 2>&1; then
+        echo -e "${RED}'$BW' is not on PATH — install the Bitwarden CLI (@bitwarden/cli).${NC}" >&2
+        exit 1
+    fi
 }
 
 # .env-remotes (env name -> private repo URL) has exactly one copy: whatever
@@ -152,31 +160,44 @@ resolve_bw_session() {
 # this system already has (docs/credential-lifecycle.md).
 backup_remotes() {
     resolve_bw_session
-    if ! command -v "$BW" >/dev/null 2>&1; then
-        echo -e "${RED}'$BW' is not on PATH — install the Bitwarden CLI (@bitwarden/cli).${NC}" >&2
-        exit 1
-    fi
+    require_bw_on_path
     if [ ! -f "$REMOTES_FILE" ]; then
         echo -e "${RED}$REMOTES_FILE does not exist — nothing to back up.${NC}" >&2
         exit 1
     fi
 
-    local existing_id item_json
+    local py existing_id item_json search_err search_rc
+    py="$(json_python)"
+    search_err="$(mktemp)"
     # --session is deliberately omitted: resolve_bw_session already exported
     # BW_SESSION, which `bw` reads from the environment on its own. Passing it
     # as a CLI argument instead would put a live vault-access token into this
     # process's argv — readable by any other local user via `ps`/`/proc/*/cmdline`
     # for as long as the subprocess runs (security review, PR #196).
-    existing_id=$("$BW" list items --search "$REMOTES_BACKUP_ITEM_NAME" 2>/dev/null \
-        | "$(json_python)" -c "
+    # The assignment is the `if` condition itself (not `cmd; rc=$?` on the next
+    # line) because with `set -e` a failing command substitution aborts the
+    # script immediately — a later `$?` check would simply never run.
+    if existing_id=$("$BW" list items --search "$REMOTES_BACKUP_ITEM_NAME" 2>"$search_err" \
+        | "$py" -c "
 import json, sys
 for item in json.load(sys.stdin):
     if item.get('name') == '$REMOTES_BACKUP_ITEM_NAME' and item.get('type') == 2:
         print(item['id'])
         break
-" 2>/dev/null || true)
+"); then
+        search_rc=0
+    else
+        search_rc=$?
+    fi
+    if [ "$search_rc" -ne 0 ]; then
+        echo -e "${RED}bw list items failed: $(cat "$search_err")${NC}" >&2
+        echo "  Not backing up — an existing secure note could be silently overwritten with a duplicate created blind." >&2
+        rm -f "$search_err"
+        exit 1
+    fi
+    rm -f "$search_err"
 
-    item_json=$("$(json_python)" -c "
+    item_json=$("$py" -c "
 import json, sys
 notes = open(sys.argv[1]).read()
 print(json.dumps({
@@ -199,35 +220,57 @@ print(json.dumps({
 restore_remotes() {
     local force="${1:-}"
     resolve_bw_session
-    if ! command -v "$BW" >/dev/null 2>&1; then
-        echo -e "${RED}'$BW' is not on PATH — install the Bitwarden CLI (@bitwarden/cli).${NC}" >&2
-        exit 1
-    fi
+    require_bw_on_path
     if [ -s "$REMOTES_FILE" ] && [ "$force" != "--force" ]; then
         echo -e "${RED}$REMOTES_FILE already exists and is non-empty.${NC}" >&2
         echo "  Restoring would overwrite it. Re-run with --force to proceed anyway." >&2
         exit 1
     fi
 
-    # Base64-round-tripped rather than captured as plain text: a bash command
-    # substitution strips ALL trailing newlines, which would silently corrupt
-    # a restored .env-remotes that (like every text file) ends in one.
-    local notes_b64
+    local py item_json get_err get_rc
+    py="$(json_python)"
+    get_err="$(mktemp)"
     # --session omitted for the same reason as in backup_remotes() above:
     # BW_SESSION is already in the environment, so passing it as an argument
     # too would needlessly expose it via ps/`/proc/*/cmdline`.
-    notes_b64=$("$BW" get item "$REMOTES_BACKUP_ITEM_NAME" 2>/dev/null \
-        | "$(json_python)" -c "
+    # The assignment is the `if` condition itself, not `cmd; rc=$?` on the
+    # next line — see the matching comment in backup_remotes() above.
+    if item_json=$("$BW" get item "$REMOTES_BACKUP_ITEM_NAME" 2>"$get_err"); then
+        get_rc=0
+    else
+        get_rc=$?
+    fi
+    if [ "$get_rc" -ne 0 ]; then
+        local err_text
+        err_text="$(cat "$get_err")"
+        rm -f "$get_err"
+        # `bw` says "Not found." only when nothing matches; anything else
+        # (an ambiguous multi-match from a racing backup, an expired/invalid
+        # session, a locked vault) is a real problem and must not be
+        # misreported as "never backed up" — that reads as permanent data
+        # loss when the actual fix might be one command away.
+        if echo "$err_text" | grep -qi "not found"; then
+            echo -e "${RED}No secure note named '$REMOTES_BACKUP_ITEM_NAME' found in the vault.${NC}" >&2
+            echo "  Nothing to restore — was backup-remotes ever run from another workstation?" >&2
+        else
+            echo -e "${RED}bw failed to fetch '$REMOTES_BACKUP_ITEM_NAME': $err_text${NC}" >&2
+        fi
+        exit 1
+    fi
+    rm -f "$get_err"
+
+    # Base64-round-tripped rather than captured as plain text: a bash command
+    # substitution strips ALL trailing newlines, which would silently corrupt
+    # a restored .env-remotes that (like every text file) ends in one. An
+    # empty result here is a legitimately-empty backed-up file (bw already
+    # confirmed the item exists above), not "no backup" — those are now
+    # distinguished by bw's own exit code instead of by string emptiness.
+    local notes_b64
+    notes_b64=$(printf '%s' "$item_json" | "$py" -c "
 import base64, json, sys
 notes = (json.load(sys.stdin).get('notes') or '').encode()
 print(base64.b64encode(notes).decode())
-" 2>/dev/null || true)
-
-    if [ -z "$notes_b64" ]; then
-        echo -e "${RED}No secure note named '$REMOTES_BACKUP_ITEM_NAME' found in the vault (or it has no content).${NC}" >&2
-        echo "  Nothing to restore — was backup-remotes ever run from another workstation?" >&2
-        exit 1
-    fi
+")
 
     printf '%s' "$notes_b64" | base64 -d > "$REMOTES_FILE"
     echo -e "${GREEN}Restored $REMOTES_FILE from the vault.${NC}"
