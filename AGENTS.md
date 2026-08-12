@@ -84,7 +84,8 @@ All scripts are data-driven — they read from `environments/$ACTIVE_ENV/env.yml
 | `bin/open-ticket.sh [subject]` | Manage helpdesk tickets (reads env.yml for prefix/endpoint) |
 | `bin/scan.py` | Nmap discovery, enrich YAML device datasets |
 | `bin/fetch-dhcp-leases.py` | Cache the environment's DHCP leases so `scan` can resolve hostnames reverse-PTR misses and flag duplicate-lease identity clashes |
-| `bin/automation-ladder.py` | Track manual processes → escalate to scripts/playbooks |
+| `bin/automation-ladder.py` | Track manual processes → escalate to scripts/playbooks; `sync-agents` renders `agents/*.md` into both harnesses |
+| `bin/opskit-aware.py` | Make a project drivable as a subagent member: `init` scaffolds `.opskit/pack.yml`+README into a repo; `check` validates it against `schemas/project.schema.json` (contract-versioned; members run it in their own CI, OpsKit re-runs at mount). See `docs/opskit-aware.md` |
 | `bin/lifecycle-processor.py` | Manage lifecycle transitions |
 | `bin/frappe-exec.py` | Sanctioned Path B Frappe/ERPNext exec (SSH + docker exec + bench venv python); see `frappe-access` skill |
 | `mcp/collab-mcp-server.py` | Collaboration-layer self-check: verify every path this file names, report skill/tool drift, propose improvements. **Never edits the governing docs** — run via `bin/mcp-call.py collab --list` |

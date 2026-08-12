@@ -1,0 +1,147 @@
+"""Tests for bin/opskit-aware.py — the OpsKit-aware member kit (init + check).
+
+Runs offline in tmp_path. The real schema is resolved via OPSKIT_ROOT pointed at
+the repo root; the CLI is invoked with the interpreter running pytest so the
+test venv's PyYAML + jsonschema are guaranteed available.
+"""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+TOOL = ROOT / "bin" / "opskit-aware.py"
+
+
+def run(*args: str) -> subprocess.CompletedProcess:
+    env = os.environ.copy()
+    env["OPSKIT_ROOT"] = str(ROOT)  # so DEFAULT_SCHEMA resolves to the real schema
+    return subprocess.run(
+        [sys.executable, str(TOOL), *args],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def make_member(root: Path) -> Path:
+    (root / "agents").mkdir(parents=True)
+    (root / "skills" / "foo").mkdir(parents=True)
+    (root / "docs").mkdir(parents=True)
+    (root / "agents" / "thing.md").write_text(
+        "---\ndescription: t\nmode: subagent\ntriggers: t\n---\nbody\n"
+    )
+    (root / "agents" / "not-an-agent.md").write_text(
+        "---\ndescription: d\nmode: skill\n---\nnope\n"
+    )
+    (root / "skills" / "foo" / "SKILL.md").write_text(
+        "---\nname: foo\ndescription: d\nmode: skill\ntriggers: t\n---\n# Foo\n"
+    )
+    (root / "docs" / "method.md").write_text("# Method\n")
+    return root
+
+
+class TestInit:
+    def test_scaffolds_and_self_check_passes(self, tmp_path):
+        m = make_member(tmp_path / "my-repo")
+        r = run("init", str(m))
+        assert r.returncode == 0, r.stdout + r.stderr
+        out = json.loads(r.stdout)
+        assert (m / ".opskit" / "pack.yml").is_file()
+        assert (m / ".opskit" / "README.md").is_file()
+        assert out["check"]["ok"] is True
+
+    def test_detects_only_subagents_and_skills_and_docs(self, tmp_path):
+        m = make_member(tmp_path / "my-repo")
+        out = json.loads(run("init", str(m)).stdout)
+        det = out["detected"]
+        assert det["agents"] == ["agents/thing.md"]  # the mode:skill md is excluded
+        assert det["skills"] == ["skills/foo"]
+        assert det["docs"] == ["docs/method.md"]
+
+    def test_name_is_slugified(self, tmp_path):
+        m = (tmp_path / "My_Weird Repo!").resolve()
+        m.mkdir()
+        out = json.loads(run("init", str(m)).stdout)
+        assert out["name"] == "my-weird-repo"
+
+    def test_refuses_overwrite_without_force(self, tmp_path):
+        m = make_member(tmp_path / "r")
+        run("init", str(m))
+        r = run("init", str(m))
+        assert r.returncode != 0
+        assert "already exists" in json.loads(r.stdout)["error"]
+
+    def test_force_backs_up(self, tmp_path):
+        m = make_member(tmp_path / "r")
+        run("init", str(m))
+        out = json.loads(run("init", str(m), "--force").stdout)
+        assert out["backed_up"], "expected a timestamped backup"
+        assert any(".bak." in b for b in out["backed_up"])
+
+    def test_README_links_public_repo(self, tmp_path):
+        m = make_member(tmp_path / "r")
+        run("init", str(m))
+        text = (m / ".opskit" / "README.md").read_text()
+        assert "github.com/CascadeSTEAM/opskit" in text
+        assert "check" in text  # CI recipe present
+
+
+class TestCheck:
+    def test_example_member_passes(self):
+        """The committed reference at projects/example must always validate."""
+        r = run("check", str(ROOT / "projects" / "example"))
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert json.loads(r.stdout)["ok"] is True
+
+    def test_missing_manifest_errors(self, tmp_path):
+        r = run("check", str(tmp_path))
+        assert r.returncode != 0
+        assert "no manifest" in json.loads(r.stdout)["errors"][0]
+
+    def test_wrong_contract_version_flagged(self, tmp_path):
+        opskit = tmp_path / ".opskit"
+        opskit.mkdir()
+        (opskit / "pack.yml").write_text(
+            "contract: 2\nname: x\ndescription: d\n"
+            "data_classification: public\nsync: symlink\n"
+        )
+        r = run("check", str(tmp_path))
+        assert r.returncode != 0
+        assert any("contract" in e for e in json.loads(r.stdout)["errors"])
+
+    def test_missing_required_field_flagged(self, tmp_path):
+        opskit = tmp_path / ".opskit"
+        opskit.mkdir()
+        (opskit / "pack.yml").write_text(
+            "contract: 1\nname: x\ndescription: d\nsync: symlink\n"  # no data_classification
+        )
+        r = run("check", str(tmp_path))
+        assert r.returncode != 0
+        assert any("data_classification" in e for e in json.loads(r.stdout)["errors"])
+
+    def test_dangling_referenced_path_flagged(self, tmp_path):
+        opskit = tmp_path / ".opskit"
+        opskit.mkdir()
+        (opskit / "pack.yml").write_text(
+            "contract: 1\nname: x\ndescription: d\ndata_classification: public\n"
+            "sync: symlink\nagents:\n  - path: agents/ghost.md\n"
+        )
+        r = run("check", str(tmp_path))
+        assert r.returncode != 0
+        assert any("ghost.md" in e for e in json.loads(r.stdout)["errors"])
+
+    def test_bad_name_pattern_flagged(self, tmp_path):
+        opskit = tmp_path / ".opskit"
+        opskit.mkdir()
+        (opskit / "pack.yml").write_text(
+            "contract: 1\nname: Bad_Name\ndescription: d\n"
+            "data_classification: public\nsync: symlink\n"
+        )
+        r = run("check", str(tmp_path))
+        assert r.returncode != 0
+        assert any("name" in e for e in json.loads(r.stdout)["errors"])

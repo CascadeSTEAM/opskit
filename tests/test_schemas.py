@@ -115,6 +115,51 @@ class TestDeviceSchema:
                 assert len(parts) == 6, f"{path.name}: invalid MAC {device['mac_address']}"
 
 
+class TestProjectSchema:
+    """Validate .opskit/pack.yml against project.schema.json (the member contract)."""
+
+    @classmethod
+    def setup_class(cls):
+        from jsonschema import Draft202012Validator
+        cls.schema = _load_json_schema("project.schema.json")
+        cls.validator = Draft202012Validator(cls.schema)
+
+    def _valid(self) -> dict:
+        return _load_yaml(ROOT / "projects/example/.opskit/pack.yml")
+
+    def test_example_member_conforms(self):
+        errors = list(self.validator.iter_errors(self._valid()))
+        assert not errors, f"Example pack.yml has schema errors: {errors}"
+
+    def test_required_fields(self):
+        errors = list(self.validator.iter_errors({"name": "x"}))
+        assert len(errors) > 0
+
+    def test_contract_version_is_pinned(self):
+        pack = self._valid()
+        pack["contract"] = 2
+        errors = list(self.validator.iter_errors(pack))
+        assert len(errors) > 0, "a mismatched contract version must fail validation"
+
+    def test_data_classification_enum(self):
+        pack = self._valid()
+        pack["data_classification"] = "secret"
+        errors = list(self.validator.iter_errors(pack))
+        assert len(errors) > 0
+
+    def test_name_pattern(self):
+        pack = self._valid()
+        pack["name"] = "Bad_Name"
+        errors = list(self.validator.iter_errors(pack))
+        assert len(errors) > 0
+
+    def test_unknown_top_level_key_rejected(self):
+        pack = self._valid()
+        pack["surprise"] = True
+        errors = list(self.validator.iter_errors(pack))
+        assert len(errors) > 0, "additionalProperties must be false for drift detection"
+
+
 class TestDirectoryContract:
     """Validate environment directory structure."""
 
