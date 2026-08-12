@@ -1104,7 +1104,28 @@ Session note: `docs/session-notes/2026-07-20-policy-hardening-and-tooling.md`
 **Completed:** issues #1–#8, #10, #12, #14, #16, #19, #20, #25 closed; PRs
 #9, #11, #13, #15, #17, #18, #21, #22, #26 merged; suite 47/47 green.
 
-**Open threads:** #23 (init case-collision guard), #24 (inventory lint);
-scrub follow-through (operator, tracked privately); storage
-rollout (host choice, per-env repos, `.env-remotes`); grant technology-support
-team repo access; flip ansible-lint to enforcing once roles settle.
+
+---
+
+## 2026-08-11 — Helpdesk ticket reconstruction + /ticket slash command feature
+
+Session note: environment session notes (infra session)
+
+**Key decisions:**
+- infrastructure ticket created via MCP tool with vault-resolved credentials
+- Organizational isolation model discussed: agent analysis showed giving
+  customer ownership + Admin to service provider is cleaner for trust/audit
+  than retaining Owner access, though both provide cryptographic isolation
+- Helpdesk ticket skill rewritten with `/ticket` and `/tickets` slash commands:
+  - Guided discussion cycle (draft → clarify → clarify scope → confirm → create)
+  - Fuzzy customer matching via difflib with question tool for ambiguous matches
+  - Priority flags (-low/-high/-urgent, default Medium)
+  - Shorthand template DB (.local/templates/tickets.json, gitignored, agent-managed)
+  - Batch mode (/tickets) for multi-ticket operations (e.g. onboarding sequences)
+  - All examples use client-safe generic names per publication guard
+- **Issue-first workflow strictly followed:** Issue #197 → linked branch → PR #198 → review → merge. No direct commits to main.
+- Client token scrubbing: all tracked files verified clean of client-identifying information
+
+**Completed:** Issue #197 created, PR #198 opened, skill file committed, template DBs created, make test 949 passed
+
+**Open threads:** Template auto-discovery, shorthand alias system, batch template auto-discovery
