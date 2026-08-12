@@ -18,8 +18,14 @@ python3 bin/automation-ladder.py sync-agents   # render the subagent into both h
 
 Map real members in the gitignored `.project-remotes` (one
 `<name> <git-url-or-abs-path>` per line, `#` comments allowed), mirroring
-`.env-remotes`. The schema'd `.opskit/pack.yml` manifest and `bin/project-sync.sh`
-(clone/pull/status/mount) land in the next phase.
+`.env-remotes`.
+
+A member self-declares what it contributes via a `.opskit/pack.yml` manifest
+(contract in `schemas/project.schema.json`); scaffold and validate it with
+`bin/opskit-aware.py init|check` — see `docs/opskit-aware.md`. This directory's
+`.opskit/pack.yml` (plus the tiny `agents/`, `skills/`, `docs/` it references) is
+the committed, `check`-able reference instance. OpsKit-side mount/sync tooling
+(`bin/project-sync.sh`, clone/pull/status/mount) is tracked separately.
 
 ## Rules for a member
 
