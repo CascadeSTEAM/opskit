@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CascadeSTEAM/opskit/blob/main/schemas/project.schema.json",
+  "title": "OpsKit member manifest (.opskit/pack.yml)",
+  "description": "The contract a supportive project declares so OpsKit can drive and develop it as a subagent. Lives at .opskit/pack.yml in the member's own repo. Versioned via `contract`: bump it (and this schema) together, so a stale member fails validation instead of drifting silently.",
+  "type": "object",
+  "required": ["contract", "name", "description", "data_classification", "sync"],
+  "additionalProperties": false,
+  "properties": {
+    "contract": {
+      "type": "integer",
+      "const": 1,
+      "description": "Manifest contract version this file targets. Must match the version this schema describes."
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Member name (lowercase + hyphens). Becomes projects/<name>/ when mounted."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One line: what this member contributes as a subagent."
+    },
+    "data_classification": {
+      "enum": ["public", "internal", "client"],
+      "description": "Sensitivity of the member's OWN tracked content. Gates what OpsKit's publication guard permits when the member is mounted."
+    },
+    "sync": {
+      "enum": ["clone", "symlink"],
+      "description": "How OpsKit obtains the member: clone a git remote, or symlink a local checkout (local development)."
+    },
+    "url": {
+      "type": "string",
+      "description": "Git URL (sync=clone). Optional here — it may live only in OpsKit's gitignored .project-remotes when the URL is itself sensitive."
+    },
+    "pin": {
+      "type": "string",
+      "description": "Commit SHA or tag to pin the mount to (sync=clone)."
+    },
+    "agents": {
+      "type": "array",
+      "description": "Subagent definitions this member contributes (member-relative paths to agents/*.md files).",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {"type": "string", "description": "Member-relative path to an agent .md file."}
+        }
+      }
+    },
+    "skills": {
+      "type": "array",
+      "description": "Skills this member contributes (member-relative paths to skill directories containing SKILL.md).",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {"type": "string", "description": "Member-relative path to a skill directory."}
+        }
+      }
+    },
+    "docs": {
+      "type": "array",
+      "description": "Methodology docs a mounting subagent may read at runtime (member-relative paths).",
+      "items": {"type": "string"}
+    },
+    "config_fragment": {
+      "type": "string",
+      "description": "Optional member-relative path to a harness config fragment (e.g. a permission overlay)."
+    },
+    "context_generators": {
+      "type": "array",
+      "description": "Optional member-relative paths to scripts that render env-local fact sheets into environments/<env>/context/.",
+      "items": {"type": "string"}
+    },
+    "trust": {
+      "type": "object",
+      "description": "Sandbox defaults OpsKit applies when mounting this member's subagent(s).",
+      "additionalProperties": false,
+      "properties": {
+        "bash": {
+          "enum": ["allow", "ask", "deny"],
+          "default": "ask",
+          "description": "Default bash permission for the mounted subagent."
+        },
+        "tool_deny": {
+          "type": "array",
+          "description": "Tool globs the mounted subagent must be denied (e.g. mikromcp_*).",
+          "items": {"type": "string"}
+        }
+      }
+    }
+  }
+}

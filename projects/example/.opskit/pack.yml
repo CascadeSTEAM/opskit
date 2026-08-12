@@ -1,0 +1,20 @@
+# OpsKit member manifest — reference example.
+# See docs/opskit-aware.md and schemas/project.schema.json.
+# Real members ship this in their OWN repo at .opskit/pack.yml (scaffold it
+# with `python3 bin/opskit-aware.py init`). This fictional member exists only
+# so the contract has a committed, schema-tested, `check`-able instance.
+contract: 1
+name: example-member
+description: Reference member showing the OpsKit-aware manifest shape.
+data_classification: public
+sync: symlink
+agents:
+  - path: agents/example-agent.md
+docs:
+  - docs/example-methodology.md
+# skills: members also contribute skills (a `skills:` list of directories, each
+# with a SKILL.md); omitted here so the committed reference ships no SKILL.md.
+# See schemas/project.schema.json and `opskit-aware.py init` auto-detection.
+trust:
+  bash: ask
+  tool_deny: []
