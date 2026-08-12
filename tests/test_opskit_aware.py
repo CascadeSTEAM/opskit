@@ -74,7 +74,7 @@ class TestInit:
         run("init", str(m))
         r = run("init", str(m))
         assert r.returncode != 0
-        assert "already exists" in json.loads(r.stdout)["error"]
+        assert "already exist" in json.loads(r.stdout)["error"]
 
     def test_force_backs_up(self, tmp_path):
         m = make_member(tmp_path / "r")
@@ -82,6 +82,32 @@ class TestInit:
         out = json.loads(run("init", str(m), "--force").stdout)
         assert out["backed_up"], "expected a timestamped backup"
         assert any(".bak." in b for b in out["backed_up"])
+
+    def test_preexisting_readme_not_clobbered_without_force(self, tmp_path):
+        """A customized .opskit/README.md with no pack.yml must survive an
+        accidental `init` (no --force) — regression for the data-loss bug."""
+        m = make_member(tmp_path / "r")
+        (m / ".opskit").mkdir()
+        sentinel = "CUSTOM README — do not lose me\n"
+        (m / ".opskit" / "README.md").write_text(sentinel)
+        r = run("init", str(m))
+        assert r.returncode != 0
+        assert "already exist" in json.loads(r.stdout)["error"]
+        assert (m / ".opskit" / "README.md").read_text() == sentinel
+
+    def test_force_backs_up_preexisting_readme(self, tmp_path):
+        m = make_member(tmp_path / "r")
+        (m / ".opskit").mkdir()
+        (m / ".opskit" / "README.md").write_text("CUSTOM\n")
+        out = json.loads(run("init", str(m), "--force").stdout)
+        assert any("README.md.bak." in b for b in out["backed_up"])
+
+    def test_clone_scaffold_hints_missing_url(self, tmp_path):
+        m = make_member(tmp_path / "r")
+        run("init", str(m), "--sync", "clone")
+        text = (m / ".opskit" / "pack.yml").read_text()
+        assert "sync: clone" in text
+        assert "cannot be cloned" in text  # the url hint comment
 
     def test_README_links_public_repo(self, tmp_path):
         m = make_member(tmp_path / "r")
@@ -134,6 +160,41 @@ class TestCheck:
         r = run("check", str(tmp_path))
         assert r.returncode != 0
         assert any("ghost.md" in e for e in json.loads(r.stdout)["errors"])
+
+    def test_dangling_config_fragment_and_context_generator_flagged(self, tmp_path):
+        opskit = tmp_path / ".opskit"
+        opskit.mkdir()
+        (opskit / "pack.yml").write_text(
+            "contract: 1\nname: x\ndescription: d\ndata_classification: public\n"
+            "sync: symlink\nconfig_fragment: cfg/frag.json\n"
+            "context_generators:\n  - gen/ctx.sh\n"
+        )
+        r = run("check", str(tmp_path))
+        assert r.returncode != 0
+        errors = json.loads(r.stdout)["errors"]
+        assert any("frag.json" in e for e in errors)
+        assert any("ctx.sh" in e for e in errors)
+
+    @pytest.mark.parametrize("agents_block", [
+        "agents:\n  - agents/thing.md\n",          # list of strings (not mappings)
+        "agents:\n  path: agents/thing.md\n",       # a mapping, not a list
+        "agents: agents/thing.md\n",                 # a bare string
+    ])
+    def test_malformed_agents_shape_reports_cleanly_not_crash(self, tmp_path, agents_block):
+        """A malformed manifest must yield a clean errors[] on stdout, never a
+        Python traceback with empty stdout — regression for the validator crash."""
+        opskit = tmp_path / ".opskit"
+        opskit.mkdir()
+        (opskit / "pack.yml").write_text(
+            "contract: 1\nname: x\ndescription: d\ndata_classification: public\n"
+            "sync: symlink\n" + agents_block
+        )
+        r = run("check", str(tmp_path))
+        assert r.returncode != 0
+        assert not r.stderr.strip(), f"expected no traceback, got: {r.stderr}"
+        out = json.loads(r.stdout)  # must be parseable JSON, not a crash
+        assert out["ok"] is False
+        assert out["errors"], "schema errors should be reported"
 
     def test_bad_name_pattern_flagged(self, tmp_path):
         opskit = tmp_path / ".opskit"

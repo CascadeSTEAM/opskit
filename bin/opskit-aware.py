@@ -35,7 +35,11 @@ import re
 import sys
 from pathlib import Path
 
-import yaml
+try:
+    import yaml
+except ImportError:  # a member may run this outside OpsKit's venv
+    sys.stderr.write("opskit-aware: PyYAML is required — `pip install pyyaml`.\n")
+    sys.exit(1)
 
 CONTRACT_VERSION = 1
 PUBLIC_REPO = "https://github.com/CascadeSTEAM/opskit"
@@ -127,28 +131,38 @@ def cmd_check(args: argparse.Namespace) -> dict:
         loc = "/".join(str(p) for p in err.absolute_path) or "(root)"
         result["errors"].append(f"schema: {loc}: {err.message}")
 
-    # Referenced paths must exist relative to the member root.
+    # Referenced paths must exist relative to the member root. These checks are
+    # shape-defensive: a malformed manifest (e.g. `agents` as a list of strings)
+    # is already reported by schema validation above, so here we skip anything
+    # that is not the expected shape rather than crash — `check` must always
+    # return a clean errors[] on stdout, never a traceback.
     def _rel(p: str) -> Path:
         return member_root / p
 
-    for a in pack.get("agents", []) or []:
-        p = _rel(a["path"])
-        if not p.is_file():
+    def _list(val) -> list:
+        return val if isinstance(val, list) else []
+
+    for a in _list(pack.get("agents")):
+        if not (isinstance(a, dict) and isinstance(a.get("path"), str)):
+            continue
+        if not _rel(a["path"]).is_file():
             result["errors"].append(f"agents: missing file {a['path']}")
-    for s in pack.get("skills", []) or []:
+    for s in _list(pack.get("skills")):
+        if not (isinstance(s, dict) and isinstance(s.get("path"), str)):
+            continue
         p = _rel(s["path"])
         if not p.exists():
             result["errors"].append(f"skills: missing path {s['path']}")
         elif p.is_dir() and not (p / "SKILL.md").is_file():
             result["warnings"].append(f"skills: {s['path']} has no SKILL.md")
-    for d in pack.get("docs", []) or []:
-        if not _rel(d).is_file():
+    for d in _list(pack.get("docs")):
+        if isinstance(d, str) and not _rel(d).is_file():
             result["errors"].append(f"docs: missing file {d}")
     cf = pack.get("config_fragment")
-    if cf and not _rel(cf).is_file():
+    if isinstance(cf, str) and not _rel(cf).is_file():
         result["errors"].append(f"config_fragment: missing file {cf}")
-    for g in pack.get("context_generators", []) or []:
-        if not _rel(g).is_file():
+    for g in _list(pack.get("context_generators")):
+        if isinstance(g, str) and not _rel(g).is_file():
             result["errors"].append(f"context_generators: missing file {g}")
 
     result["ok"] = not result["errors"]
@@ -200,7 +214,13 @@ def _pack_text(name: str, classification: str, sync: str, detected: dict) -> str
         "# does not apply, then validate with `opskit-aware.py check .`.\n"
         "# Contract + fields: schemas/project.schema.json in the OpsKit repo.\n"
     )
-    return header + yaml.safe_dump(body, sort_keys=False, allow_unicode=True)
+    text = header + yaml.safe_dump(body, sort_keys=False, allow_unicode=True)
+    if sync == "clone" and "url" not in body:
+        text += (
+            "# sync: clone — set `url:` here (a git URL) or map this member in\n"
+            "# OpsKit's gitignored .project-remotes, otherwise it cannot be cloned.\n"
+        )
+    return text
 
 
 def _readme_text(name: str) -> str:
@@ -251,8 +271,12 @@ def cmd_init(args: argparse.Namespace) -> dict:
         result["error"] = f"target is not a directory: {member_root}"
         return result
 
-    if pack_path.exists() and not args.force:
-        result["error"] = f"{pack_path} already exists — pass --force to overwrite."
+    # Guard EITHER file — a customized README.md with no pack.yml must not be
+    # silently clobbered by a scaffold run without --force.
+    existing = [p for p in (pack_path, readme_path) if p.exists()]
+    if existing and not args.force:
+        names = ", ".join(str(p) for p in existing)
+        result["error"] = f"{names} already exist(s) — pass --force to overwrite (backs up)."
         return result
 
     name = _slug(args.name or member_root.name)
