@@ -13,6 +13,54 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-08-12 — Multi-project orchestrator: opskit-aware kit, CI unbreak, plow + cleanup
+
+**Direction set.** OpsKit *is* the multi-project orchestrator — no new top-level
+project. Related repos are mounted read-only as sandboxed domain subagents; the
+member declares what it contributes, OpsKit consumes it. Deliberately chose a
+scaffolder command + a versioned-contract validator (run on both member and
+OpsKit sides) so members can't drift silently.
+
+**Landed.** The member-side half of that contract shipped in #200: a versioned
+`.opskit/pack.yml` schema, `bin/opskit-aware.py` (`init` scaffolds a member's
+`.opskit/`, `check` validates it + its referenced paths), the public
+`docs/opskit-aware.md` adoption guide, and a `check`-able `projects/example/`
+reference. The foundation it builds on (`sync-agents`, the `projects/` mount
+model) had already merged (#63/#65); the disposable one-off `@security-auditor`
+agent was pruned as unused (#194), which is exactly why the reusable,
+self-declaring kit is the better shape.
+
+**CI unbroken repo-wide (#202).** `ansible/ansible-lint@v26` had started failing
+every PR's required `lint` check on an install collision; fixed by isolating
+`ansible-core` in a venv. Same class as the earlier #83/#87/#88 ansible-lint
+breakages.
+
+**#94 (partial, #203).** Recorded the mikrotik-rest-api playbook's **keep**
+decision as a documented routing-rule exception (per the IaC-rebuild doctrine —
+mikromcp overlap never justifies deleting a rebuild-from-zero playbook) plus a
+`KNOWN-BROKEN` banner. The module-argument fix explicitly needs a device, so it
+was left open — did not fake live verification.
+
+**`/plow` runs** cleared the PR queue (#198 → closed #197), fixed the CI blocker,
+and triaged the backlog; remaining items are all live-infra, epics, or
+owner-decision-gated and were skipped with reasons on-issue.
+
+**Lesson.** OpenCode ignores a *nested* `permission.tool:` block in an agent
+file — globs must be flat under `permission:`. `opencode agent list` displays
+the nested rule anyway, which fooled a "sandbox verified" claim; verify
+enforcement by behavior, not the list command.
+
+**Cleanup.** Pruned 7 merged `opskit-wt-*` worktrees + local/remote branches,
+each verified safe three ways (patch-id `git cherry`, signature artifact in
+`main`, merged-PR trace) with recovery SHAs recorded. Harness worktrees and the
+unmerged `erp-stack-…` branch left intact.
+
+**Open threads:** #94 device remainder; #181 canonical device-record shape
+(owner decision); #159/#170 owner-gated; idea rows 47/48 (OpsKit-side
+`project-sync.sh` mount tooling; `opskit member` CLI alias + first real adopter).
+
+---
+
 ## 2026-08-10 — homelab workstation reliability diagnosis
 
 Diagnosed a hardware/driver hard-lockup on a personal homelab workstation outside
