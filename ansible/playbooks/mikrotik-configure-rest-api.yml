@@ -2,6 +2,28 @@
 # ansible/playbooks/mikrotik-configure-rest-api.yml
 # Configures RouterOS devices for Zabbix REST API monitoring.
 #
+# ── Routing-rule exception + run status (issue #94) ──────────────────────────
+# Decision: KEEP this playbook. It is a deliberate, documented exception to the
+# @mikrotik / mikromcp routing rule in AGENTS.md, not an oversight:
+#   - IaC-rebuild doctrine: Ansible must be able to rebuild device state from
+#     zero. An overlapping mikromcp capability never justifies deleting the
+#     playbook — the two are not substitutes for rebuild-from-scratch.
+#   - Bootstrap / bulk enablement: this enables the www-ssl / api-ssl REST
+#     surface and provisions the monitoring user across many devices at once —
+#     the very API surface Zabbix (and the mikromcp API path) depend on, so it
+#     cannot itself route through a tool that needs that surface already up.
+#
+# ⚠ KNOWN-BROKEN — DO NOT RUN until the module arguments are corrected AND
+# verified against a lab or snapshot-protected device (#94). The api_modify /
+# command tasks below carry wrong arguments (api_modify takes a `data` list of
+# desired-state dicts, not operation/attribute/where; the command module is
+# connection-driven and accepts none of hostname/username/password). A wrong
+# api_modify payload mutates live device state, so this must be fixed on a
+# device, not reasoned about. Until then `args[module]` stays in the
+# .ansible-lint.yml warn_list as a standing reminder (it is visible, not
+# silenced). This header settles #94's decision half; the argument fix +
+# warn_list removal remain, and need a dedicated device session.
+#
 # Prerequisites:
 #   - community.routeros collection (v2.12+)
 #   - SSH access to MikroTik device with admin privileges
