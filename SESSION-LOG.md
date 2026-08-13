@@ -13,6 +13,41 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-08-13, continued — a hard rule the hard way, and a skill-discovery gap
+
+**Direction set, the hard way.** The #209 work above was itself done directly
+in the shared primary checkout — switching its branch for hours while
+concurrent sessions shared that same directory, and (separately) hitting a
+live `.current-ticket` collision from exactly that sharing. The operator
+named the missing rule directly: opskit-repo work needs a hard, unconditional
+worktree requirement, not a skill-level convention a session can route around.
+
+**Landed (#212).** Rewrote `AGENTS.md` hard rule #2 to mandate worktree use
+explicitly, pointing at the tool that already existed but was never elevated
+to a rule (`bin/fix-issue.sh setup <n>`, already used by `gh`/`plow`).
+`environments/<env>/` stays exempt — separate single-branch repos,
+`bin/env-sync.sh` already correct there. `startsession` gained a first step
+verifying the primary checkout is on the default branch, reported rather
+than silently fixed if it's ever found elsewhere. Done in its own worktree,
+practicing the rule rather than just writing it down.
+
+**Landed (#214).** The operator typed `/endsession` and it wasn't there.
+Root cause: `new-skill` only creates the `.claude/skills/<name>` discovery
+symlink at scaffold time — 16 of this repo's 20 skills predated that or were
+hand-authored, and had no symlink at all, invisible to Claude Code (fine for
+opencode, which reads `.opencode/skills/` directly). Added `sync-skills` to
+`automation-ladder.py`, mirroring the existing `sync-agents` shape
+(non-destructive: reports conflicts and stale links, never silently
+overwrites), and backfilled all 16 in one run.
+
+**Open thread, filed not built (#216).** A fresh workstation or runner box
+has zero MCP wiring until someone hand-writes `~/.config/opencode/opencode.json`
+— surfaced while auditing what `claude-runner-01` was still missing for real
+parity. Needs a redacted template and a single source for the
+Claude-Code/opencode routing-memory duplication. Design not started.
+
+---
+
 ## 2026-08-13 — Hand-off runner: provisioning tooling, a new skill, ten bugs found live
 
 **Direction set.** Claude Code's own "Remote Control" (run on an always-on
