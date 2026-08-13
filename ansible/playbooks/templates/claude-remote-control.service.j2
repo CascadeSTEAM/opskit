@@ -1,0 +1,41 @@
+{#
+  systemd --user unit for Claude Code Remote Control, server mode.
+
+  Modeled directly on templates/lifecycle-processor.service.j2 — same
+  WorkingDirectory + ExecStart shape, same Restart=on-failure discipline.
+
+  --permission-mode bypassPermissions is confirmed to be accepted by
+  `claude remote-control` itself (not just the general `claude` invocation) —
+  verified against the live Remote Control docs during #209's design, not
+  guessed: "claude remote-control --permission-mode acceptEdits" is Anthropic's
+  own documented example for setting a server mode's starting mode.
+  bypassPermissions was the operator's explicit, informed choice for this box
+  (see the design plan for #209) — but per Anthropic's own docs it "offers no
+  protection against prompt injection or unintended actions." That residual
+  risk is bounded here by the box's own isolation and narrow credential scope
+  (see #209 §2), not by anything this flag provides.
+
+  --dangerously-skip-permissions (bypassPermissions' equivalent) explicitly
+  cannot be used with root/sudo privileges — this unit MUST run as the
+  unprivileged operator user via `scope: user`, never as root.
+#}
+[Unit]
+Description=Claude Code Remote Control (server mode) — {{ remote_control_name }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={{ claude_repo_root }}
+ExecStart={{ claude_bin }} remote-control --name {{ remote_control_name }} --spawn {{ remote_control_spawn_mode }} --permission-mode {{ remote_control_permission_mode }}
+
+# Auto-restart on crash — this box's whole purpose is staying up unattended.
+Restart=on-failure
+RestartSec=5
+
+# Logging goes to the journal: journalctl --user -u claude-remote-control -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

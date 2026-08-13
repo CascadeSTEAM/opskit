@@ -1,0 +1,393 @@
+---
+# provision-runner-lxc.yml — Create a persistent, Docker-capable LXC container
+# for running Claude Code sessions unattended (opskit #209).
+#
+# Generalizes the informal build of an existing self-hosted CI-runner LXC in
+# another environment (a Docker-capable, unprivileged, onboot-enabled
+# container registered as a GitHub Actions runner) into a reusable playbook,
+# the same way provision-erpnext-dev-lxc.yml generalized its own precedent
+# (#150).
+# Per .opencode/rules/iac-required.md the container is system/deployment
+# state, so its rebuild path is this playbook, not a hand-run `pct create`.
+#
+# SAFETY POSTURE (identical to provision-erpnext-dev-lxc.yml, #150/#187)
+#   - Idempotent: an existing container is never recreated or destroyed. If the
+#     target ID is in use by something that does not look like this container,
+#     the play FAILS rather than adopting or overwriting it.
+#   - Default-deny firewall: policy_in DROP, one deliberate inbound rule for
+#     SSH from the trusted LAN, nothing else. Proxmox needs THREE things for
+#     that to mean anything — the datacenter firewall switch, the vNIC's
+#     firewall=1, and the guest rules file — so the play asserts the first
+#     before creating anything and reports honestly if it is off (#187).
+#     Outbound is left ACCEPT deliberately: this box's whole purpose is
+#     running arbitrary future coding/infra tasks against GitHub, Vaultwarden,
+#     package mirrors, and every device the @mikrotik/@linux subagents might
+#     touch. A static egress allow-list would be brittle and is an explicit
+#     non-goal here — see the design plan for #209.
+#   - No infrastructure values are hardcoded. ct_id/ct_ip/ct_gateway have NO
+#     default — the address is not yet allocated, so the play must fail
+#     loudly rather than invent one.
+#
+# SIZING: a notch above that precedent's, since this box runs real Claude Code
+# sessions + git worktrees + Docker, not just CI jobs. Confirm against the
+# target node's live free capacity (pct list / free -h / nproc) before
+# running — these are starting points, not measurements.
+#
+# Play 2 (guest prep) requires the container to already be reachable over SSH
+# and present in inventory under ct_host — provisioning a fresh CT into
+# inventory is a manual step per the existing device-registration convention
+# (see the design plan for #209 §5), done between play 1 and play 2.
+#
+# Run from this repo root:
+#   ansible-playbook -i environments/$ACTIVE_ENV/ansible/inventory.yml \
+#     ansible/playbooks/provision-runner-lxc.yml \
+#     -e target_host=<proxmox-node-alias> -e ct_id=<id> \
+#     -e ct_ip=<address/prefix> -e ct_gateway=<address> \
+#     -e ssh_allow_source=<cidr-admitted-for-ssh> \
+#     -e ct_host=<inventory-alias-for-the-new-ct> \
+#     -e recovery_pubkey="<contents of a freshly generated recovery keypair>"
+#
+# Dry run first: add --check (play 1 only — play 2's package installs are not
+# meaningfully check-mode safe).
+
+- name: Create the runner LXC container
+  hosts: "{{ target_host }}"  # noqa: syntax-check[specific]
+  gather_facts: false
+
+  vars:
+    # --- Required, no defaults. See the assert below. --------------------
+    # ct_id        container ID to create
+    # ct_ip        CIDR address for the container, e.g. 192.0.2.50/24
+    # ct_gateway   default gateway for the container
+    # ssh_allow_source   CIDR admitted for inbound SSH, e.g. the target
+    #                    environment's own LAN — no default, same reasoning
+    #                    as ct_ip: this is real network data, not a value to
+    #                    guess or to commit as a hardcoded default.
+
+    # --- Identity ----------------------------------------------------------
+    # Purpose-named default, not environment-named — override with something
+    # environment-specific at run time if a distinguishing name is wanted.
+    ct_hostname: claude-runner-01
+
+    # --- Sizing: a notch above the CI-runner precedent, all overridable -----
+    ct_cores: 6
+    ct_memory_mb: 8192
+    ct_swap_mb: 1024
+    ct_disk_gb: 40
+
+    # --- Placement -----------------------------------------------------------
+    ct_storage: local-lvm
+    ct_template_storage: local
+    ct_bridge: vmbr0
+    # Verify this is the exact template name pveam currently serves
+    # (`pveam available | grep ubuntu-24.04`) before running — template point
+    # releases change. Ubuntu, not Debian, to match the CI-runner precedent
+    # and this box's Docker requirement.
+    ct_ostemplate_name: ubuntu-24.04-standard_24.04-2_amd64.tar.zst
+    ct_unprivileged: true
+    # Unlike provision-erpnext-dev-lxc.yml's ct_onboot: false — this box must
+    # come back up after a Nexus reboot to keep serving Remote Control
+    # unattended. That's the entire point of the box.
+    ct_onboot: true
+    ct_start_after_create: true
+
+    # A container firewall is only real when the datacenter firewall is on.
+    # Set false to provision knowingly WITHOUT isolation (#187).
+    require_datacenter_firewall: true
+
+  tasks:
+    - name: Require the parameters that must never be guessed
+      ansible.builtin.assert:
+        that:
+          - ct_id is defined
+          - ct_ip is defined
+          - ct_gateway is defined
+          - ssh_allow_source is defined
+        fail_msg: >-
+          Pass -e ct_id=<id> -e ct_ip=<address/prefix> -e ct_gateway=<address>
+          -e ssh_allow_source=<cidr>. None of these have defaults on purpose:
+          they're real network data for whichever environment this runs
+          against — inventing one would either collide with a live host,
+          silently create an unreachable container, or (for
+          ssh_allow_source) admit SSH from a network nobody actually
+          intended. Pass the target environment's own trusted LAN, or a
+          single workstation address for a tighter scope.
+
+    - name: Reject an address that is not in CIDR form
+      ansible.builtin.assert:
+        that:
+          - "'/' in ct_ip"
+        fail_msg: >-
+          ct_ip must include a prefix length (e.g. 192.0.2.50/24). Without
+          one pct assumes /24, which is a guess about someone else's network.
+
+    # A guest firewall is inert unless the DATACENTER firewall is on. Proxmox
+    # needs all three: this switch, the vNIC's firewall=1, and the guest's own
+    # rules file. Checked BEFORE the container is created, so a refusal costs
+    # nothing and never leaves a half-provisioned node behind. Identical logic
+    # to provision-erpnext-dev-lxc.yml (#187) — kept verbatim rather than
+    # factored out, matching that playbook's own choice to duplicate rather
+    # than introduce a shared include for a single reused block.
+    - name: Read the datacenter firewall switch
+      ansible.builtin.slurp:
+        src: /etc/pve/firewall/cluster.fw
+      register: cluster_fw
+      failed_when: false
+
+    - name: Reject an unrecognised value for the isolation requirement
+      ansible.builtin.assert:
+        that:
+          - require_datacenter_firewall in [true, false, 'true', 'false', 'True', 'False']
+        fail_msg: >-
+          require_datacenter_firewall is
+          '{{ require_datacenter_firewall }}', which is neither true nor false.
+          Refusing to guess: an unrecognised value would otherwise be read as
+          false and quietly disable the isolation check.
+
+    - name: Establish whether the datacenter firewall is enabled
+      ansible.builtin.set_fact:
+        datacenter_firewall_on: >-
+          {{ (cluster_fw.content is defined)
+             and (((cluster_fw.content | b64decode)
+                   | regex_findall('(?m)^\s*enable:\s*([01])\s*$')
+                   | last | default('0')) == '1') }}
+        datacenter_firewall_unreadable: >-
+          {{ (cluster_fw.content is not defined)
+             and ('No such file' not in (cluster_fw.msg | default(''))) }}
+
+    - name: Refuse to claim isolation the datacenter firewall would not deliver
+      ansible.builtin.assert:
+        that:
+          - datacenter_firewall_on or not require_datacenter_firewall
+          - not (datacenter_firewall_unreadable | bool)
+        fail_msg: >-
+          {{ 'Could NOT READ /etc/pve/firewall/cluster.fw on ' ~ target_host ~
+             ' (' ~ (cluster_fw.msg | default('unknown error')) ~ '). The
+             firewall may well be enabled — this is most likely a permissions
+             or connection problem, so fix that rather than disabling the
+             check. Do NOT reach for require_datacenter_firewall=false here:
+             that would turn a read failure into a real loss of isolation.'
+             if (datacenter_firewall_unreadable | bool)
+             else 'The datacenter firewall is NOT enabled on ' ~ target_host ~
+             ' (/etc/pve/firewall/cluster.fw has no effective `enable: 1`), so
+             a per-container firewall does nothing: this container would be
+             fully reachable while this playbook reported it isolated. Enable
+             it at Datacenter -> Firewall -> Options — cluster-wide state, so
+             decide it deliberately rather than as a side effect of
+             provisioning one container. To provision WITHOUT isolation
+             anyway, re-run with -e require_datacenter_firewall=false; the
+             report will then say plainly that the container is not
+             isolated.' }}
+
+    - name: Read the existing container config, if any
+      ansible.builtin.command: "pct config {{ ct_id }}"
+      register: existing_ct
+      changed_when: false
+      failed_when: false
+
+    - name: Refuse to touch a container ID already used by something else
+      ansible.builtin.assert:
+        that:
+          - "existing_ct.stdout is search('(?m)^hostname: ' ~ ct_hostname ~ '$')"
+        fail_msg: >-
+          CT {{ ct_id }} already exists on {{ target_host }} and its hostname is
+          not {{ ct_hostname }}. Refusing to adopt or overwrite it — pick a free
+          ct_id, or confirm this really is the container you meant.
+      when: existing_ct.rc == 0
+
+    - name: Report that the container already exists
+      ansible.builtin.debug:
+        msg: >-
+          CT {{ ct_id }} ({{ ct_hostname }}) already exists — leaving it alone.
+          This play creates the container; it does not reconfigure one.
+      when: existing_ct.rc == 0
+
+    # ---- Everything below runs only when the container does not exist ----
+
+    - name: Ensure the OS template is present on the node
+      when: existing_ct.rc != 0
+      block:
+        - name: List templates already downloaded
+          ansible.builtin.command:
+            cmd: "pveam list {{ ct_template_storage }}"
+          register: template_list
+          changed_when: false
+
+        - name: Refresh the template catalogue
+          ansible.builtin.command: pveam update
+          changed_when: true
+          when: ct_ostemplate_name not in template_list.stdout
+
+        - name: Download the OS template
+          ansible.builtin.command:
+            cmd: "pveam download {{ ct_template_storage }} {{ ct_ostemplate_name }}"
+          changed_when: true
+          when: ct_ostemplate_name not in template_list.stdout
+
+    - name: Create the container
+      ansible.builtin.command:
+        cmd: >-
+          pct create {{ ct_id }}
+          {{ ct_template_storage }}:vztmpl/{{ ct_ostemplate_name }}
+          --hostname {{ ct_hostname }}
+          --cores {{ ct_cores }}
+          --memory {{ ct_memory_mb }}
+          --swap {{ ct_swap_mb }}
+          --rootfs {{ ct_storage }}:{{ ct_disk_gb }}
+          --net0 name=eth0,bridge={{ ct_bridge }},ip={{ ct_ip }},gw={{ ct_gateway }},firewall=1
+          --unprivileged {{ 1 if ct_unprivileged else 0 }}
+          --onboot {{ 1 if ct_onboot else 0 }}
+          --features nesting=1{{ ',keyctl=1' if ct_unprivileged else '' }}
+          --start 0
+      changed_when: true
+      when: existing_ct.rc != 0
+
+    - name: Write the default-deny firewall rules file, with SSH admitted from the trusted LAN
+      # Third of the three things Proxmox needs, the other two being the vNIC's
+      # firewall=1 and the datacenter switch asserted above. Unlike
+      # provision-erpnext-dev-lxc.yml's fully-empty RULES block, this box needs
+      # direct SSH (the same requirement the CI-runner precedent had) — that is
+      # the one deliberate admit rule; everything else stays default-deny.
+      #
+      # No `mode:` here, deliberately. /etc/pve is pmxcfs, a FUSE cluster
+      # filesystem that hardcodes its own permissions and rejects chmod() with
+      # EPERM. The copy module chmods after writing, so setting mode makes this
+      # task fail on a real node — halfway through provisioning, after the
+      # container already exists.
+      ansible.builtin.copy:
+        dest: "/etc/pve/firewall/{{ ct_id }}.fw"
+        content: |
+          [OPTIONS]
+          enable: 1
+          policy_in: DROP
+          policy_out: ACCEPT
+
+          [RULES]
+          IN ACCEPT -p tcp -dport 22 -source {{ ssh_allow_source }}
+        force: false
+      when: existing_ct.rc != 0
+
+    - name: Start the container
+      ansible.builtin.command: "pct start {{ ct_id }}"
+      changed_when: true
+      when:
+        - existing_ct.rc != 0
+        - ct_start_after_create | bool
+
+    - name: Report container creation
+      ansible.builtin.debug:
+        msg: >-
+          CT {{ ct_id }} ({{ ct_hostname }}) provisioned on {{ target_host }}:
+          {{ ct_cores }} cores, {{ ct_memory_mb }} MB RAM, {{ ct_disk_gb }} GB disk,
+          nesting+keyctl enabled, onboot enabled.
+          Firewall: default-deny rules written, SSH admitted from
+          {{ ssh_allow_source }}, vNIC firewall enabled —
+          {{ 'ISOLATED (datacenter firewall is on).'
+             if datacenter_firewall_on
+             else 'NOT ISOLATED: the datacenter firewall is off, so these rules
+                   are inert and this container is reachable.' }}
+          Next: register the container in inventory (see the design plan for
+          #209 §5) before running play 2 of this file against ct_host, then
+          workstation-ansible-toolchain.yml, workstation-mcp-toolchain.yml,
+          workstation-node-toolchain.yml, and provision-claude-remote-control.yml
+          in that order.
+      when: existing_ct.rc != 0
+
+- name: Prepare the runner LXC as a base guest (Docker + operator/recovery keys)
+  hosts: "{{ ct_host }}"  # noqa: syntax-check[specific]
+  gather_facts: true
+  become: true
+
+  tasks:
+    - name: Require the parameters that must never be guessed
+      ansible.builtin.assert:
+        that:
+          - recovery_pubkey is defined
+        fail_msg: >-
+          Pass -e recovery_pubkey="<public key contents>". Generate a fresh
+          dedicated recovery keypair for this box first — do not reuse an
+          existing one. The private half goes straight into the vault; the
+          local copy is shredded once vaulted (mirrors the CI-runner
+          precedent referenced at the top of this file).
+
+    - name: Install base guest packages
+      ansible.builtin.apt:
+        name:
+          - git
+          - curl
+          - ca-certificates
+          - gnupg
+          - tzdata
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    # Docker's own apt repo, not the distro package — the distro's docker.io
+    # on Ubuntu 24.04 lags upstream and this box's whole point is running
+    # current tooling reliably.
+    - name: Check whether Docker is already installed
+      ansible.builtin.command: docker --version
+      register: docker_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install Docker Engine from the upstream apt repository
+      when: docker_check.rc != 0
+      block:
+        - name: Add Docker's GPG key
+          ansible.builtin.get_url:
+            url: https://download.docker.com/linux/ubuntu/gpg
+            dest: /etc/apt/keyrings/docker.asc
+            mode: "0644"
+
+        - name: Add the Docker apt repository
+          # deb822_repository, not the deprecated apt_repository module
+          # (slated for removal in core 2.25) — no existing playbook in this
+          # repo set a precedent either way, so this one uses the current form.
+          ansible.builtin.deb822_repository:
+            name: docker
+            types: deb
+            uris: https://download.docker.com/linux/ubuntu
+            suites: "{{ ansible_facts['distribution_release'] }}"
+            components: stable
+            architectures: "{{ ansible_facts['architecture'] }}"
+            signed_by: /etc/apt/keyrings/docker.asc
+            state: present
+
+        - name: Install Docker Engine
+          ansible.builtin.apt:
+            name:
+              - docker-ce
+              - docker-ce-cli
+              - containerd.io
+              - docker-compose-plugin
+            state: present
+            update_cache: true
+
+    - name: Add the primary operator user to the docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
+      when: ansible_user != 'root'
+
+    - name: Install the operator's own workstation SSH key
+      ansible.posix.authorized_key:
+        user: "{{ ansible_user }}"
+        key: "{{ lookup('file', operator_pubkey_path) }}"
+      when: operator_pubkey_path is defined
+
+    - name: Install the dedicated recovery SSH key
+      ansible.posix.authorized_key:
+        user: "{{ ansible_user }}"
+        key: "{{ recovery_pubkey }}"
+
+    - name: Report guest prep
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} base-prepped: Docker
+          {{ 'installed' if docker_check.rc != 0 else 'already present' }},
+          operator + recovery SSH keys installed.
+          Next: workstation-ansible-toolchain.yml, workstation-mcp-toolchain.yml,
+          workstation-node-toolchain.yml, provision-claude-remote-control.yml —
+          separate tasks, deliberately not done here.
