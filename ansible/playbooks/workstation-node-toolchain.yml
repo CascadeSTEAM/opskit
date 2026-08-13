@@ -94,14 +94,24 @@
       register: npm_bin
       changed_when: false
 
+    # npm's shebang is `#!/usr/bin/env node` — invoking it by absolute path
+    # through the command module still needs `node` resolvable via PATH,
+    # which a bare command exec doesn't get from nvm's shell-rc setup. Hit
+    # live during #209's provisioning: "env: 'node': No such file or
+    # directory" on every npm invocation below despite npm_bin resolving
+    # correctly one task earlier (that task never actually exec's npm).
     - name: Query globally-installed npm packages
       ansible.builtin.command: "{{ npm_bin.stdout }} list -g --depth=0 --json"
+      environment:
+        PATH: "{{ npm_bin.stdout | dirname }}:{{ ansible_facts['env']['PATH'] }}"
       register: npm_global_list
       changed_when: false
       failed_when: false
 
     - name: Install missing global npm packages
       ansible.builtin.command: "{{ npm_bin.stdout }} install -g {{ item }}"
+      environment:
+        PATH: "{{ npm_bin.stdout | dirname }}:{{ ansible_facts['env']['PATH'] }}"
       loop: "{{ global_npm_packages }}"
       when: "item not in (npm_global_list.stdout | default(''))"
       register: npm_install
@@ -116,6 +126,8 @@
       ansible.builtin.command: "{{ npm_bin.stdout | dirname }}/npm install"
       args:
         chdir: "{{ repo_root }}/.opencode"
+      environment:
+        PATH: "{{ npm_bin.stdout | dirname }}:{{ ansible_facts['env']['PATH'] }}"
       when: opencode_package.stat.exists
       register: opencode_npm_install
       changed_when: "'up to date' not in (opencode_npm_install.stdout | default(''))"

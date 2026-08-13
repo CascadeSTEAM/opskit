@@ -151,14 +151,33 @@
              and (((cluster_fw.content | b64decode)
                    | regex_findall('(?m)^\s*enable:\s*([01])\s*$')
                    | last | default('0')) == '1') }}
+        # Two known phrasings for "the file genuinely doesn't exist" across
+        # ansible-core versions/connection plugins: slurp on this box (core
+        # 2.21.2) reports "File not found: ...", not the "No such file" the
+        # upstream provision-erpnext-dev-lxc.yml check (which this block was
+        # copied from) was written against — a real node with NO firewall
+        # config at all (not even a disabled stub) hit exactly this mismatch
+        # during #209's live provisioning, misclassifying "off" as
+        # "unreadable" and refusing to proceed even with the override
+        # deliberately requested. Matched case-insensitively, both phrasings.
         datacenter_firewall_unreadable: >-
           {{ (cluster_fw.content is not defined)
-             and ('No such file' not in (cluster_fw.msg | default(''))) }}
+             and ('no such file' not in (cluster_fw.msg | default('') | lower))
+             and ('file not found' not in (cluster_fw.msg | default('') | lower)) }}
 
     - name: Refuse to claim isolation the datacenter firewall would not deliver
       ansible.builtin.assert:
         that:
-          - datacenter_firewall_on or not require_datacenter_firewall
+          # | bool here, unlike the strict literal-list assert above: by this
+          # point the value has already passed that validation, so it's one
+          # of the accepted spellings and | bool converts it correctly. Without
+          # it, -e require_datacenter_firewall=false arrives as the STRING
+          # "false" — truthy in Jinja — so `not require_datacenter_firewall`
+          # silently never fires even when explicitly opted out. Hit live
+          # during #209's provisioning: the operator's approved
+          # require_datacenter_firewall=false override was silently ignored
+          # until this cast was added.
+          - datacenter_firewall_on or not (require_datacenter_firewall | bool)
           - not (datacenter_firewall_unreadable | bool)
         fail_msg: >-
           {{ 'Could NOT READ /etc/pve/firewall/cluster.fw on ' ~ target_host ~
@@ -242,30 +261,34 @@
       changed_when: true
       when: existing_ct.rc != 0
 
-    - name: Write the default-deny firewall rules file, with SSH admitted from the trusted LAN
+    - name: Write the default-deny firewall rules file, with SSH admitted from the trusted LAN  # noqa: command-instead-of-module
       # Third of the three things Proxmox needs, the other two being the vNIC's
       # firewall=1 and the datacenter switch asserted above. Unlike
       # provision-erpnext-dev-lxc.yml's fully-empty RULES block, this box needs
       # direct SSH (the same requirement the CI-runner precedent had) — that is
       # the one deliberate admit rule; everything else stays default-deny.
       #
-      # No `mode:` here, deliberately. /etc/pve is pmxcfs, a FUSE cluster
-      # filesystem that hardcodes its own permissions and rejects chmod() with
-      # EPERM. The copy module chmods after writing, so setting mode makes this
-      # task fail on a real node — halfway through provisioning, after the
-      # container already exists.
-      ansible.builtin.copy:
-        dest: "/etc/pve/firewall/{{ ct_id }}.fw"
-        content: |
-          [OPTIONS]
-          enable: 1
-          policy_in: DROP
-          policy_out: ACCEPT
+      # A plain shell redirect, not ansible.builtin.copy — hit live during
+      # #209's provisioning: /etc/pve is pmxcfs, a FUSE cluster filesystem
+      # that rejects both the chmod() copy issues after writing (the
+      # documented reason `mode:` is never set on files here) AND, it turns
+      # out, the atomic tmp-file-plus-rename dance copy uses even with
+      # unsafe_writes: true — both failed with EPERM against a real node.
+      # `cat > file <<'EOF'` does nothing but open/write/close, the one
+      # sequence pmxcfs actually supports. A per-line ignore (#83): the
+      # linter's suggested replacement is the module this exists to avoid.
+      ansible.builtin.shell: |
+        cat > /etc/pve/firewall/{{ ct_id }}.fw <<'FWEOF'
+        [OPTIONS]
+        enable: 1
+        policy_in: DROP
+        policy_out: ACCEPT
 
-          [RULES]
-          IN ACCEPT -p tcp -dport 22 -source {{ ssh_allow_source }}
-        force: false
+        [RULES]
+        IN ACCEPT -p tcp -dport 22 -source {{ ssh_allow_source }}
+        FWEOF
       when: existing_ct.rc != 0
+      changed_when: true
 
     - name: Start the container
       ansible.builtin.command: "pct start {{ ct_id }}"
@@ -311,6 +334,12 @@
           precedent referenced at the top of this file).
 
     - name: Install base guest packages
+      # pipx is here, not left to docs/INSTALL.md's manual "sudo apt install
+      # pipx" step, because that step assumes a human at a real workstation —
+      # this box has no human, and workstation-ansible-toolchain.yml /
+      # workstation-mcp-toolchain.yml / workstation-node-toolchain.yml (the
+      # very next playbooks this file's own report message points at) hard-
+      # require it. Hit live during #209's provisioning.
       ansible.builtin.apt:
         name:
           - git
@@ -318,6 +347,7 @@
           - ca-certificates
           - gnupg
           - tzdata
+          - pipx
         state: present
         update_cache: true
         cache_valid_time: 3600
@@ -340,6 +370,30 @@
             dest: /etc/apt/keyrings/docker.asc
             mode: "0644"
 
+        # deb822_repository depends on python3-debian being present on the
+        # target — a fresh Ubuntu image doesn't have it. Installed explicitly
+        # rather than via the module's own install_python_debian escape
+        # hatch (a silent pip install), matching this repo's preference for
+        # visible, auditable package installs. Hit live during #209's
+        # provisioning: the first run failed here on a stock image.
+        - name: Install python3-debian (deb822_repository's dependency)
+          ansible.builtin.apt:
+            name: python3-debian
+            state: present
+
+        # ansible_facts['architecture'] reports the uname-style name
+        # ("x86_64"), not the Debian archive name apt actually expects
+        # ("amd64") — using it directly wrote an Architectures: x86_64
+        # sources file that apt silently matched zero packages against
+        # (the repo fetched fine; "No package matching 'docker-ce' is
+        # available" only surfaced one task later). Hit live during #209's
+        # provisioning. dpkg --print-architecture is the standard reliable
+        # source for the value apt actually wants.
+        - name: Determine the Debian architecture name for the Docker repo
+          ansible.builtin.command: dpkg --print-architecture
+          register: deb_arch
+          changed_when: false
+
         - name: Add the Docker apt repository
           # deb822_repository, not the deprecated apt_repository module
           # (slated for removal in core 2.25) — no existing playbook in this
@@ -350,7 +404,7 @@
             uris: https://download.docker.com/linux/ubuntu
             suites: "{{ ansible_facts['distribution_release'] }}"
             components: stable
-            architectures: "{{ ansible_facts['architecture'] }}"
+            architectures: "{{ deb_arch.stdout }}"
             signed_by: /etc/apt/keyrings/docker.asc
             state: present
 
