@@ -61,6 +61,38 @@ unmerged `erp-stack-…` branch left intact.
 
 ---
 
+## 2026-08-12 (later) — env-layer session: device onboarding end-to-end
+
+An environment session (operational details live in the env layer's
+session-notes; this entry records only the engineering findings, per the
+publication policy).
+
+**Findings worth issues (owner decision):**
+
+- **ACTIVE_ENV name/dir mismatch.** `switch-env.sh` writes the env.yml `name`
+  to `.env`, but every consumer (`open-ticket.sh`, `ap.sh`,
+  `check-connectivity.sh`) resolves `environments/<name>/env.yml` while the
+  private dirs are named `env-<name>`. Worked around by exporting the dir name.
+  This is a genuine bug in the name↔path contract — the docs say dirs are
+  `environments/<name>/`, so either the dirs or the resolvers are wrong.
+- **Vault client pin vs. old server.** The current `@bitwarden/cli` (2026.x)
+  requires a login endpoint older self-hosted servers 404 on; `@bitwarden/cli`
+  must be pinned (2023.12.1 worked) or the vault server upgraded. `docs/INSTALL.md`
+  recommends an unpinned install, which is now a latent break on older servers.
+- **Session toolchain was installed ad-hoc** (node runtime via nvm, vault CLI,
+  a paramiko venv). Per the IaC rule these belong in the workstation toolchain
+  playbook — worth codifying.
+- **Helpdesk auth for an env without creds in the shared vault** fell back to
+  `open-ticket.sh --local`; the env's helpdesk API tokens simply aren't in the
+  vault this account can see, and the sanctioned `--local` path covered the gap
+  cleanly.
+
+**Confirmed working:** the `--local` ticket path, the collection-scoped vault
+item flow via `bin/bw-management.py`, and the identity-verify-before-rotate
+rotation pattern.
+
+---
+
 ## 2026-08-10 — homelab workstation reliability diagnosis
 
 Diagnosed a hardware/driver hard-lockup on a personal homelab workstation outside
