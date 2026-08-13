@@ -28,24 +28,34 @@ def _make_root(tmp_path: Path) -> Path:
     return root
 
 
-def _make_stub(tmp_path: Path) -> Path:
+def _make_stub(tmp_path: Path, guard_hosts: int = 1) -> Path:
     """A fake ansible-playbook that records ANSIBLE_CONFIG, cwd, and args.
 
     ap.sh now calls ansible-playbook twice: once with --list-hosts as a
-    zero-hosts guard, then the real invocation. The stub answers the guard
-    call with a synthetic non-empty host list (so the guard passes and the
-    real call happens) and only records to AP_STUB_OUT on the real call, so
-    existing assertions about the real invocation's args/env still hold.
+    zero-hosts guard, then the real invocation. The stub distinguishes the
+    two by invocation ORDER (a counter file), not by string-matching
+    "--list-hosts" in the args — an operator legitimately passing --list-hosts
+    themselves would otherwise be misidentified as the guard call on the real
+    invocation too. The first call gets a synthetic host list of size
+    `guard_hosts` (1 = guard passes and the real call happens; 0 = guard
+    fails and ap.sh must exit before ever invoking the real call). Only the
+    real (second) call records to AP_STUB_OUT, so existing assertions about
+    its args/env still hold.
     """
     stub_dir = tmp_path / "stub"
     stub_dir.mkdir()
     stub = stub_dir / "ansible-playbook"
     stub.write_text(
         "#!/bin/bash\n"
-        'if [[ "$*" == *"--list-hosts"* ]]; then\n'
-        '  echo "hosts (1):"\n'
-        '  echo "  stub-host"\n'
-        "  exit 0\n"
+        'COUNT_FILE="$AP_STUB_OUT.count"\n'
+        'count=0\n'
+        '[ -f "$COUNT_FILE" ] && count=$(cat "$COUNT_FILE")\n'
+        'count=$((count + 1))\n'
+        'echo "$count" > "$COUNT_FILE"\n'
+        'if [ "$count" = "1" ]; then\n'
+        f'  echo "hosts ({guard_hosts}):"\n'
+        + ('  echo "  stub-host"\n' if guard_hosts else "")
+        + "  exit 0\n"
         "fi\n"
         '{ echo "ANSIBLE_CONFIG=$ANSIBLE_CONFIG"; echo "PWD=$PWD"; '
         'echo "ARGS=$*"; } > "$AP_STUB_OUT"\n'
@@ -102,3 +112,29 @@ def test_errors_when_env_missing(tmp_path):
     assert r.returncode == 1
     assert "not found" in r.stderr
     assert not out.exists()
+
+
+def test_errors_when_a_play_matches_zero_hosts(tmp_path):
+    """The actual point of the zero-hosts guard (opskit #206): a play with
+    zero matched hosts must abort the run before the real invocation, not
+    just get logged and ignored."""
+    root = _make_root(tmp_path)
+    out = tmp_path / "out.txt"
+    stub_dir = _make_stub(tmp_path, guard_hosts=0)
+    r = _run(root, stub_dir, out, "playbooks/x.yml")
+    assert r.returncode == 1
+    assert "matched zero hosts" in r.stderr
+    assert not out.exists()  # the real invocation never happened
+
+
+def test_operators_own_list_hosts_flag_does_not_confuse_the_stub(tmp_path):
+    """An operator passing --list-hosts themselves must still reach the real
+    (second) invocation — regression guard for a stub that used to
+    string-match "--list-hosts" instead of tracking invocation order."""
+    root = _make_root(tmp_path)
+    out = tmp_path / "out.txt"
+    stub_dir = _make_stub(tmp_path)
+    r = _run(root, stub_dir, out, "playbooks/x.yml", "--list-hosts")
+    assert r.returncode == 0, r.stderr
+    captured = out.read_text()
+    assert "--list-hosts" in captured

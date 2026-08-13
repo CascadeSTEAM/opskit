@@ -1,6 +1,6 @@
 # Example Environment — Device Inventory
 
-Auto-generated from device records. Last updated: 2026-08-10
+Auto-generated from device records. Last updated: 2026-08-13
 
 ## access-point
 
@@ -18,7 +18,8 @@ Auto-generated from device records. Last updated: 2026-08-10
 
 | Name | IP | Status | OS | Services |
 |------|-----|--------|----|----------|
-| [[ex-srv-01]] | 198.51.100.10 | active | Ubuntu | dns, dhcp, monitoring |
+| [[ex-dns-01]] | 192.0.2.53 | active | - | - |
+| [[ex-srv-01]] | 198.51.100.10 | active | Ubuntu | dhcp, monitoring |
 | [[ex-srv-02]] | 198.51.100.11 | active | Debian | docker, web, api, postgresql, redis |
 
 ## switch

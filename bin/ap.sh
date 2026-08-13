@@ -34,21 +34,42 @@ echo "[ap] ACTIVE_ENV=$ACTIVE_ENV | inventory=$INVENTORY" >&2
 export ANSIBLE_CONFIG="$REPO_ROOT/ansible.cfg"
 cd "$REPO_ROOT/ansible"
 
-# A playbook whose every play matches zero hosts exits 0 with an empty recap —
-# reported as success while nothing happened. That's reachable two ways: an
-# inventory group a playbook targets is missing/empty, or an operator-supplied
-# --limit (forwarded unfiltered below) excludes every host every play would
-# otherwise touch. Catch both generically here, once, for every playbook,
-# rather than each playbook trying to guard its own host pattern against a
-# --limit it can't see coming.
-LIST_HOSTS_OUTPUT="$(ansible-playbook -i "$INVENTORY" --list-hosts "$@" 2>&1)" || {
+# A play that matches zero hosts is silently skipped — the whole run can still
+# exit 0 with an empty recap, reported as success while nothing happened.
+# That's reachable two ways: an inventory group a playbook targets is
+# missing/empty, or an operator-supplied --limit (forwarded unfiltered below)
+# excludes every host some play would otherwise touch. Catch both generically
+# here, once, for every playbook, with a throwaway --list-hosts dry run.
+#
+# A play matching zero hosts is failed even if OTHER plays in the same
+# playbook matched fine (e.g. a "hosts: localhost" bootstrap/guard play always
+# matches) — a bootstrap play succeeding is not evidence the real work did.
+#
+# Interactive-prompt flags are stripped for this throwaway call only (still
+# forwarded to the real run below): --list-hosts needs no vault/become secret
+# to enumerate hosts, and forwarding them here would consume the operator's
+# one answer before the real invocation gets to ask for it. stdin is also
+# nulled defensively in case some other flag prompts unexpectedly.
+LIST_HOSTS_ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        --ask-vault-pass|--ask-become-pass|--ask-pass|-k|-K) continue ;;
+        *) LIST_HOSTS_ARGS+=("$arg") ;;
+    esac
+done
+
+LIST_HOSTS_OUTPUT="$(ansible-playbook -i "$INVENTORY" --list-hosts "${LIST_HOSTS_ARGS[@]}" </dev/null 2>&1)" || {
     echo "$LIST_HOSTS_OUTPUT" >&2
     echo -e "${RED}[ap] ansible-playbook --list-hosts failed — see output above.${NC}" >&2
     exit 1
 }
-if ! grep -qE 'hosts \([1-9][0-9]*\):' <<<"$LIST_HOSTS_OUTPUT"; then
+# Couples to --list-hosts's human-readable "hosts (N):" text, not a stable
+# machine interface — accepted trade-off, ansible-core has no documented
+# structured equivalent for "hosts per play after --limit is applied" and
+# this format has been unchanged across many releases.
+if grep -qE 'hosts \(0\):' <<<"$LIST_HOSTS_OUTPUT"; then
     echo "$LIST_HOSTS_OUTPUT" >&2
-    echo -e "${RED}[ap] Every play matched zero hosts — this run would silently do nothing. Check --limit and the inventory group(s) this playbook targets.${NC}" >&2
+    echo -e "${RED}[ap] At least one play matched zero hosts — this run would silently skip real work. Check --limit and the inventory group(s) this playbook targets.${NC}" >&2
     exit 1
 fi
 

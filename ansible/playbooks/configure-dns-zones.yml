@@ -13,6 +13,10 @@
 # Idempotent: safe to re-run. Creates zones/records only if missing.
 
 - name: Verify the dns_server inventory group is wired up
+  # bin/ap.sh also runs a generic zero-hosts guard before every playbook it
+  # invokes — this assert stays anyway: it names the exact fix (dns_server
+  # group + group_vars/dns_zones), which a generic "some play matched zero
+  # hosts" message can't. Don't delete this as apparently-redundant cleanup.
   hosts: localhost
   connection: local
   gather_facts: false
