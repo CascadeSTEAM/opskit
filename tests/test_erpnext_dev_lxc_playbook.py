@@ -117,6 +117,7 @@ READ_ONLY_MODULES = {
     "ansible.builtin.debug",
     "ansible.builtin.set_fact",
     "ansible.builtin.slurp",   # fetches a file's contents; writes nothing
+    "ansible.builtin.stat",    # reports file metadata; writes nothing
 }
 
 
@@ -241,26 +242,47 @@ def test_the_isolation_claim_is_conditional_on_the_precondition():
 
 
 # ── the detection itself, rendered rather than grepped (#187 review) ─────────
+#
+# file_exists models the structural stat check the play now does BEFORE
+# slurp, rather than inferring "file absent" from slurp's own error text —
+# that text-matching approach broke live once, on a node whose cluster.fw
+# didn't exist at all: this ansible-core version's slurp says "File not
+# found: ...", not the "No such file" the check was originally written
+# against, misclassifying "off" as "unreadable" and refusing to proceed
+# even with the isolation requirement explicitly overridden (opskit #209).
 
-def _render_firewall_detection(cluster_fw_text=None, msg=""):
-    """Render the real set_fact expression against a fixture cluster.fw."""
+def _render_firewall_expr(name, cluster_fw_text=None, msg="", file_exists=True):
+    """Render one of the real set_fact expressions against a fixture."""
     import base64
     import jinja2
 
     task = next(t for t in _flatten(_tasks())
                 if "Establish whether" in str(t.get("name", "")))
-    expr = task["ansible.builtin.set_fact"]["datacenter_firewall_on"]
+    expr = task["ansible.builtin.set_fact"][name]
 
     env = jinja2.Environment()
     env.filters["b64decode"] = lambda s: base64.b64decode(s).decode()
     env.filters["regex_findall"] = lambda s, p: re.findall(p, s)
     env.filters["last"] = lambda seq: seq[-1] if seq else None
 
-    ctx = {"cluster_fw": {"msg": msg}}
+    ctx = {
+        "cluster_fw": {"msg": msg},
+        "cluster_fw_stat": {"stat": {"exists": file_exists}},
+    }
     if cluster_fw_text is not None:
         ctx["cluster_fw"]["content"] = base64.b64encode(
             cluster_fw_text.encode()).decode()
     return env.from_string(expr).render(**ctx).strip() == "True"
+
+
+def _render_firewall_detection(cluster_fw_text=None, msg="", file_exists=True):
+    return _render_firewall_expr(
+        "datacenter_firewall_on", cluster_fw_text, msg, file_exists)
+
+
+def _render_unreadable(cluster_fw_text=None, msg="", file_exists=True):
+    return _render_firewall_expr(
+        "datacenter_firewall_unreadable", cluster_fw_text, msg, file_exists)
 
 
 @pytest.mark.parametrize("content,expected", [
@@ -282,24 +304,60 @@ def test_the_firewall_switch_is_read_correctly(content, expected):
     assert _render_firewall_detection(content) is expected
 
 
-def test_an_absent_file_reads_as_off():
-    assert _render_firewall_detection(None, msg="No such file or directory") is False
+def test_an_absent_file_reads_as_off_not_unreadable():
+    """The structural fix, rendered: a file that plain doesn't exist is
+    "off", never "unreadable" — regardless of what message a future
+    ansible-core version's slurp happens to report for a missing file."""
+    assert _render_firewall_detection(None, file_exists=False) is False
+    assert _render_unreadable(None, file_exists=False) is False
+
+
+def test_a_present_but_unreadable_file_is_flagged_unreadable():
+    """The file exists (stat confirms it) but slurp still couldn't read
+    it — a real permissions/connection problem, not "off"."""
+    assert _render_firewall_detection(None, msg="Permission denied", file_exists=True) is False
+    assert _render_unreadable(None, msg="Permission denied", file_exists=True) is True
 
 
 def test_an_unrecognised_opt_out_value_is_refused_not_read_as_false():
     """Ansible's `bool` filter maps any unrecognised string to false without
-    complaint, so `-e require_datacenter_firewall=treu` would have silently
-    switched the guard off — the same failure this change exists to remove,
-    reproduced inside its own escape hatch."""
-    conditions = " ".join(
-        str(t["ansible.builtin.assert"].get("that", ""))
-        for t in _flatten(_tasks()) if "ansible.builtin.assert" in t
+    complaint, so a bare, unguarded `| bool` on this variable would let a
+    typo like `-e require_datacenter_firewall=treu` silently disable the
+    guard. But omitting `| bool` entirely has its own live-caught failure
+    mode: `-e require_datacenter_firewall=false` arrives as the STRING
+    "false" — truthy in Jinja — so an unguarded `not
+    require_datacenter_firewall` never fires even when explicitly opted out
+    (opskit #209, hit live). The actual invariant is order, not absence:
+    `| bool` may only be applied to this variable AFTER the strict
+    literal-list assert has already run, so anything reaching it is
+    guaranteed to already be a known-good spelling."""
+    asserts = [
+        (i, t) for i, t in enumerate(_flatten(_tasks()))
+        if "ansible.builtin.assert" in t
+    ]
+
+    def _that(t):
+        return str(t["ansible.builtin.assert"].get("that", ""))
+
+    literal_list_idx = next(
+        i for i, t in asserts if "require_datacenter_firewall in [" in _that(t)
     )
-    assert "require_datacenter_firewall in [" in conditions, (
-        "the opt-out must accept only exact literals"
+    assert literal_list_idx is not None, "the opt-out must accept only exact literals"
+
+    bool_cast_idx = next(
+        (i for i, t in asserts if "require_datacenter_firewall | bool" in _that(t)),
+        None,
     )
-    assert "require_datacenter_firewall | bool" not in PLAYBOOK.read_text(), (
-        "| bool silently accepts a typo as false"
+    assert bool_cast_idx is not None, (
+        "require_datacenter_firewall must be cast with | bool where it's "
+        "actually used, or the string 'false' from "
+        "-e require_datacenter_firewall=false is truthy and the opt-out "
+        "never fires"
+    )
+    assert literal_list_idx < bool_cast_idx, (
+        "| bool must only be applied after the strict literal-list assert "
+        "has already run — using it before, or instead of, that validation "
+        "lets an unrecognised value like 'treu' silently become false"
     )
 
 
@@ -335,7 +393,7 @@ def test_every_referenced_variable_is_defined_or_required():
     declared = set(_play().get("vars", {})) | set(MUST_HAVE_NO_DEFAULT)
     # Supplied at run time, like target_host; plus loop/register names.
     known = declared | {
-        "target_host", "existing_ct", "template_list",
+        "target_host", "existing_ct", "template_list", "cluster_fw_stat",
     }
 
     referenced = set(re.findall(r"\{\{\s*([a-z_][a-z0-9_]*)", PLAYBOOK.read_text()))
