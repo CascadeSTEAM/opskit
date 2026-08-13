@@ -10,6 +10,10 @@ data/
 *.log
 .local/
 
+# Operator's own running notes across sessions — local reference, not a
+# published/communal document. See SESSION-LOG.md's own header (opskit #217).
+/SESSION-LOG.md
+
 # Semaphore state (generated from catalogue, not canonical)
 semaphore-state/
 
