@@ -29,12 +29,24 @@ def _make_root(tmp_path: Path) -> Path:
 
 
 def _make_stub(tmp_path: Path) -> Path:
-    """A fake ansible-playbook that records ANSIBLE_CONFIG, cwd, and args."""
+    """A fake ansible-playbook that records ANSIBLE_CONFIG, cwd, and args.
+
+    ap.sh now calls ansible-playbook twice: once with --list-hosts as a
+    zero-hosts guard, then the real invocation. The stub answers the guard
+    call with a synthetic non-empty host list (so the guard passes and the
+    real call happens) and only records to AP_STUB_OUT on the real call, so
+    existing assertions about the real invocation's args/env still hold.
+    """
     stub_dir = tmp_path / "stub"
     stub_dir.mkdir()
     stub = stub_dir / "ansible-playbook"
     stub.write_text(
         "#!/bin/bash\n"
+        'if [[ "$*" == *"--list-hosts"* ]]; then\n'
+        '  echo "hosts (1):"\n'
+        '  echo "  stub-host"\n'
+        "  exit 0\n"
+        "fi\n"
         '{ echo "ANSIBLE_CONFIG=$ANSIBLE_CONFIG"; echo "PWD=$PWD"; '
         'echo "ARGS=$*"; } > "$AP_STUB_OUT"\n'
     )

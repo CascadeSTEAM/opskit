@@ -33,4 +33,23 @@ echo "[ap] ACTIVE_ENV=$ACTIVE_ENV | inventory=$INVENTORY" >&2
 # relative to the config's own directory (repo root), so roles are found (#46).
 export ANSIBLE_CONFIG="$REPO_ROOT/ansible.cfg"
 cd "$REPO_ROOT/ansible"
+
+# A playbook whose every play matches zero hosts exits 0 with an empty recap —
+# reported as success while nothing happened. That's reachable two ways: an
+# inventory group a playbook targets is missing/empty, or an operator-supplied
+# --limit (forwarded unfiltered below) excludes every host every play would
+# otherwise touch. Catch both generically here, once, for every playbook,
+# rather than each playbook trying to guard its own host pattern against a
+# --limit it can't see coming.
+LIST_HOSTS_OUTPUT="$(ansible-playbook -i "$INVENTORY" --list-hosts "$@" 2>&1)" || {
+    echo "$LIST_HOSTS_OUTPUT" >&2
+    echo -e "${RED}[ap] ansible-playbook --list-hosts failed — see output above.${NC}" >&2
+    exit 1
+}
+if ! grep -qE 'hosts \([1-9][0-9]*\):' <<<"$LIST_HOSTS_OUTPUT"; then
+    echo "$LIST_HOSTS_OUTPUT" >&2
+    echo -e "${RED}[ap] Every play matched zero hosts — this run would silently do nothing. Check --limit and the inventory group(s) this playbook targets.${NC}" >&2
+    exit 1
+fi
+
 exec ansible-playbook -i "$INVENTORY" "$@"
