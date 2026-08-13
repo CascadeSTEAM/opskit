@@ -1,0 +1,152 @@
+---
+# provision-claude-remote-control.yml — Install Claude Code and deploy a
+# systemd --user unit running it in Remote Control server mode, so the runner
+# LXC keeps a session alive across SSH disconnects and Nexus reboots
+# (opskit #209).
+#
+# WHAT THIS PLAYBOOK DOES NOT DO — deliberately, not an oversight
+#   - It does not run `claude /login`. Remote Control requires a full-scope
+#     claude.ai login (API keys and `setup-token` long-lived tokens are both
+#     explicitly rejected), and that login is an interactive device-linking
+#     flow (visit a URL, confirm a code) with nowhere for a played-back
+#     credential to go. Do this once, by hand, over SSH, after this playbook
+#     runs and before enabling the service.
+#   - It does not accept the workspace-trust dialog. `claude` must be run
+#     interactively at least once inside claude_repo_root to accept it —
+#     Remote Control silently has nothing to attach to otherwise.
+#   - It does not enable or start the service by default
+#     (claude_rc_enable_service: false) — starting it before the two manual
+#     steps above just means it crash-loops uselessly. Re-run with
+#     -e claude_rc_enable_service=true once login + trust are done, or run
+#     `systemctl --user enable --now claude-remote-control` by hand.
+#   - It does not set the org-level "Remote Control" toggle at
+#     claude.ai/admin-settings/claude-code — that is outside this repo, an
+#     Owner-only action, and a hard prerequisite checked at the start of the
+#     #209 design plan's live-verification checklist.
+#
+# Run from this repo root, against the runner LXC once it is in inventory:
+#   ansible-playbook -i environments/$ACTIVE_ENV/ansible/inventory.yml \
+#     ansible/playbooks/provision-claude-remote-control.yml \
+#     -e target_host=<runner-ct-inventory-alias>
+
+- name: Install Claude Code and deploy the Remote Control systemd unit
+  hosts: "{{ target_host }}"  # noqa: syntax-check[specific]
+  gather_facts: true
+
+  vars:
+    claude_local_bin: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
+    claude_bin: "{{ claude_local_bin }}/claude"
+    claude_repo_root: "{{ ansible_facts['env']['HOME'] }}/Projects/opskit"
+    remote_control_name: "{{ inventory_hostname }}"
+    remote_control_spawn_mode: worktree
+    # The operator's explicit, informed choice for this box (see #209's
+    # design plan) — override at run time if a softer mode is ever wanted.
+    remote_control_permission_mode: bypassPermissions
+    claude_rc_enable_service: false
+    systemd_user_dir: "{{ ansible_facts['env']['HOME'] }}/.config/systemd/user"
+
+  tasks:
+    - name: Install tmux (manual-reattach fallback, never the primary keep-alive mechanism)
+      ansible.builtin.apt:
+        name: tmux
+        state: present
+      become: true
+
+    - name: Check whether Claude Code is already installed
+      ansible.builtin.stat:
+        path: "{{ claude_bin }}"
+      register: claude_stat
+
+    # The vendor install script, not IaC-managed — this is the same native
+    # installer the operator's own workstation used (confirmed: it resolves
+    # to ~/.local/share/claude/versions/<version> with a symlink at
+    # ~/.local/bin/claude). No package-manager path exists for it.
+    - name: Install Claude Code  # noqa: command-instead-of-module
+      ansible.builtin.shell: |
+        curl -fsSL https://claude.ai/install.sh | bash
+      args:
+        creates: "{{ claude_bin }}"
+      when: not claude_stat.stat.exists
+
+    - name: Verify claude resolves and report version
+      ansible.builtin.command: "{{ claude_bin }} --version"
+      register: claude_version
+      changed_when: false
+
+    - name: Ensure the claude repo checkout exists
+      ansible.builtin.stat:
+        path: "{{ claude_repo_root }}/.git"
+      register: repo_stat
+
+    - name: Fail if the opskit checkout is missing
+      ansible.builtin.assert:
+        that: repo_stat.stat.exists
+        fail_msg: >-
+          {{ claude_repo_root }} has no .git — clone the opskit repo there
+          before running this playbook (or override claude_repo_root). This
+          is the directory Remote Control's WorkingDirectory points at.
+
+    - name: Ensure the systemd user directory exists
+      ansible.builtin.file:
+        path: "{{ systemd_user_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Install the Remote Control service unit
+      ansible.builtin.template:
+        src: claude-remote-control.service.j2
+        dest: "{{ systemd_user_dir }}/claude-remote-control.service"
+        mode: "0644"
+      register: service_file
+
+    - name: Reload systemd user daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+        scope: user
+      when: service_file.changed
+
+    # Enabling linger is what lets a `scope: user` unit survive with no
+    # active login session — the gap restart-lifecycle-service.yml's own
+    # systemd pattern doesn't close, and the entire point of this box.
+    # Checked for idempotency first: loginctl enable-linger has no natural
+    # "already done" reporting of its own.
+    - name: Check whether linger is already enabled for this user
+      ansible.builtin.stat:
+        path: "/var/lib/systemd/linger/{{ ansible_user }}"
+      register: linger_stat
+      become: true
+
+    - name: Enable linger so the user unit survives no active login
+      ansible.builtin.command: "loginctl enable-linger {{ ansible_user }}"
+      become: true
+      when: not linger_stat.stat.exists
+      changed_when: true
+
+    - name: Enable and start the Remote Control service
+      ansible.builtin.systemd:
+        name: claude-remote-control
+        state: started
+        enabled: true
+        scope: user
+      when: claude_rc_enable_service | bool
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {{ claude_version.stdout }} installed at {{ claude_bin }}.
+          Systemd unit written to
+          {{ systemd_user_dir }}/claude-remote-control.service
+          (permission mode: {{ remote_control_permission_mode }}, spawn:
+          {{ remote_control_spawn_mode }}), linger
+          {{ 'already enabled' if linger_stat.stat.exists else 'now enabled' }}.
+          {{ 'Service enabled and started.'
+             if (claude_rc_enable_service | bool)
+             else 'Service NOT started — complete the manual steps first: (1)
+                   an Owner enables Remote Control at
+                   claude.ai/admin-settings/claude-code for this org; (2) SSH
+                   in and run `claude` once inside ' ~ claude_repo_root ~ '
+                   to accept the workspace-trust dialog; (3) SSH in and run
+                   `claude /login` to complete the device-linking flow. Then
+                   re-run this playbook with -e claude_rc_enable_service=true,
+                   or run `systemctl --user enable --now
+                   claude-remote-control` directly.' }}
