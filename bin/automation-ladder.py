@@ -34,6 +34,11 @@ Subcommands (all print one JSON object; exit 0 unless noted):
                                            .opencode/agent + .claude/agents so
                                            both harnesses discover the subagents;
                                            reports stale renders, --prune deletes them
+  sync-skills [--prune]                    backfill missing .claude/skills/<name>
+                                           symlinks for every .opencode/skills/<name>
+                                           (new-skill only does this at scaffold time);
+                                           reports conflicts/stale links, --prune
+                                           deletes stale ones
   status                                   dump the full ladder state
 
 Thresholds: a task journaled >= 3 times offers a skill; a skill ticked
@@ -494,6 +499,81 @@ def cmd_sync_agents(args: argparse.Namespace) -> dict:
     }
 
 
+def cmd_sync_skills(args: argparse.Namespace) -> dict:
+    """Backfill .claude/skills/<name> symlinks for every .opencode/skills/<name>.
+
+    new-skill creates this symlink at scaffold time, but any skill authored
+    by hand (a direct SKILL.md write, bypassing new-skill) or created before
+    this mechanism existed has no such symlink — and Claude Code discovers
+    skills ONLY at .claude/skills/<name>/SKILL.md, following symlinks. A
+    skill missing this link is invisible to Claude Code even though it works
+    fine for OpenCode, which reads .opencode/skills/ directly (opskit #214 —
+    16 of 20 skills were in exactly this state, discovered when the operator
+    typed /endsession and it silently wasn't there).
+    """
+    oc_dir = REPO_ROOT / ".opencode" / "skills"
+    cc_dir = REPO_ROOT / ".claude" / "skills"
+    if not oc_dir.is_dir():
+        print(json.dumps({"error": f"{oc_dir} does not exist"}))
+        sys.exit(1)
+    cc_dir.mkdir(parents=True, exist_ok=True)
+
+    current = sorted(
+        p.name for p in oc_dir.iterdir()
+        if p.is_dir() and (p / "SKILL.md").is_file()
+    )
+
+    synced: list[str] = []
+    already_linked: list[str] = []
+    conflicts: list[str] = []
+    for name in current:
+        link = cc_dir / name
+        target = Path("../../.opencode/skills") / name
+        if link.is_symlink():
+            if link.readlink() == target:
+                already_linked.append(name)
+            else:
+                # Points somewhere else — never silently repoint an existing
+                # link; that could be someone's deliberate override.
+                conflicts.append(name)
+            continue
+        if link.exists():
+            # A real file/dir already occupies this path — same reasoning.
+            conflicts.append(name)
+            continue
+        link.symlink_to(target)
+        synced.append(name)
+
+    # Stale: a .claude/skills/<name> symlink with no matching
+    # .opencode/skills/<name> (deleted skill, or never had a SKILL.md).
+    stale = sorted(
+        existing.name for existing in cc_dir.iterdir()
+        if existing.is_symlink() and existing.name not in current
+    )
+
+    pruned: list[str] = []
+    if getattr(args, "prune", False):
+        for name in stale:
+            (cc_dir / name).unlink()
+            pruned.append(name)
+
+    return {
+        "synced": synced,
+        "already_linked": already_linked,
+        "conflicts": conflicts,
+        "stale": stale,
+        "pruned": pruned,
+        "claude_dir": str(cc_dir),
+        "note": (
+            "Restart the agent session so newly-linked skills are discovered."
+            + (" Conflicts found — something other than the expected symlink "
+               "already occupies that path; not touched." if conflicts else "")
+            + (" Stale links found but not removed — re-run with --prune."
+               if stale and not getattr(args, "prune", False) else "")
+        ),
+    }
+
+
 def cmd_status(_: argparse.Namespace) -> dict:
     ledger = load_ledger()
     return {
@@ -557,6 +637,14 @@ def main() -> None:
     p.add_argument("--prune", action="store_true",
                    help="delete stale renders (reported but kept by default)")
     p.set_defaults(fn=cmd_sync_agents)
+
+    p = sub.add_parser(
+        "sync-skills",
+        help="backfill missing .claude/skills/<name> symlinks",
+    )
+    p.add_argument("--prune", action="store_true",
+                   help="delete stale links (reported but kept by default)")
+    p.set_defaults(fn=cmd_sync_skills)
 
     p = sub.add_parser("status", help="dump ladder state")
     p.set_defaults(fn=cmd_status)

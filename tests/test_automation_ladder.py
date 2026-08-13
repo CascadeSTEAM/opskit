@@ -9,6 +9,7 @@ from the test venv is guaranteed available.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -290,3 +291,97 @@ class TestNewSkillTemplate:
         """The mute hint is the other half of step 0 and had the same path."""
         body = self._scaffold(repo)
         assert "mute --skill demo-skill" in body
+
+
+@pytest.fixture
+def skills_repo(tmp_path: Path) -> Path:
+    """Three .opencode/skills/<name>/SKILL.md, none symlinked yet — the exact
+    state opskit #214 found 16 of 20 real skills in."""
+    root = tmp_path / "opskit"
+    for name in ("alpha", "beta", "gamma"):
+        d = root / ".opencode" / "skills" / name
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: d\nmode: skill\ntriggers: t\n---\n\nBody.\n"
+        )
+    return root
+
+
+class TestSyncSkills:
+    def test_backfills_every_missing_symlink(self, skills_repo):
+        out = json.loads(run(skills_repo, "sync-skills").stdout)
+
+        assert out["synced"] == ["alpha", "beta", "gamma"]
+        assert out["conflicts"] == []
+        for name in ("alpha", "beta", "gamma"):
+            link = skills_repo / ".claude" / "skills" / name
+            assert link.is_symlink()
+            assert link.readlink() == Path("../../.opencode/skills") / name
+            # Discoverable through the link, not just present.
+            assert (link / "SKILL.md").read_text().startswith("---")
+
+    def test_is_idempotent(self, skills_repo):
+        run(skills_repo, "sync-skills")
+        out = json.loads(run(skills_repo, "sync-skills").stdout)
+
+        assert out["synced"] == []
+        assert out["already_linked"] == ["alpha", "beta", "gamma"]
+
+    def test_does_not_clobber_a_symlink_pointing_elsewhere(self, skills_repo):
+        """A deliberate override must survive a routine sync — never silently
+        repointed, same non-destructive posture as sync-agents."""
+        cc_dir = skills_repo / ".claude" / "skills"
+        cc_dir.mkdir(parents=True)
+        (cc_dir / "alpha").symlink_to(Path("/tmp"))
+
+        out = json.loads(run(skills_repo, "sync-skills").stdout)
+
+        assert out["conflicts"] == ["alpha"]
+        assert "alpha" not in out["synced"]
+        assert (cc_dir / "alpha").readlink() == Path("/tmp")
+
+    def test_does_not_clobber_a_real_directory(self, skills_repo):
+        cc_dir = skills_repo / ".claude" / "skills"
+        (cc_dir / "alpha").mkdir(parents=True)
+        (cc_dir / "alpha" / "SKILL.md").write_text("hand-authored, not a link")
+
+        out = json.loads(run(skills_repo, "sync-skills").stdout)
+
+        assert out["conflicts"] == ["alpha"]
+        assert not (cc_dir / "alpha").is_symlink()
+
+    def test_reports_stale_links_without_deleting_by_default(self, skills_repo):
+        run(skills_repo, "sync-skills")
+        shutil.rmtree(skills_repo / ".opencode" / "skills" / "beta")
+
+        out = json.loads(run(skills_repo, "sync-skills").stdout)
+
+        assert out["stale"] == ["beta"]
+        assert out["pruned"] == []
+        assert (skills_repo / ".claude" / "skills" / "beta").is_symlink()
+        assert "--prune" in out["note"]
+
+    def test_prune_flag_deletes_stale_links(self, skills_repo):
+        run(skills_repo, "sync-skills")
+        shutil.rmtree(skills_repo / ".opencode" / "skills" / "beta")
+
+        out = json.loads(run(skills_repo, "sync-skills", "--prune").stdout)
+
+        assert out["pruned"] == ["beta"]
+        assert not (skills_repo / ".claude" / "skills" / "beta").exists()
+        assert (skills_repo / ".claude" / "skills" / "alpha").exists()
+
+    def test_missing_opencode_skills_dir_errors(self, tmp_path):
+        r = run(tmp_path / "empty", "sync-skills")
+        assert r.returncode != 0
+        assert "does not exist" in r.stdout
+
+    def test_ignores_a_skill_dir_with_no_skill_md(self, skills_repo):
+        """A directory under .opencode/skills/ that isn't a real skill
+        (no SKILL.md — e.g. mid-scaffold, or unrelated) must not get linked."""
+        (skills_repo / ".opencode" / "skills" / "not-a-skill").mkdir()
+
+        out = json.loads(run(skills_repo, "sync-skills").stdout)
+
+        assert "not-a-skill" not in out["synced"]
+        assert not (skills_repo / ".claude" / "skills" / "not-a-skill").exists()
