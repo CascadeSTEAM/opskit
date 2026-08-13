@@ -28,7 +28,10 @@ RFC1918 = re.compile(
 
 
 def _tasks(path):
-    return yaml.safe_load(path.read_text())[0]["tasks"]
+    """Flatten tasks across every play in the file — a playbook is not
+    guaranteed to have exactly one play."""
+    plays = yaml.safe_load(path.read_text())
+    return [task for play in plays for task in play.get("tasks", [])]
 
 
 # ── the Cloudflare playbook, absent from main entirely ───────────────────────

@@ -12,6 +12,22 @@
 #
 # Idempotent: safe to re-run. Creates zones/records only if missing.
 
+- name: Verify the dns_server inventory group is wired up
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Fail loudly if no host matches the dns_server group
+      ansible.builtin.assert:
+        that: groups['dns_server'] | default([]) | length > 0
+        fail_msg: >-
+          No host matches the 'dns_server' inventory group, so the play below
+          would silently match zero hosts and report success while changing
+          nothing. Define a dns_server group in this environment's
+          ansible/inventory.yml (see environments/example/ansible/inventory.yml)
+          and a matching group_vars/dns_server.yml with dns_zones.
+        success_msg: "dns_server group has {{ groups['dns_server'] | default([]) | length }} host(s)."
+
 - name: Configure Technitium DNS zones and records
   hosts: dns_server
   gather_facts: false
