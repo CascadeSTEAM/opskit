@@ -1,0 +1,12 @@
+# Device: ex-dns-01
+# Maturity: L1 — basic discovery (IP, MAC, hostname only)
+name: ex-dns-01
+hostname: dns.example.local
+ip_address: 192.0.2.53
+mac_address: "00:11:22:33:44:06"
+role: server
+status: active
+owner: example
+maturity: 1
+tags: [dns, infrastructure]
+notes: Fictional Technitium DNS server for the example environment, target of ansible/playbooks/configure-dns-zones.yml.
