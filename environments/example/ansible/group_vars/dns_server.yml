@@ -1,0 +1,16 @@
+# Technitium zone/record data for ansible/playbooks/configure-dns-zones.yml.
+# Applies to every host in the `dns_server` inventory group (see inventory.yml).
+# Real environments override this in environments/<env>/ansible/group_vars/
+# with their actual zones — keep entries curated to records that matter,
+# not a full mirror of everything in the zone.
+#
+# dns_admin_password is NOT stored here — pass it at runtime (see playbook
+# header) from the vault-backed credential for this environment's DNS server.
+dns_zones:
+  - name: "example.org"
+    type: "Primary"
+    records:
+      - type: "A"
+        name: "app"
+        value: "192.0.2.10"
+        ttl: 3600

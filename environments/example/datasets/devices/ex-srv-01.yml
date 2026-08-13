@@ -14,6 +14,6 @@ site: main
 location: Rack 1, U12
 owner: example
 maturity: 3
-services: [dns, dhcp, monitoring]
+services: [dhcp, monitoring]
 tags: [server, infrastructure]
-notes: Generated from NetBox. Primary infrastructure server running Technitium DNS, DHCP, and Zabbix agent.
+notes: Generated from NetBox. Primary infrastructure server running DHCP and Zabbix agent. DNS moved to the dedicated ex-dns-01 record (dns_server inventory group, see ansible/playbooks/configure-dns-zones.yml).
