@@ -20,3 +20,9 @@ all:
         access_points:
           hosts:
             ex-ap-01:
+        # Group name is load-bearing: ansible/playbooks/configure-dns-zones.yml
+        # targets `hosts: dns_server` literally. group_vars/dns_server.yml
+        # defines the dns_zones this group's records are drawn from.
+        dns_server:
+          hosts:
+            ex-dns-01:

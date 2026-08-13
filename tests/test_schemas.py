@@ -91,7 +91,7 @@ class TestDeviceSchema:
     def test_all_example_devices_conform(self):
         devices_dir = ROOT / "environments/example/datasets/devices"
         yml_files = list(devices_dir.glob("*.yml"))
-        assert len(yml_files) == 5, f"Expected 5 devices, found {len(yml_files)}"
+        assert len(yml_files) == 6, f"Expected 6 devices, found {len(yml_files)}"
 
         for path in sorted(yml_files):
             device = _load_yaml(path)
