@@ -50,8 +50,21 @@ triggers: startsession,start session,session start,update project folder,update 
    - Environment layers (gitignored, private): `bin/env-sync.sh <env> status`
      for each dir under `environments/` except `example/`; run `clone`/`pull`
      as it reports. A bare `git pull` never touches these.
-4. **Report back:** one line each for repo sync, hooks path, and each
-   subfolder/Env layer — state synced, or what is blocked and why.
+4. **Pin this session's ticket if others may be working in this same
+   checkout.** `.current-ticket` is shared, unscoped file state — any
+   concurrent session that runs `switch-env.sh`/`open-ticket.sh` here
+   silently clobbers it out from under every other session (hit live
+   during opskit #209's handoff-skill rehearsal: a peer session switched
+   environments mid-session and a later commit would have been tagged
+   against the wrong ticket entirely). If more than one session might
+   touch this checkout at once, export `OPSKIT_TICKET=<this session's
+   ticket>` now — `bin/active_ticket.py` honors it over `.current-ticket`
+   (opskit #158) — and re-supply it inline on every command that needs it,
+   since exported shell state does not persist between separate tool
+   calls in this harness. Skip this step for a genuinely solo session.
+5. **Report back:** one line each for repo sync, hooks path, each
+   subfolder/Env layer, and whether a ticket pin was set — state synced,
+   or what is blocked and why.
 
 ## Failure handling
 
