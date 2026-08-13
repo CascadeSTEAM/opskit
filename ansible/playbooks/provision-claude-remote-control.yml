@@ -46,6 +46,26 @@
     systemd_user_dir: "{{ ansible_facts['env']['HOME'] }}/.config/systemd/user"
 
   tasks:
+    # Not defensive paranoia: confirmed live during #209's review that
+    # `claude --permission-mode bypassPermissions` (and
+    # --dangerously-skip-permissions) is flatly refused when running as
+    # root ("cannot be used with root/sudo privileges for security
+    # reasons"). Nothing else in this playbook would have caught that
+    # before the service was already enabled and silently non-functional.
+    - name: Refuse to install Remote Control for the root account
+      ansible.builtin.assert:
+        that:
+          - ansible_user != 'root'
+        fail_msg: >-
+          Connected as root. bypassPermissions (and
+          --dangerously-skip-permissions) is refused outright by claude
+          itself when running as root — this playbook must run as the
+          non-root operator account provision-runner-lxc.yml's second play
+          creates (operator_account, default 'claude'). Set inventory's
+          ansible_user to that account for this host, or pass
+          -e ansible_user=<account> for this run.
+      when: remote_control_permission_mode == 'bypassPermissions'
+
     - name: Install tmux (manual-reattach fallback, never the primary keep-alive mechanism)
       ansible.builtin.apt:
         name: tmux

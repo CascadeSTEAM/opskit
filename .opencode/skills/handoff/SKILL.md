@@ -56,10 +56,25 @@ triggers: handoff,hand off,hand-off,pick this up later,continue on nexus,close m
    about rather than guess at, or leave empty if there are none.>
    ```
 
-3. **Commit and push.** The commit-msg hook enforces the active ticket
-   reference automatically (`bin/active_ticket.py`) — do not hand-craft a
-   ticket string. Push to the current branch so the Nexus-side worktree can
-   pull it.
+3. **Check the branch before committing anything.** Run
+   `git branch --show-current` — if it's `main` (or the repo's default
+   branch), STOP and tell the operator rather than committing: this repo's
+   hard rule is that issue work never lands on `main` directly, and no git
+   hook here blocks a commit or push to `main` by branch name alone.
+   `gh issue develop --checkout` has already been observed leaving a
+   session on `main` in this repo (a known failure mode, not
+   hypothetical — see the operator's own "verify branch before committing"
+   guidance). If genuinely on `main`, create/switch to the right issue
+   branch first, or ask the operator how they want to proceed.
+
+   Once off `main`: commit and push. The commit-msg hook enforces the
+   active ticket reference automatically (`bin/active_ticket.py`) — do not
+   hand-craft a ticket string. If this checkout is shared with other
+   concurrent sessions, `.current-ticket` can be clobbered by any of them
+   at any time (hit live during this skill's own #209 rehearsal) — prefer
+   an `OPSKIT_TICKET` pin set at session start (see the `startsession`
+   skill) over trusting `.current-ticket` blindly. Push to the current
+   branch so the Nexus-side worktree can pull it.
 
 4. **Report the handoff, don't just leave it on disk.** Give the operator:
    - The path to the note just written.

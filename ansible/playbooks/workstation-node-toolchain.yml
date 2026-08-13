@@ -37,9 +37,19 @@
     # repo_root mirrors workstation-ansible-toolchain.yml's own derivation —
     # this playbook lives at the same depth under ansible/playbooks/.
     repo_root: "{{ playbook_dir }}/../.."
+    # name: used for the "already installed?" check against `npm list -g`'s
+    # plain package name; spec: what actually gets passed to `npm install`.
+    # bw is pinned — docs/ideas.md row 50: bw CLI 2026.7 404s the prelogin
+    # endpoint against this org's self-hosted Vaultwarden; 2023.12.1 is the
+    # last version confirmed working. An unpinned install here would have
+    # silently shipped a bw that cannot authenticate on every box this
+    # playbook provisions (caught in review, opskit #209 — no live install
+    # was ever actually run with the unpinned spec).
     global_npm_packages:
-      - mikromcp
-      - "@bitwarden/cli"
+      - name: mikromcp
+        spec: mikromcp
+      - name: "@bitwarden/cli"
+        spec: "@bitwarden/cli@2023.12.1"
 
   tasks:
     - name: Refuse to run on the wrong machine (mandatory for connection=local)
@@ -109,11 +119,13 @@
       failed_when: false
 
     - name: Install missing global npm packages
-      ansible.builtin.command: "{{ npm_bin.stdout }} install -g {{ item }}"
+      ansible.builtin.command: "{{ npm_bin.stdout }} install -g {{ item.spec }}"
       environment:
         PATH: "{{ npm_bin.stdout | dirname }}:{{ ansible_facts['env']['PATH'] }}"
       loop: "{{ global_npm_packages }}"
-      when: "item not in (npm_global_list.stdout | default(''))"
+      loop_control:
+        label: "{{ item.name }}"
+      when: "item.name not in (npm_global_list.stdout | default(''))"
       register: npm_install
       changed_when: npm_install.rc == 0
 
