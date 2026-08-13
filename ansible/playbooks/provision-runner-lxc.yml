@@ -24,21 +24,37 @@
 #     package mirrors, and every device the @mikrotik/@linux subagents might
 #     touch. A static egress allow-list would be brittle and is an explicit
 #     non-goal here — see the design plan for #209.
-#   - No infrastructure values are hardcoded. ct_id/ct_ip/ct_gateway have NO
-#     default — the address is not yet allocated, so the play must fail
-#     loudly rather than invent one.
+#   - Network identity is never hardcoded. ct_id/ct_ip/ct_gateway/
+#     ssh_allow_source have NO default — the address is not yet allocated,
+#     so the play must fail loudly rather than invent one. ct_hostname DOES
+#     have a purpose-named default (like provision-erpnext-dev-lxc.yml's
+#     own ct_hostname default) — override it for a second box or a
+#     distinguishing name; it isn't network-identifying the way an address
+#     is, so it doesn't carry the same risk a wrong guess would.
 #
 # SIZING: a notch above that precedent's, since this box runs real Claude Code
 # sessions + git worktrees + Docker, not just CI jobs. Confirm against the
 # target node's live free capacity (pct list / free -h / nproc) before
 # running — these are starting points, not measurements.
 #
-# Play 2 (guest prep) requires the container to already be reachable over SSH
-# and present in inventory under ct_host — provisioning a fresh CT into
-# inventory is a manual step per the existing device-registration convention
-# (see the design plan for #209 §5), done between play 1 and play 2.
+# TWO SEPARATE RUNS, not one — play 2 (guest prep) needs the container
+# already reachable over SSH and present in inventory under ct_host, which
+# does not exist until AFTER play 1 creates it. Passing every -e flag below
+# in one invocation before the container exists will run play 1 fine and
+# then fail play 2 on an unresolvable host pattern (expected, not a bug —
+# it means you skipped the step in between).
 #
-# Run from this repo root:
+# Step 1 — create the container (play 1 only; ct_host is not defined yet,
+# so play 2 fails fast and harmlessly once play 1 finishes):
+#   ansible-playbook -i environments/$ACTIVE_ENV/ansible/inventory.yml \
+#     ansible/playbooks/provision-runner-lxc.yml \
+#     -e target_host=<proxmox-node-alias> -e ct_id=<id> \
+#     -e ct_ip=<address/prefix> -e ct_gateway=<address> \
+#     -e ssh_allow_source=<cidr-admitted-for-ssh>
+#
+# Step 2 — register the new container in inventory (manual, per the
+# existing device-registration convention — see the design plan for #209
+# §5), THEN re-run with ct_host + the recovery key added:
 #   ansible-playbook -i environments/$ACTIVE_ENV/ansible/inventory.yml \
 #     ansible/playbooks/provision-runner-lxc.yml \
 #     -e target_host=<proxmox-node-alias> -e ct_id=<id> \
@@ -46,6 +62,8 @@
 #     -e ssh_allow_source=<cidr-admitted-for-ssh> \
 #     -e ct_host=<inventory-alias-for-the-new-ct> \
 #     -e recovery_pubkey="<contents of a freshly generated recovery keypair>"
+# (Play 1 reports "already exists" and does nothing further on this second
+# run — safe to repeat.)
 #
 # Dry run first: add --check (play 1 only — play 2's package installs are not
 # meaningfully check-mode safe).
@@ -124,20 +142,46 @@
     # A guest firewall is inert unless the DATACENTER firewall is on. Proxmox
     # needs all three: this switch, the vNIC's firewall=1, and the guest's own
     # rules file. Checked BEFORE the container is created, so a refusal costs
-    # nothing and never leaves a half-provisioned node behind. Identical logic
-    # to provision-erpnext-dev-lxc.yml (#187) — kept verbatim rather than
-    # factored out, matching that playbook's own choice to duplicate rather
-    # than introduce a shared include for a single reused block.
+    # nothing and never leaves a half-provisioned node behind. Adapted from
+    # provision-erpnext-dev-lxc.yml (#187) — that file distinguishes "file
+    # genuinely absent" from "read error" by string-matching slurp's error
+    # message, which broke live during #209's provisioning (this ansible-core
+    # version says "File not found: ...", not the "No such file" that check
+    # was written against, so an absent file was misclassified as unreadable).
+    # A structural stat check first, rather than a second string to match,
+    # closes that off for any future ansible-core wording change too — not
+    # backported to provision-erpnext-dev-lxc.yml itself (out of scope for
+    # #209), but the same fix applies there.
+    - name: Check whether the datacenter firewall config file exists at all
+      ansible.builtin.stat:
+        path: /etc/pve/firewall/cluster.fw
+      register: cluster_fw_stat
+
     - name: Read the datacenter firewall switch
       ansible.builtin.slurp:
         src: /etc/pve/firewall/cluster.fw
       register: cluster_fw
       failed_when: false
+      when: cluster_fw_stat.stat.exists
 
     - name: Reject an unrecognised value for the isolation requirement
+      # This list was narrower than what `| bool` actually accepts a few
+      # lines below (where the value is used for real) — 'no'/'yes'/'0'/'1'
+      # passed there but were rejected here, so a perfectly valid
+      # ansible-bool spelling hard-failed for no real reason. Caught in
+      # review, opskit #209. Still an explicit literal list, not `| bool`
+      # itself — that filter maps any unrecognised string to false without
+      # complaint, which is the exact "reports success while not guarding"
+      # failure mode this whole check exists to prevent.
       ansible.builtin.assert:
         that:
-          - require_datacenter_firewall in [true, false, 'true', 'false', 'True', 'False']
+          - require_datacenter_firewall in [
+              true, false,
+              'true', 'false', 'True', 'False', 'TRUE', 'FALSE',
+              'yes', 'no', 'Yes', 'No', 'YES', 'NO',
+              'on', 'off', 'On', 'Off', 'ON', 'OFF',
+              1, 0, '1', '0',
+            ]
         fail_msg: >-
           require_datacenter_firewall is
           '{{ require_datacenter_firewall }}', which is neither true nor false.
@@ -147,23 +191,17 @@
     - name: Establish whether the datacenter firewall is enabled
       ansible.builtin.set_fact:
         datacenter_firewall_on: >-
-          {{ (cluster_fw.content is defined)
+          {{ cluster_fw_stat.stat.exists
+             and (cluster_fw.content is defined)
              and (((cluster_fw.content | b64decode)
                    | regex_findall('(?m)^\s*enable:\s*([01])\s*$')
                    | last | default('0')) == '1') }}
-        # Two known phrasings for "the file genuinely doesn't exist" across
-        # ansible-core versions/connection plugins: slurp on this box (core
-        # 2.21.2) reports "File not found: ...", not the "No such file" the
-        # upstream provision-erpnext-dev-lxc.yml check (which this block was
-        # copied from) was written against — a real node with NO firewall
-        # config at all (not even a disabled stub) hit exactly this mismatch
-        # during #209's live provisioning, misclassifying "off" as
-        # "unreadable" and refusing to proceed even with the override
-        # deliberately requested. Matched case-insensitively, both phrasings.
+        # Unreadable means: the file exists (confirmed by stat, not by
+        # guessing from an error string) but slurp still couldn't read it —
+        # a real permissions/connection problem. A file that plain doesn't
+        # exist is not an error case at all; it just means "off".
         datacenter_firewall_unreadable: >-
-          {{ (cluster_fw.content is not defined)
-             and ('no such file' not in (cluster_fw.msg | default('') | lower))
-             and ('file not found' not in (cluster_fw.msg | default('') | lower)) }}
+          {{ cluster_fw_stat.stat.exists and (cluster_fw.content is not defined) }}
 
     - name: Refuse to claim isolation the datacenter firewall would not deliver
       ansible.builtin.assert:
@@ -205,9 +243,13 @@
       failed_when: false
 
     - name: Refuse to touch a container ID already used by something else
+      # regex_escape on ct_hostname: without it, an overridden hostname
+      # containing regex metacharacters (a "." in an FQDN-style name, or
+      # "(", "[") changes match semantics instead of matching literally, or
+      # breaks pattern compilation outright. Caught in review, opskit #209.
       ansible.builtin.assert:
         that:
-          - "existing_ct.stdout is search('(?m)^hostname: ' ~ ct_hostname ~ '$')"
+          - "existing_ct.stdout is search('(?m)^hostname: ' ~ (ct_hostname | regex_escape) ~ '$')"
         fail_msg: >-
           CT {{ ct_id }} already exists on {{ target_host }} and its hostname is
           not {{ ct_hostname }}. Refusing to adopt or overwrite it — pick a free
@@ -320,6 +362,23 @@
   hosts: "{{ ct_host }}"  # noqa: syntax-check[specific]
   gather_facts: true
   become: true
+  vars:
+    # This play always connects as root, regardless of whatever inventory
+    # sets ansible_user to for this host — its own job (apt installs,
+    # account creation) structurally requires it, and a fresh container
+    # only has root's authorized_keys populated anyway (the bootstrap
+    # SSH-key injection this play's own predecessor step does via
+    # `pct exec`, before any Ansible connection is possible at all).
+    ansible_user: root
+    # Claude Code itself refuses --dangerously-skip-permissions /
+    # --permission-mode bypassPermissions outright when running as root
+    # ("cannot be used with root/sudo privileges for security reasons") —
+    # confirmed live during #209's review, not a defensive guess. Every
+    # later playbook (toolchains, provision-claude-remote-control.yml)
+    # must run as this account instead, which is why inventory's
+    # ansible_user for this host should be operator_account, not root —
+    # this play is the one exception, and it creates the account below.
+    operator_account: claude
 
   tasks:
     - name: Require the parameters that must never be guessed
@@ -418,30 +477,62 @@
             state: present
             update_cache: true
 
-    - name: Add the primary operator user to the docker group
+    # The account everything Claude-Code-related actually runs as — never
+    # root (see the play-level vars comment above). sudo is passwordless,
+    # matching the trust model already established for this box (sole
+    # operator, physically secured LAN) rather than a policy this box could
+    # not exercise unattended anyway.
+    - name: Create the non-root operator account
       ansible.builtin.user:
-        name: "{{ ansible_user }}"
-        groups: docker
+        name: "{{ operator_account }}"
+        groups: sudo,docker
         append: true
-      when: ansible_user != 'root'
+        shell: /bin/bash
+        create_home: true
+      when: operator_account != 'root'
 
-    - name: Install the operator's own workstation SSH key
+    - name: Grant the operator account passwordless sudo
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/{{ operator_account }}"
+        content: "{{ operator_account }} ALL=(ALL) NOPASSWD:ALL\n"
+        mode: "0440"
+        validate: visudo -cf %s
+      when: operator_account != 'root'
+
+    - name: Install the operator's own workstation SSH key (root, infra recovery)
       ansible.posix.authorized_key:
-        user: "{{ ansible_user }}"
+        user: root
         key: "{{ lookup('file', operator_pubkey_path) }}"
       when: operator_pubkey_path is defined
 
-    - name: Install the dedicated recovery SSH key
+    - name: Install the dedicated recovery SSH key (root, infra recovery)
       ansible.posix.authorized_key:
-        user: "{{ ansible_user }}"
+        user: root
         key: "{{ recovery_pubkey }}"
+
+    - name: Install the operator's own workstation SSH key (operator account)
+      ansible.posix.authorized_key:
+        user: "{{ operator_account }}"
+        key: "{{ lookup('file', operator_pubkey_path) }}"
+      when: operator_pubkey_path is defined and operator_account != 'root'
+
+    - name: Install the dedicated recovery SSH key (operator account)
+      ansible.posix.authorized_key:
+        user: "{{ operator_account }}"
+        key: "{{ recovery_pubkey }}"
+      when: operator_account != 'root'
 
     - name: Report guest prep
       ansible.builtin.debug:
         msg: >-
           {{ inventory_hostname }} base-prepped: Docker
           {{ 'installed' if docker_check.rc != 0 else 'already present' }},
-          operator + recovery SSH keys installed.
+          operator account '{{ operator_account }}' created with
+          passwordless sudo + docker group, operator + recovery SSH keys
+          installed for both root and '{{ operator_account }}'.
+          Set inventory's ansible_user to '{{ operator_account }}' for this
+          host before running the next playbooks — they must run as this
+          account, not root.
           Next: workstation-ansible-toolchain.yml, workstation-mcp-toolchain.yml,
           workstation-node-toolchain.yml, provision-claude-remote-control.yml —
           separate tasks, deliberately not done here.

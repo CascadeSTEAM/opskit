@@ -93,11 +93,25 @@
     #
     # Checked BEFORE the container is created, so a refusal costs nothing and
     # never leaves a half-provisioned node behind.
+    #
+    # A stat check first, not a second error-message string to match: this
+    # block used to distinguish "file genuinely absent" from "read error"
+    # purely by matching slurp's error text ("No such file"), which broke
+    # live on a node with no firewall config at all once ansible-core's
+    # wording changed to "File not found: ..." (opskit #209, backported
+    # here after being fixed live in provision-runner-lxc.yml — same bug,
+    # copied logic, same fix).
+    - name: Check whether the datacenter firewall config file exists at all
+      ansible.builtin.stat:
+        path: /etc/pve/firewall/cluster.fw
+      register: cluster_fw_stat
+
     - name: Read the datacenter firewall switch
       ansible.builtin.slurp:
         src: /etc/pve/firewall/cluster.fw
       register: cluster_fw
       failed_when: false
+      when: cluster_fw_stat.stat.exists
 
     # `| bool` is NOT used on the opt-out. Ansible's bool filter maps any
     # unrecognised string to false without complaint, so a typo —
@@ -121,18 +135,30 @@
       # would otherwise let an earlier `enable: 1` mask the effective `enable: 0`.
       ansible.builtin.set_fact:
         datacenter_firewall_on: >-
-          {{ (cluster_fw.content is defined)
+          {{ cluster_fw_stat.stat.exists
+             and (cluster_fw.content is defined)
              and (((cluster_fw.content | b64decode)
                    | regex_findall('(?m)^\s*enable:\s*([01])\s*$')
                    | last | default('0')) == '1') }}
+        # Unreadable means: the file exists (confirmed by stat) but slurp
+        # still couldn't read it — a real permissions/connection problem.
+        # A file that plain doesn't exist is not an error case; it's "off".
         datacenter_firewall_unreadable: >-
-          {{ (cluster_fw.content is not defined)
-             and ('No such file' not in (cluster_fw.msg | default(''))) }}
+          {{ cluster_fw_stat.stat.exists and (cluster_fw.content is not defined) }}
 
     - name: Refuse to claim isolation the datacenter firewall would not deliver
+      # | bool on require_datacenter_firewall: without it,
+      # -e require_datacenter_firewall=false arrives as the STRING "false"
+      # — truthy in Jinja — so `not require_datacenter_firewall` silently
+      # never fired even when explicitly opted out. Backported from
+      # provision-runner-lxc.yml after being caught live there (opskit
+      # #209) — same copied logic, same bug, same fix. Safe here for the
+      # same reason: by this point the value has already passed the
+      # strict literal-list assert above, so it's one of the accepted
+      # spellings and | bool converts it correctly.
       ansible.builtin.assert:
         that:
-          - datacenter_firewall_on or not require_datacenter_firewall
+          - datacenter_firewall_on or not (require_datacenter_firewall | bool)
           - not (datacenter_firewall_unreadable | bool)
         fail_msg: >-
           {{ 'Could NOT READ /etc/pve/firewall/cluster.fw on ' ~ target_host ~
