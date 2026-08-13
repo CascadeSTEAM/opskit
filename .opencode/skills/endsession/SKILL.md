@@ -26,22 +26,31 @@ Triggered by: "endsession", "end session", "shutdown"
 2. Review `git status` for any remaining changes
 3. Write the session note — ROUTE BY SESSION TYPE (hard rule,
    docs/client-data-policy.md "Facts leak too"):
-   - Pure public-repo dev session → `docs/session-notes/`
+   - Pure public-repo dev session → `docs/session-notes/` (a real commit,
+     so it follows step 5 below — worktree + PR, same as any other
+     opskit-repo file)
    - Session touched live infrastructure (client or org, incl. mixed
-     sessions) → `environments/<env>/session-notes/` ONLY, pushed via
-     `bin/env-sync.sh <env> push`; the public SESSION-LOG entry stays
-     terse and infrastructure-state-free
+     sessions) → `environments/<env>/session-notes/` ONLY, committed and
+     pushed directly via `bin/env-sync.sh <env> push` (exempt from the
+     worktree rule — see AGENTS.md hard rule #2); the `SESSION-LOG.md`
+     entry stays terse and infrastructure-state-free
    Contents either way:
    - Commands run
    - Errors encountered
    - Undo instructions
-4. Append strategic entry to `SESSION-LOG.md`:
-   - Key decisions
-   - Architectural choices
-   - Open threads
-5. Stage and commit all remaining changes
-6. Push all branches to origin
-7. Report final status: commits pushed, branches status, any uncommitted work
+4. Append a strategic entry to `SESSION-LOG.md` — key decisions,
+   architectural choices, open threads. This file is gitignored, local to
+   this clone (opskit #217) — edit it directly, no commit/PR needed for
+   this specific file, regardless of which branch or worktree you're in.
+5. Stage and commit everything else that changed. Per AGENTS.md hard rule
+   #2, any opskit-repo file (`docs/session-notes/` entries, code, other
+   docs) needs its own worktree + linked branch + PR — never a direct
+   commit on the shared primary checkout. `environments/<env>/` files are
+   the exception: commit and push those directly in place.
+6. Push all branches to origin (and open/merge PRs for anything from
+   step 5 that needed one).
+7. Report final status: commits pushed, branches/PRs status, any
+   uncommitted work.
 
 ## Do NOT
 
