@@ -29,8 +29,22 @@ triggers: startsession,start session,session start,update project folder,update 
    `python3 bin/automation-ladder.py mute --skill startsession`
    so they are never asked again.
 
-1. **Sync before anything (hard rule, AGENTS.md "Git & GitHub Workflow" #1):**
-   On the current branch, before any other work:
+1. **Verify the primary checkout is on the default branch (hard rule,
+   AGENTS.md "Git & GitHub Workflow" #2 — worktree required).** This
+   directory may be shared by concurrent sessions; it should never be
+   anywhere but `main` outside of a session actively mid-worktree-setup.
+
+   ```bash
+   git branch --show-current
+   ```
+
+   If it isn't the repo's default branch (`main`), STOP and report —
+   don't switch it yourself. Being off-`main` here is itself a sign of the
+   exact drift the worktree hard rule exists to prevent (another session
+   may have left work in progress there), and silently switching could
+   destroy it. Ask the operator how to proceed.
+2. **Sync (hard rule, AGENTS.md "Git & GitHub Workflow" #1):** only once
+   step 1 confirms `main`:
 
    ```bash
    git fetch --all --prune && git pull
@@ -38,19 +52,19 @@ triggers: startsession,start session,session start,update project folder,update 
 
    If the pull fails (conflict, diverged), STOP and report — do not merge or
    rebase on your own.
-2. **Verify hooks are wired (hard rule "Hooks auto-setup"):**
+3. **Verify hooks are wired (hard rule "Hooks auto-setup"):**
 
    ```bash
    git config core.hooksPath   # must print .githooks
    ```
 
    If it does not, run `bash bin/setup-hooks.sh` and confirm it prints `.githooks`.
-3. **Update subfolders that are their own repos:**
+4. **Update subfolders that are their own repos:**
    - Worktrees: `git worktree list` — pull each one on its own branch.
    - Environment layers (gitignored, private): `bin/env-sync.sh <env> status`
      for each dir under `environments/` except `example/`; run `clone`/`pull`
      as it reports. A bare `git pull` never touches these.
-4. **Pin this session's ticket if others may be working in this same
+5. **Pin this session's ticket if others may be working in this same
    checkout.** `.current-ticket` is shared, unscoped file state — any
    concurrent session that runs `switch-env.sh`/`open-ticket.sh` here
    silently clobbers it out from under every other session (hit live
@@ -62,12 +76,15 @@ triggers: startsession,start session,session start,update project folder,update 
    (opskit #158) — and re-supply it inline on every command that needs it,
    since exported shell state does not persist between separate tool
    calls in this harness. Skip this step for a genuinely solo session.
-5. **Report back:** one line each for repo sync, hooks path, each
-   subfolder/Env layer, and whether a ticket pin was set — state synced,
-   or what is blocked and why.
+6. **Report back:** one line each for the branch check, repo sync, hooks
+   path, each subfolder/Env layer, and whether a ticket pin was set —
+   state synced, or what is blocked and why.
 
 ## Failure handling
 
+- Primary checkout not on `main` → STOP, report the branch and its state
+  (`git status`, `git log -1`), ask how to proceed. Never switch or discard
+  it yourself.
 - `git pull` conflict or divergent branches → STOP, report the affected
   branch and files, ask how to proceed. Never force-push or merge blindly.
 - `env-sync.sh` reports unpushed/uncloned work → report it; do not push
