@@ -13,6 +13,53 @@ don't). See docs/client-data-policy.md, "Facts leak too".
 
 ---
 
+## 2026-08-13 — Hand-off runner: provisioning tooling, a new skill, ten bugs found live
+
+**Direction set.** Claude Code's own "Remote Control" (run on an always-on
+machine, drive/monitor from elsewhere, native mobile push) turned out to be
+the right primitive for "hand off an in-progress task before I have to
+close my laptop" — not Claude Code's self-hosted-environments feature
+(Team/Enterprise fleet infrastructure, real overkill for one box) and not a
+bespoke tmux/notification stack. No native mechanism exists to relocate an
+already-running session onto different hardware mid-conversation, though,
+so the design has two modes: drive a runner-hosted session from the start
+for a task expected to run long, or — for the ordinary "I'm mid-session and
+have to leave" case — commit progress and hand off via a short briefing.
+
+**Landed (#209).** `provision-runner-lxc.yml` (a reusable, idempotent
+runner-LXC provisioner, generalizing a build that had only existed as an
+informal one-off elsewhere), `workstation-node-toolchain.yml` (closes a
+long-standing docs/INSTALL.md gap — nvm/Node/mikromcp/`bw` install was
+manual-only on *every* workstation, not just a new one), and
+`provision-claude-remote-control.yml` (Claude Code install + a systemd
+`--user` Remote Control unit with `loginctl enable-linger`). A new
+`handoff` skill captures in-progress task state into a session-note-shaped
+briefing rather than inventing a new document type.
+
+**Ten real bugs, found by actually running the tooling against live
+infrastructure, not by inspection** — two silent logic-inversions in
+firewall-check logic copied from an existing playbook (a substring match
+that didn't account for this ansible-core version's error wording, and a
+truthy-string bug on an explicit opt-out flag), a filesystem-write quirk on
+Proxmox's clustered config store that needed a plain shell redirect instead
+of the usual atomic-copy module, a Debian-vs-uname architecture-name
+mismatch that silently resolved zero packages from an otherwise-successful
+repo add, three missing target-side dependencies, an npm PATH resolution
+gap, and an Ansible extra-vars parsing gotcha (values containing spaces get
+silently truncated via the bare `-e key=value` CLI form — needs a JSON
+vars file instead). Full detail in the branch's commit messages.
+
+**Idea #51 consolidated** against #209 — it asked for exactly this class of
+workstation-toolchain codification.
+
+**Open thread.** A scoped-credential model for a runner box that needs to
+act on its own (not borrow the operator's) is genuinely new territory here
+— nothing in this repo's existing credential tooling assumes a *guest*
+resolving its own secrets rather than an already-unlocked operator session.
+Left deliberately undone this session; worth its own careful pass.
+
+---
+
 ## 2026-08-12 — Multi-project orchestrator: opskit-aware kit, CI unbreak, plow + cleanup
 
 **Direction set.** OpsKit *is* the multi-project orchestrator — no new top-level
