@@ -1,0 +1,52 @@
+{#
+  systemd --user unit for Claude Code Remote Control, server mode.
+
+  Modeled directly on templates/lifecycle-processor.service.j2 — same
+  WorkingDirectory + ExecStart shape, same Restart=on-failure discipline.
+
+  --permission-mode bypassPermissions is confirmed to be accepted by
+  `claude remote-control` itself (not just the general `claude` invocation) —
+  verified against the live Remote Control docs during #209's design, not
+  guessed: "claude remote-control --permission-mode acceptEdits" is Anthropic's
+  own documented example for setting a server mode's starting mode.
+  bypassPermissions was the operator's explicit, informed choice for this box
+  (see the design plan for #209) — but per Anthropic's own docs it "offers no
+  protection against prompt injection or unintended actions." That residual
+  risk is bounded here by the box's own isolation and narrow credential scope
+  (see #209 §2), not by anything this flag provides.
+
+  --dangerously-skip-permissions (bypassPermissions' equivalent) explicitly
+  cannot be used with root/sudo privileges — this unit MUST run as the
+  unprivileged operator user via `scope: user`, never as root. Confirmed
+  live during #209's review: running it as root doesn't just violate that
+  rule on paper, `claude` itself refuses outright ("cannot be used with
+  root/sudo privileges for security reasons").
+
+  ExecStart sources nvm.sh before exec'ing claude, rather than pointing
+  ExecStart at claude_bin directly — a systemd --user unit does not source
+  any shell rc file, so node/npm/mikromcp/bw (all installed under nvm's
+  per-version bin dir by workstation-node-toolchain.yml) would otherwise be
+  absent from PATH the moment Remote Control spawns a worktree session or
+  an MCP-backed tool call, failing silently with no interactive shell
+  watching stderr. Also caught in #209's review, never exercised live.
+#}
+[Unit]
+Description=Claude Code Remote Control (server mode) — {{ remote_control_name }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={{ claude_repo_root }}
+ExecStart=/bin/bash -lc 'export PATH="$HOME/.local/bin:$PATH"; export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; exec {{ claude_bin }} remote-control --name {{ remote_control_name }} --spawn {{ remote_control_spawn_mode }} --permission-mode {{ remote_control_permission_mode }}'
+
+# Auto-restart on crash — this box's whole purpose is staying up unattended.
+Restart=on-failure
+RestartSec=5
+
+# Logging goes to the journal: journalctl --user -u claude-remote-control -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

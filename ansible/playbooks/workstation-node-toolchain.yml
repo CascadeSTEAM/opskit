@@ -1,0 +1,172 @@
+---
+# workstation-node-toolchain.yml — Node runtime + device-facing MCP CLIs.
+#
+# Sibling to workstation-ansible-toolchain.yml / workstation-mcp-toolchain.yml,
+# same principle (IaC rule extension): control-node software lands via
+# playbook, not ad-hoc shell. Where those cover the Ansible and uv/uvx
+# toolchains, this one covers what docs/INSTALL.md §4 has always documented
+# as a manual-only step — a pre-existing gap on every workstation, not just
+# the one this playbook was written for (opskit #209).
+#
+# Installs/upgrades (user scope, no root):
+#   - nvm, then Node 22 via nvm — kept out of system package management
+#   - mikromcp — the only sanctioned path to RouterOS gear; direct SSH to
+#     that hardware is denied at runtime, so without this the
+#     router/switch/AP subagent has no way to act at all
+#   - @bitwarden/cli (`bw`) — every MCP wrapper script resolves its secrets
+#     through `bw`. No `bw`, no credentials, anywhere (docs/INSTALL.md:154)
+#   - repo-local Node deps for the agent integration layer (.opencode/)
+#
+# Rollback: rm -rf ~/.nvm (removes Node and everything installed under it)
+#
+# Usage:
+#   bash bin/ap.sh playbooks/workstation-node-toolchain.yml
+#
+#   Bootstrap (a freshly-provisioned workstation is not in any inventory yet,
+#   which is exactly when this needs to run). `target` overrides the host
+#   pattern, because an ad-hoc inventory host is in no group:
+#     ansible-playbook -i "$(hostname)," -c local -e target="$(hostname)" \
+#       ansible/playbooks/workstation-node-toolchain.yml
+
+- name: Workstation Node runtime toolchain (nvm/Node 22 + mikromcp + bw CLI)
+  hosts: "{{ target | default('workstations') }}"
+  gather_facts: true
+  vars:
+    node_major: 22
+    nvm_dir: "{{ ansible_facts['env']['HOME'] }}/.nvm"
+    # repo_root mirrors workstation-ansible-toolchain.yml's own derivation —
+    # this playbook lives at the same depth under ansible/playbooks/.
+    repo_root: "{{ playbook_dir }}/../.."
+    # name: used for the "already installed?" check against `npm list -g`'s
+    # plain package name; spec: what actually gets passed to `npm install`.
+    # bw is pinned — docs/ideas.md row 50: bw CLI 2026.7 404s the prelogin
+    # endpoint against this org's self-hosted Vaultwarden; 2023.12.1 is the
+    # last version confirmed working. An unpinned install here would have
+    # silently shipped a bw that cannot authenticate on every box this
+    # playbook provisions (caught in review, opskit #209 — no live install
+    # was ever actually run with the unpinned spec).
+    global_npm_packages:
+      - name: mikromcp
+        spec: mikromcp
+      - name: "@bitwarden/cli"
+        spec: "@bitwarden/cli@2023.12.1"
+
+  tasks:
+    - name: Refuse to run on the wrong machine (mandatory for connection=local)
+      ansible.builtin.assert:
+        that: ansible_facts['hostname'] == inventory_hostname
+        fail_msg: >-
+          This machine is {{ ansible_facts['hostname'] }}, not {{ inventory_hostname }} —
+          refusing to run a workstation play meant for another host.
+
+    - name: Check whether nvm is already installed
+      ansible.builtin.stat:
+        path: "{{ nvm_dir }}/nvm.sh"
+      register: nvm_stat
+
+    # The vendor curl-pipe install script, not IaC-managed — nvm itself has no
+    # package-manager path that reliably targets user scope, and this mirrors
+    # docs/INSTALL.md's own documented command exactly rather than inventing
+    # a different install path for the same tool. get_url can't substitute
+    # here: the point is executing the fetched installer, not just fetching
+    # it — same reasoning as erp_stack/tasks/verify.yml's curl-over-uri choice
+    # (opskit #184), a per-line ignore rather than a skip_list entry (#83).
+    - name: Install nvm  # noqa: command-instead-of-module
+      ansible.builtin.shell: |
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash
+      args:
+        creates: "{{ nvm_dir }}/nvm.sh"
+      when: not nvm_stat.stat.exists
+
+    - name: Check whether the target Node version is already installed via nvm ({{ node_major }})
+      ansible.builtin.shell: >-
+        . {{ nvm_dir }}/nvm.sh && nvm ls {{ node_major }} --no-colors
+      args:
+        executable: /bin/bash
+      register: node_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install the target Node version via nvm ({{ node_major }})
+      ansible.builtin.shell: >-
+        . {{ nvm_dir }}/nvm.sh && nvm install {{ node_major }}
+      args:
+        executable: /bin/bash
+      when: "'N/A' in node_check.stdout or node_check.rc != 0"
+      register: node_install
+      changed_when: true
+
+    - name: Resolve the nvm-managed npm binary path
+      ansible.builtin.shell: >-
+        . {{ nvm_dir }}/nvm.sh && nvm which {{ node_major }} | sed 's|/bin/node|/bin/npm|'
+      args:
+        executable: /bin/bash
+      register: npm_bin
+      changed_when: false
+
+    # npm's shebang is `#!/usr/bin/env node` — invoking it by absolute path
+    # through the command module still needs `node` resolvable via PATH,
+    # which a bare command exec doesn't get from nvm's shell-rc setup. Hit
+    # live during #209's provisioning: "env: 'node': No such file or
+    # directory" on every npm invocation below despite npm_bin resolving
+    # correctly one task earlier (that task never actually exec's npm).
+    - name: Query globally-installed npm packages
+      ansible.builtin.command: "{{ npm_bin.stdout }} list -g --depth=0 --json"
+      environment:
+        PATH: "{{ npm_bin.stdout | dirname }}:{{ ansible_facts['env']['PATH'] }}"
+      register: npm_global_list
+      changed_when: false
+      failed_when: false
+
+    - name: Install missing global npm packages
+      ansible.builtin.command: "{{ npm_bin.stdout }} install -g {{ item.spec }}"
+      environment:
+        PATH: "{{ npm_bin.stdout | dirname }}:{{ ansible_facts['env']['PATH'] }}"
+      loop: "{{ global_npm_packages }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: "item.name not in (npm_global_list.stdout | default(''))"
+      register: npm_install
+      changed_when: npm_install.rc == 0
+
+    - name: Fail early if the repo-local .opencode directory is missing
+      ansible.builtin.stat:
+        path: "{{ repo_root }}/.opencode/package.json"
+      register: opencode_package
+
+    - name: Install repo-local Node deps for the agent integration layer
+      ansible.builtin.command: "{{ npm_bin.stdout | dirname }}/npm install"
+      args:
+        chdir: "{{ repo_root }}/.opencode"
+      environment:
+        PATH: "{{ npm_bin.stdout | dirname }}:{{ ansible_facts['env']['PATH'] }}"
+      when: opencode_package.stat.exists
+      register: opencode_npm_install
+      changed_when: "'up to date' not in (opencode_npm_install.stdout | default(''))"
+
+    - name: Verify node/npm/npx resolve and report versions
+      ansible.builtin.shell: >-
+        . {{ nvm_dir }}/nvm.sh && nvm use {{ node_major }} >/dev/null && node --version && npm --version && npx --version
+      args:
+        executable: /bin/bash
+      register: versions
+      changed_when: false
+
+    - name: Verify mikromcp and bw resolve on PATH under the nvm-selected Node
+      ansible.builtin.shell: >-
+        . {{ nvm_dir }}/nvm.sh && nvm use {{ node_major }} >/dev/null && which mikromcp && which bw
+      args:
+        executable: /bin/bash
+      register: cli_which
+      changed_when: false
+      failed_when: false
+
+    - name: Report toolchain state
+      ansible.builtin.debug:
+        msg:
+          - "node/npm/npx: {{ versions.stdout_lines | join(' / ') }}"
+          - >-
+            {{ 'OK: mikromcp + bw both resolve on PATH'
+               if cli_which.rc == 0
+               else 'WARNING: mikromcp and/or bw not on PATH under nvm use ' ~ node_major ~
+                    ' — check that nvm has selected this version by default (nvm alias default ' ~ node_major ~ ')' }}
