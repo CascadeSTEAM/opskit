@@ -214,9 +214,20 @@ Set by the project owner (2026-07-20). These apply to every session, no exceptio
 
 1. **Sync before anything.** Every session starts with `git fetch --all --prune && git pull`
    on the current branch before any other work — avoid conflicts and stale state.
-2. **Linked branch per issue.** Work on a GitHub issue NEVER happens directly on `main`.
-   Create a linked branch first: `gh issue develop <n> --checkout`. This keeps `main`
-   conflict-free and ties the branch to the issue.
+2. **Worktree required — never the shared primary checkout.** `~/Projects/opskit`
+   may be open in several concurrent sessions at once; switching its branch, or
+   editing/committing files there directly, disrupts every other session sharing
+   that directory. This is not hypothetical — it happened live (opskit #209): a
+   concurrent session clobbered `.current-ticket` mid-session, and separately that
+   same session held the shared checkout on a feature branch for hours. Any change
+   to opskit's own files — anything outside `environments/<env>/` — happens in a
+   dedicated worktree: `bin/fix-issue.sh setup <n>` creates the issue-linked branch
+   and its worktree together in one step; switch into the printed `worktree=` path
+   before any edit. The primary checkout stays on `main` throughout, untouched, so
+   every session sharing it has a stable reference point. **Exception**:
+   `environments/<env>/` layers are separate, single-branch repos of their own
+   (`bin/env-sync.sh`) — direct commit-and-push in place there is the established,
+   correct pattern, and worktree isolation does not apply.
 3. **Full test gate before completing an issue.** Before an issue is marked ready, run
    full testing of the entire application — `make test` (the same command CI
    runs), `bash -n`/shellcheck on touched scripts, and a functional check of the
