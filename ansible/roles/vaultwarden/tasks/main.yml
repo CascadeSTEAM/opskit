@@ -1,1 +1,48 @@
 ---
+# vaultwarden — converges the existing community-scripts Alpine install (CT104,
+# cs-vaultwarden) into IaC. Does not provision the LXC itself or change
+# behavior beyond what CS-0654 already applied live: this role's job is to make
+# that state reproducible, not to introduce new changes.
+
+- name: Fail on unsupported OS
+  ansible.builtin.fail:
+    msg: "This role only supports Alpine (the community-scripts vaultwarden apk package)."
+  when: ansible_facts['os_family'] != 'Alpine'
+
+- name: Fail if ADMIN_TOKEN hash is not set
+  ansible.builtin.fail:
+    msg: >-
+      vaultwarden_admin_token_hash must be set to an Argon2id PHC string
+      (never the plaintext token) — set it in the host's ansible-vault-encrypted
+      vars, not in group_vars or defaults.
+  when: not vaultwarden_admin_token_hash
+
+- name: Install vaultwarden package
+  community.general.apk:
+    name: "{{ vaultwarden_package }}"
+    state: present
+
+- name: Deploy vaultwarden conf.d
+  ansible.builtin.template:
+    src: vaultwarden.conf.j2
+    dest: "{{ vaultwarden_conf_path }}"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: restart vaultwarden
+
+- name: Enable vaultwarden at boot
+  ansible.builtin.command: "rc-update add {{ vaultwarden_service }} default"
+  register: vaultwarden_rc_update
+  changed_when: "'already installed' not in (vaultwarden_rc_update.stderr | default(''))"
+
+- name: Check vaultwarden service status
+  ansible.builtin.command: "rc-service {{ vaultwarden_service }} status"
+  register: vaultwarden_status
+  changed_when: false
+  failed_when: false
+
+- name: Start vaultwarden if not already running
+  ansible.builtin.command: "rc-service {{ vaultwarden_service }} start"
+  when: "'started' not in vaultwarden_status.stdout"
+  changed_when: true
