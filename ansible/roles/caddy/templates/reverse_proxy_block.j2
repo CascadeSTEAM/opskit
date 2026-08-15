@@ -1,0 +1,16 @@
+{% set needs_block = route.upstream_host is defined or route.backend_tls_skip_verify | default(false) %}
+{% set scheme = 'https://' if route.backend_tls_skip_verify | default(false) else '' %}
+{% if needs_block %}
+	reverse_proxy {{ scheme }}{{ route.target }} {
+{% if route.upstream_host is defined %}
+		header_up Host {{ route.upstream_host }}
+{% endif %}
+{% if route.backend_tls_skip_verify | default(false) %}
+		transport http {
+			tls_insecure_skip_verify
+		}
+{% endif %}
+	}
+{% else %}
+	reverse_proxy {{ route.target }}
+{% endif %}
