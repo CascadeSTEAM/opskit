@@ -15,11 +15,15 @@ the repo". A review legitimately reads a sibling checkout or a system config, an
 a guard that fires on ordinary work gets disabled — the same reasoning that keeps
 `[^{]` in the secret-scan patterns.
 
-Wire it up (see docs/agent-tool-restrictions.md):
+Wire it up (see docs/agent-tool-restrictions.md). Anchor the command on
+${CLAUDE_PROJECT_DIR} — hooks run with the session's live cwd, not one fixed
+at the project root, and a bare relative path here stops resolving (and takes
+every subsequent Read/Bash call down with it, since this hook's matcher is
+Read|Bash) the moment anything cd's outside the repo root (opskit #234):
 
     "hooks": {"PreToolUse": [{"matcher": "Read|Bash",
       "hooks": [{"type": "command",
-                 "command": "python3 bin/guard-sensitive-reads.py"}]}]}
+                 "command": "python3 \"$CLAUDE_PROJECT_DIR/bin/guard-sensitive-reads.py\""}]}]}
 
 Reads the hook payload on stdin, prints a permission decision as JSON, exit 0.
 """

@@ -39,7 +39,7 @@ session that could grant its own permissions could also revoke this guard. Paste
         "hooks": [
           {
             "type": "command",
-            "command": "python3 bin/guard-sensitive-reads.py"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/bin/guard-sensitive-reads.py\""
           }
         ]
       }
@@ -47,6 +47,14 @@ session that could grant its own permissions could also revoke this guard. Paste
   }
 }
 ```
+
+The command anchors on `${CLAUDE_PROJECT_DIR}` rather than a bare relative
+path — hooks run with the session's live cwd, not one fixed at the project
+root, so a bare `bin/guard-sensitive-reads.py` stops resolving (and takes
+every subsequent Read/Bash call down with it, since the matcher is
+`Read|Bash`) the moment anything `cd`'s outside the repo root. That failure
+mode wedged a whole session and its subagents in practice (opskit #234) —
+don't reintroduce the unanchored form.
 
 Merge it into any existing `hooks` block rather than replacing one — settings
 arrays do not merge across sources.

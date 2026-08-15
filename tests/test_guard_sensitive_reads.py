@@ -226,3 +226,49 @@ def test_stripping_leaves_the_rest_of_the_command_intact():
     stripped = guard._strip_message_args('git commit -m "msg" && ls /tmp')
     assert "msg" not in stripped
     assert "ls" in stripped and "/tmp" in stripped
+
+
+# --- Hook wiring itself (opskit #234) ---------------------------------------
+#
+# A bare relative path in .claude/settings.json's "command" only resolves
+# when cwd happens to be the repo root. Hooks run with the session's live
+# cwd, not one fixed at project root, so this hook (matcher: Read|Bash)
+# breaking meant every subsequent Read/Bash call in the session failed
+# closed on a missing-file error rather than being evaluated — wedging the
+# whole session (and any subagents it spawned) rather than just misfiring.
+# This test would have caught the regression before it shipped.
+
+SETTINGS_PATH = ROOT / ".claude" / "settings.json"
+
+
+def _hook_commands(settings: dict, event: str) -> list[str]:
+    commands = []
+    for entry in settings.get("hooks", {}).get(event, []):
+        for hook in entry.get("hooks", []):
+            if hook.get("type") == "command":
+                commands.append(hook["command"])
+    return commands
+
+
+def test_the_pretooluse_guard_command_is_anchored_on_project_dir():
+    settings = json.loads(SETTINGS_PATH.read_text())
+    commands = _hook_commands(settings, "PreToolUse")
+    guard_commands = [c for c in commands if "guard-sensitive-reads.py" in c]
+    assert guard_commands, "expected a PreToolUse hook invoking guard-sensitive-reads.py"
+    for command in guard_commands:
+        assert "$CLAUDE_PROJECT_DIR" in command, (
+            f"hook command uses a bare/unanchored path and will break the "
+            f"moment cwd leaves the repo root (opskit #234): {command!r}"
+        )
+
+
+def test_the_sessionstart_hook_command_is_anchored_on_project_dir():
+    settings = json.loads(SETTINGS_PATH.read_text())
+    commands = _hook_commands(settings, "SessionStart")
+    ladder_commands = [c for c in commands if "automation-ladder.py" in c]
+    assert ladder_commands, "expected a SessionStart hook invoking automation-ladder.py"
+    for command in ladder_commands:
+        assert "$CLAUDE_PROJECT_DIR" in command, (
+            f"hook command uses a bare/unanchored path — currently masked by "
+            f"`|| true` but the same class of bug as opskit #234: {command!r}"
+        )
