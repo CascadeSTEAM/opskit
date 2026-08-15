@@ -242,27 +242,21 @@
       changed_when: true
       when: existing_ct.rc != 0
 
-    - name: Write a default-deny firewall rules file for the container
+    - name: Write a default-deny firewall rules file for the container  # noqa: command-instead-of-module
       # Third of the three things Proxmox needs, the other two being the vNIC's
       # firewall=1 and the datacenter switch asserted above. An empty rules file
       # with policy_in: DROP means nothing reaches the container until a rule is
       # added deliberately. Hardening beyond this posture is a separate task.
       #
-      # No `mode:` here, deliberately. /etc/pve is pmxcfs, a FUSE cluster
-      # filesystem that hardcodes its own permissions and rejects chmod() with
-      # EPERM. The copy module chmods after writing, so setting mode makes this
-      # task fail on a real node — halfway through provisioning, after the
-      # container already exists.
-      #
-      # unsafe_writes: pmxcfs also rejects the atomic write-tempfile-then-
-      # rename() the copy module uses by default (EPERM on the rename), so it
-      # has to write the destination directly instead. Safe here specifically
-      # because the task is create-only (force: false) with no concurrent
-      # writer. Even with this set, a live run has been observed to report
-      # "Failed to copy ... Operation not permitted" while the content lands
-      # correctly anyway (verify with `cat`/`stat` before trusting the
-      # reported failure) — apparently a trailing metadata syscall (chmod/
-      # utime) on pmxcfs, not the write itself (opskit #229).
+      # A plain shell redirect, not ansible.builtin.copy. /etc/pve is pmxcfs, a
+      # FUSE cluster filesystem that rejects both chmod() (the documented
+      # reason `mode:` is never set on files here) and, proven live during
+      # #209's runner-CT provisioning (opskit provision-runner-lxc.yml,
+      # commit c80d9a5), the atomic tmp-file-plus-rename dance copy uses even
+      # with unsafe_writes: true — both failed with EPERM against a real node.
+      # `cat > file <<'EOF'` does nothing but open/write/close, the one
+      # sequence pmxcfs actually supports. A per-line ignore: the linter's
+      # suggested replacement is the module this exists to avoid.
       #
       # Still gated on existing_ct.rc != 0, deliberately: this play's contract
       # is create-only, never reconfigure (enforced by
@@ -270,25 +264,18 @@
       # container that got created but whose rules file failed to write on a
       # prior run is NOT self-healed by re-running this play — it takes the
       # "already exists" branch and skips straight past this task, silently
-      # leaving that container without a rules file. Filed as an open
-      # question in opskit#229 rather than resolved here, since fixing it
-      # means relaxing a deliberately-enforced invariant. Until decided,
-      # verify with `stat`/`cat` on `/etc/pve/firewall/<id>.fw` if a prior run
-      # of this play failed partway through.
-      ansible.builtin.copy:
-        dest: "/etc/pve/firewall/{{ ct_id }}.fw"
-        content: |
-          [OPTIONS]
-          enable: 1
-          policy_in: DROP
-          policy_out: ACCEPT
+      # leaving that container without a rules file (opskit #240).
+      ansible.builtin.shell: |
+        cat > /etc/pve/firewall/{{ ct_id }}.fw <<'FWEOF'
+        [OPTIONS]
+        enable: 1
+        policy_in: DROP
+        policy_out: ACCEPT
 
-          [RULES]
-          # Intentionally empty: default-deny. Add rules deliberately, never by
-          # default-permit (opskit #150, #187).
-        force: false
-        unsafe_writes: true
+        [RULES]
+        FWEOF
       when: existing_ct.rc != 0
+      changed_when: true
 
     - name: Start the container
       ansible.builtin.command: "pct start {{ ct_id }}"
