@@ -346,6 +346,83 @@ def test_refuses_to_launch_when_the_path_is_invalid(tmp_path):
     assert "--check" in result.stderr
 
 
+# ── --print-env mode ──────────────────────────────────────────────────────────
+# A second, non-MCP consumer (bin/hd-ticket-triage.py) needs the same
+# vault-resolved secrets without re-deriving `bw get item` parsing.
+
+def test_print_env_emits_export_lines_for_each_secret(tmp_path):
+    root = _make_root(tmp_path, {
+        "demo": {
+            "DEMO_PASS": {"item": "i1", "field": "password"},
+            "DEMO_USER": {"item": "i1", "field": "username"},
+        }
+    })
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(username="svc", password="pw")})
+
+    result = _run(root, "demo", "--print-env", bw=bw)
+
+    assert result.returncode == 0, result.stderr
+    assert "export DEMO_PASS=pw" in result.stdout
+    assert "export DEMO_USER=svc" in result.stdout
+
+
+def test_print_env_does_not_launch_the_server(tmp_path):
+    """The server's stdout marker (its DEMO_-prefixed JSON dump) must never
+    appear — --print-env resolves secrets, it never execs."""
+    root = _make_root(tmp_path, {"demo": {"DEMO_PASS": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(password="pw")})
+
+    result = _run(root, "demo", "--print-env", bw=bw)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == 'export DEMO_PASS=pw'
+
+
+def test_print_env_output_is_eval_safe_for_special_characters(tmp_path):
+    """The whole point is `eval "$(mcp-run.sh demo --print-env)"` in a caller's
+    shell — a secret with quotes/spaces/shell metacharacters must round-trip."""
+    nasty = "a'b\"c\\d$(touch /tmp/pwned) x"
+    root = _make_root(tmp_path, {"demo": {"DEMO_PASS": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(password=nasty)})
+
+    result = _run(root, "demo", "--print-env", bw=bw)
+    assert result.returncode == 0, result.stderr
+
+    # Written to a file and sourced, not interpolated into a -c string: the
+    # latter would apply a second, uncontrolled round of shell parsing on top
+    # of the %q-escaping under test.
+    env_file = tmp_path / "env.sh"
+    env_file.write_text(result.stdout)
+    roundtrip = subprocess.run(
+        ["bash", "-c", f'source "{env_file}" && printf "%s" "$DEMO_PASS"'],
+        capture_output=True, text=True,
+    )
+    assert roundtrip.stdout == nasty
+
+
+def test_print_env_still_validates_the_launch_path_first(tmp_path):
+    root = _make_root(tmp_path, {"demo": {"DEMO_PASS": {"item": "i1"}}})
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(password="pw")})
+
+    result = _run(root, "demo", "--print-env", bw=bw, session=None)
+
+    assert result.returncode == 1
+    assert "launch path invalid" in result.stderr
+
+
+def test_print_env_works_for_external_servers_too(tmp_path):
+    root = _make_root(
+        tmp_path, {"demoext": {"EXT_PASS": {"item": "i1"}}}, external=EXT,
+    )
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(password="pw")})
+    bin_dir = _make_external_binary(tmp_path)
+
+    result = _run(root, "demoext", "--print-env", bw=bw, path_prepend=bin_dir)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "export EXT_PASS=pw"
+
+
 # ── external servers (issue #105) ─────────────────────────────────────────────
 # Servers installed outside this repo — a global npm binary, a uvx package —
 # declared in mcp/external-servers.json. Before this, they had nowhere to get
