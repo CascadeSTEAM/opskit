@@ -1,0 +1,13 @@
+## Managed by ansible/roles/vaultwarden — do not edit by hand.
+command_user="vaultwarden:vaultwarden" # user:group
+logdir="{{ vaultwarden_log_dir }}"
+output_log="$logdir/access.log"
+error_log="$logdir/error.log"
+
+export DATA_FOLDER={{ vaultwarden_data_folder }}
+export WEB_VAULT_ENABLED={{ vaultwarden_web_vault_enabled | lower }}
+export WEB_VAULT_FOLDER={{ vaultwarden_web_vault_folder }}
+export ADMIN_TOKEN='{{ vaultwarden_admin_token_hash }}'
+export SIGNUPS_ALLOWED={{ vaultwarden_signups_allowed | lower }}
+export ROCKET_ADDRESS={{ vaultwarden_rocket_address }}
+export ROCKET_TLS='{certs="{{ vaultwarden_tls_cert }}",key="{{ vaultwarden_tls_key }}"}'

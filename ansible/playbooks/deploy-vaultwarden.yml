@@ -1,0 +1,15 @@
+---
+# deploy-vaultwarden.yml — Deploy/converge the Vaultwarden instance
+#
+# Role defaults (roles/vaultwarden/defaults/main.yml) cover everything except
+# the ADMIN_TOKEN hash, which must come from the host's ansible-vault-encrypted
+# vars (see environments/<env>/ansible/host_vars/<host>/vault.yml) — never
+# from group_vars or defaults.
+
+- name: Deploy Vaultwarden
+  hosts: cs-vaultwarden
+  gather_facts: true
+  become: true
+
+  roles:
+    - role: vaultwarden
