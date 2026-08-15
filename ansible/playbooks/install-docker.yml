@@ -10,10 +10,15 @@
 #
 # Run from this repo root:
 #   ansible-playbook -i environments/$ACTIVE_ENV/ansible/inventory.yml \
-#     ansible/playbooks/install-docker.yml -l <host-or-group>
+#     ansible/playbooks/install-docker.yml -e target_host=<host-or-group>
 
 - name: Install Docker Engine from the upstream apt repository
-  hosts: "{{ target_host | default('all') }}"
+  # target_host is supplied at run time with `-e target_host=<host-or-group>`,
+  # deliberately with no default — every other apt-installing playbook in
+  # this repo requires it explicitly rather than falling back to `all`, so a
+  # forgotten -e doesn't run this against the entire active environment's
+  # inventory (Proxmox nodes, network gear, everything).
+  hosts: "{{ target_host }}"  # noqa: syntax-check[specific]
   gather_facts: true
 
   tasks:
@@ -49,6 +54,17 @@
             state: present
             update_cache: true
             cache_valid_time: 3600
+
+        # get_url never creates its destination's parent directory, and
+        # /etc/apt/keyrings only exists by default on Debian 12+/Ubuntu 22.04+
+        # — absent on Debian 11/Ubuntu 20.04, both still in Docker's
+        # supported repo matrix and within this playbook's stated Debian-or-
+        # Ubuntu scope.
+        - name: Ensure /etc/apt/keyrings exists
+          ansible.builtin.file:
+            path: /etc/apt/keyrings
+            state: directory
+            mode: "0755"
 
         - name: Add Docker's GPG key
           ansible.builtin.get_url:
