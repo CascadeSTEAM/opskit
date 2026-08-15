@@ -1,1 +1,27 @@
 ---
+# vaultwarden — Alpine apk package, native (not containerized).
+vaultwarden_package: vaultwarden
+vaultwarden_service: vaultwarden
+vaultwarden_conf_path: /etc/conf.d/vaultwarden
+vaultwarden_log_dir: /var/log/vaultwarden
+
+vaultwarden_data_folder: /var/lib/vaultwarden
+vaultwarden_web_vault_enabled: true
+vaultwarden_web_vault_folder: /usr/share/webapps/vaultwarden-web
+
+# Invite-only: no self-registration. See CS-0654.
+vaultwarden_signups_allowed: false
+
+vaultwarden_rocket_address: "0.0.0.0"
+
+# Backend TLS is a self-signed cert (the host has no public name of its own);
+# the reverse proxy (Caddy) terminates real, publicly-trusted TLS and skips
+# verifying this hop. See caddy.yml (CS-0661) for the other side of this.
+vaultwarden_tls_cert: /etc/ssl/certs/vaultwarden-selfsigned.crt
+vaultwarden_tls_key: /etc/ssl/private/vaultwarden-selfsigned.key
+
+# Argon2id PHC string (e.g. `$argon2id$v=19$...`), never the plaintext token.
+# Generate with: vaultwarden hash --preset bitwarden (needs a real tty), or
+# `argon2 <salt> -e -id -k 65536 -t 3 -p 4` piping the plaintext on stdin.
+# Set this in the host's ansible-vault-encrypted vars, not in group_vars.
+vaultwarden_admin_token_hash: ""
