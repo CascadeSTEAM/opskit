@@ -263,8 +263,9 @@
       # test_creation_only_runs_when_the_container_is_absent). That means a
       # container that got created but whose rules file failed to write on a
       # prior run is NOT self-healed by re-running this play — it takes the
-      # "already exists" branch and skips straight past this task, silently
-      # leaving that container without a rules file (opskit #240).
+      # "already exists" branch and skips straight past this task. That gap
+      # is not silent, though: the ungated check below fails the run loudly
+      # if the file is missing for any reason, on every run (opskit #240).
       ansible.builtin.shell: |
         cat > /etc/pve/firewall/{{ ct_id }}.fw <<'FWEOF'
         [OPTIONS]
@@ -276,6 +277,32 @@
         FWEOF
       when: existing_ct.rc != 0
       changed_when: true
+
+    # Ungated (runs whether the container was just created above, or already
+    # existed) — deliberately NOT behind existing_ct.rc != 0. The task above
+    # is create-only per this play's contract, so a container that got
+    # created but whose rules-file write failed or was skipped on a prior
+    # run would otherwise never be re-checked: the "already exists" branch
+    # takes over on every later run and skips straight past it. This check
+    # runs every time instead, so that gap fails loudly rather than silently
+    # leaving an unfirewalled container behind (opskit #240).
+    - name: Check whether the firewall rules file exists
+      ansible.builtin.stat:
+        path: "/etc/pve/firewall/{{ ct_id }}.fw"
+      register: ct_firewall_rules_file
+
+    - name: Refuse to report success without a firewall rules file
+      ansible.builtin.assert:
+        that:
+          - ct_firewall_rules_file.stat.exists
+        fail_msg: >-
+          CT {{ ct_id }}'s firewall rules file
+          (/etc/pve/firewall/{{ ct_id }}.fw) is missing. If this container
+          was created on a prior run whose firewall-rules write failed or
+          was interrupted partway through, this play's create-only contract
+          will not self-heal it — write the file by hand (see the "Write a
+          default-deny firewall rules file" task above for the exact
+          content), or remove and recreate the container.
 
     - name: Start the container
       ansible.builtin.command: "pct start {{ ct_id }}"
