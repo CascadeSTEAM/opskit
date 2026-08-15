@@ -53,3 +53,15 @@ def test_internal_true_alone_does_not_imply_tls_internal():
     block = rendered.split("ip-filtered.example.org {", 1)[1].split("\n}", 1)[0]
     assert "import internal_only" in block
     assert "tls internal" not in block
+
+
+def test_tls_internal_combines_with_backend_tls_skip_verify():
+    """The realistic shape: an internal-only, never-public route whose
+    backend also speaks self-signed HTTPS (own reverse_proxy sub-block)."""
+    rendered = _render([
+        {"domain": "dev-clone.example.org", "target": "192.0.2.30:8080",
+         "internal": True, "tls_internal": True, "backend_tls_skip_verify": True},
+    ])
+    assert "tls internal" in rendered
+    assert "reverse_proxy https://192.0.2.30:8080 {" in rendered
+    assert "tls_insecure_skip_verify" in rendered
