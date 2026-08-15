@@ -30,8 +30,16 @@
 #             ~/.config/opencode/opencode.json because no launcher covered them).
 #
 # Usage:
-#   bin/mcp-run.sh <server>            # resolve secrets, exec the server (stdio MCP)
-#   bin/mcp-run.sh <server> --check    # validate the launch path, fetch nothing
+#   bin/mcp-run.sh <server>              # resolve secrets, exec the server (stdio MCP)
+#   bin/mcp-run.sh <server> --check      # validate the launch path, fetch nothing
+#   bin/mcp-run.sh <server> --print-env  # resolve secrets, print `export VAR=val`
+#                                         # lines instead of exec'ing — for a second,
+#                                         # non-MCP consumer of the same secrets
+#                                         # (e.g. bin/hd-ticket-triage.py) that would
+#                                         # otherwise have to re-derive `bw get item`
+#                                         # parsing (the exact duplication #80/#143/
+#                                         # #146/#155 already burned this repo on).
+#                                         # Usage: eval "$(bin/mcp-run.sh erpnext --print-env)"
 #   bin/mcp-run.sh --list              # servers this repo can launch
 #
 # Requires an unlocked vault session, from either source (env var wins):
@@ -148,14 +156,16 @@ fi
 
 SERVER="${1:-}"
 CHECK_ONLY=0
+PRINT_ENV_ONLY=0
 case "${2:-}" in
-    --check) CHECK_ONLY=1 ;;
-    "")      ;;
-    *)       die "unknown argument '$2' (usage: mcp-run.sh <server> [--check])" ;;
+    --check)     CHECK_ONLY=1 ;;
+    --print-env) PRINT_ENV_ONLY=1 ;;
+    "")          ;;
+    *)           die "unknown argument '$2' (usage: mcp-run.sh <server> [--check|--print-env])" ;;
 esac
 
 if [ -z "$SERVER" ]; then
-    echo "usage: mcp-run.sh <server> [--check]   |   mcp-run.sh --list" >&2
+    echo "usage: mcp-run.sh <server> [--check|--print-env]   |   mcp-run.sh --list" >&2
     echo "servers: $(list_servers | tr '\n' ' ')" >&2
     exit 2
 fi
@@ -362,8 +372,18 @@ else:
             break
 ' "$field" || true)
     [ -n "$value" ] || die "vault item '$item' has no '$field' value (needed for $var)"
-    export "$var=$value"
+    if [ "$PRINT_ENV_ONLY" = "1" ]; then
+        # %q shell-quotes the value so a caller's `eval` re-parses it safely
+        # regardless of quotes/backslashes/whitespace inside the secret.
+        printf 'export %s=%q\n' "$var" "$value"
+    else
+        export "$var=$value"
+    fi
 done <<< "$ENTRIES"
+
+if [ "$PRINT_ENV_ONLY" = "1" ]; then
+    exit 0
+fi
 
 if [ "$SERVER_KIND" = "external" ]; then
     exec "${EXTERNAL_ARGV[@]}"

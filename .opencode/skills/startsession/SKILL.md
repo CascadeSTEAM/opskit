@@ -76,9 +76,25 @@ triggers: startsession,start session,session start,update project folder,update 
    (opskit #158) — and re-supply it inline on every command that needs it,
    since exported shell state does not persist between separate tool
    calls in this harness. Skip this step for a genuinely solo session.
-6. **Report back:** one line each for the branch check, repo sync, hooks
-   path, each subfolder/Env layer, and whether a ticket pin was set —
-   state synced, or what is blocked and why.
+6. **Surface persistent session context.** These are read-only inputs — this
+   step never writes any of them, only reads and reports what's there:
+   - `RESUME.md` (repo root): if present, read it and lead your report with
+     its "Start here" / open-risk content — it's the last session's own
+     handoff note, written for exactly this moment.
+   - `.local/session-reminders.md`: a gitignored, per-clone convention file
+     (same `.local/` directory helpdesk-ticket already uses for local
+     templates) for operator-authored reminders that don't belong in a
+     tracked file. If present, read it and fold it in. If absent, say
+     nothing about it — it's opt-in, not a gap to flag.
+   - HD ticket triage summary: `bin/hd-ticket-triage.py --summary` (defaults
+     to the active environment; see the `ticket-triage` skill). If it errors
+     (stale vault session, `gh` unavailable, no active environment set),
+     report the one-line failure and move on — a missing vault unlock at
+     session start is routine, not a blocker for anything else in this list.
+7. **Report back:** one line each for the branch check, repo sync, hooks
+   path, each subfolder/Env layer, whether a ticket pin was set, and the
+   persistent-context surfacing above — state synced, or what is blocked
+   and why.
 
 ## Failure handling
 
