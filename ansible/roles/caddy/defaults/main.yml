@@ -31,6 +31,13 @@ caddy_routes: []
 #   upstream_host rewrite the Host header sent upstream (header_up Host <value>);
 #                 use when the upstream resolves its site from the inbound Host
 #                 but this vhost's public name differs from that site's name.
+#   backend_tls_skip_verify
+#                 speak HTTPS to the backend (target still host:port — the
+#                 scheme is added automatically) without verifying its cert;
+#                 use for an upstream that is HTTPS-only with a self-signed
+#                 cert (no public name of its own). Caddy's own public-facing
+#                 TLS (real Let's Encrypt) is unaffected — this only weakens
+#                 the Caddy->backend hop.
 # Example (documentation ranges/domains only):
 # caddy_routes:
 #   - domain: helpdesk.example.org
