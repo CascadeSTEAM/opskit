@@ -21,6 +21,11 @@
 #   ansible-playbook -i environments/$ACTIVE_ENV/ansible/inventory.yml \
 #     ansible/playbooks/configure-ghcr-auth.yml -l <host> \
 #     --vault-password-file ~/.config/opskit/vault-pass-cs
+#
+# -l/--limit only intersects with `hosts:` below (erp_stacks by default) --
+# it can't reach a host that isn't already in that inventory group. For a
+# host not yet added to erp_stacks, target it directly instead:
+#     ansible-playbook ... configure-ghcr-auth.yml -e target_host=<host> ...
 
 - name: Configure GHCR pull credentials
   hosts: "{{ target_host | default('erp_stacks') }}"
