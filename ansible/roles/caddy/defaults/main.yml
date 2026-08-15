@@ -38,6 +38,14 @@ caddy_routes: []
 #                 cert (no public name of its own). Caddy's own public-facing
 #                 TLS (real Let's Encrypt) is unaffected — this only weakens
 #                 the Caddy->backend hop.
+#   tls_internal  use Caddy's local CA instead of public ACME for this vhost's
+#                 own TLS. Required for any domain that will never have a
+#                 public DNS record — automatic HTTPS otherwise always tries
+#                 Let's Encrypt/ZeroSSL HTTP-01/TLS-ALPN-01, which needs public
+#                 resolution and fails (NXDOMAIN) with endless retries
+#                 otherwise. Note `internal: true` does NOT imply this — it
+#                 only restricts source IP, it says nothing about whether the
+#                 domain is publicly resolvable.
 # Example (documentation ranges/domains only):
 # caddy_routes:
 #   - domain: helpdesk.example.org
@@ -56,3 +64,7 @@ caddy_routes: []
 #     target: ""
 #     internal: true
 #     handler: file_server
+#   - domain: dev-clone.example.org  # never has a public DNS record
+#     target: 192.0.2.30:8080
+#     internal: true
+#     tls_internal: true
