@@ -40,11 +40,15 @@ triggers: plow, /plow, plow through, clear the backlog, backlog sweep, work the 
    it describes, check whether a merged PR/commit already resolved the root
    cause without closing the ticket (`git log --grep`/`gh pr list --search`),
    and confirm anything it references (a ticket, a file, an env) still
-   exists. An issue whose root cause is already fixed gets closed as
-   "Resolved by #<pr/sha>" with a comment (reversible), not carried forward
-   or silently dropped. This is a code-based check, not a re-read of the
-   issue prose — the same evidence standard the `ticket-triage` skill applies
-   to HD Tickets.
+   exists. Closing on this basis needs more than a coincidental grep hit or
+   an unrelated PR touching the same file — read the actual diff/commit and
+   confirm it addresses the issue's specific root cause, not just its
+   vicinity, before treating it as resolved. An issue whose root cause is
+   confirmed already fixed gets closed as "Resolved by #<pr/sha>" with a
+   comment quoting or pointing at the specific evidence (reversible), not
+   carried forward or silently dropped. This is a code-based check, not a
+   re-read of the issue prose — the same evidence standard the
+   `ticket-triage` skill applies to HD Tickets.
 7. **Assignment filter** — `gh issue view <n> --json assignees` per issue.
    Unassigned or assigned to the operator: fair game, proceed. Assigned to
    anyone else: that is someone else's in-flight work, not backlog — skip it
@@ -84,11 +88,11 @@ triggers: plow, /plow, plow through, clear the backlog, backlog sweep, work the 
 ## Phase 4 — cleanup
 
 12. **Prune what the run left behind.** Load the `cleanup` skill. A plow run
-   creates a branch per issue and a worktree per review agent, and none of the
-   leftovers break anything — which is why they accumulate until a branch list
-   is mostly dead. Survey with `bin/repo-cleanup.py`, show the operator the
-   list, and remove on one go-ahead. **Cleanup is NOT pre-authorized by /plow**
-   (see Rules): it deletes published refs, so it asks.
+    creates a branch per issue and a worktree per review agent, and none of the
+    leftovers break anything — which is why they accumulate until a branch list
+    is mostly dead. Survey with `bin/repo-cleanup.py`, show the operator the
+    list, and remove on one go-ahead. **Cleanup is NOT pre-authorized by /plow**
+    (see Rules): it deletes published refs, so it asks.
 
 ## Failure handling
 
