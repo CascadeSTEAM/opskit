@@ -35,6 +35,9 @@
 {% if route.internal %}
 	import internal_only
 {% endif %}
+{% if route.tls_internal | default(false) %}
+	tls internal
+{% endif %}
 {% if route.handler is defined and route.handler == "file_server" %}
 	handle /ws {
 		reverse_proxy localhost:7890
