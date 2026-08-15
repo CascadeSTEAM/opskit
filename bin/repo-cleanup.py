@@ -27,6 +27,11 @@ use is worse than no cleanup tool:
     finished is the operator's call. A branch with no PR that is *provably an
     ancestor* of the base branch holds nothing, so it is offered like any other
     dead branch rather than left for a human to re-derive that fact
+  * a local branch with no remote ref at all — a squash-merged PR's local
+    branch after its remote counterpart is gone, or one that was never
+    pushed — gets the same treatment: offered if it's a literal ancestor,
+    reported (never deleted) otherwise, rather than being invisible to every
+    bucket (opskit #228)
   * nothing outside branches and worktree metadata — session notes, the idea
     ledger and the environment layers are not this tool's business
 
@@ -143,6 +148,51 @@ def merged_local_branches() -> list[tuple[str, str]]:
     return out
 
 
+def local_only_branches(merged: list[tuple[str, str]]) -> list[dict]:
+    """Local branches with no remote ref at all, minus anything already caught
+    by `merged_local_branches()` (opskit #228).
+
+    `merged_local_branches()` finds every local branch that is a literal
+    ancestor of the default branch, regardless of whether it has a remote —
+    so a local-only branch that IS an ancestor is already offered there. The
+    gap this closes is narrower: a local-only branch whose commits are NOT a
+    literal ancestor (typically because its PR was squash-merged, which
+    rewrites the commits, or because it was never pushed and never merged at
+    all) was invisible to every bucket — not `merged_local_branches()`
+    (not an ancestor), not `remote_branches()` (no remote ref to survey).
+
+    Reported for manual judgment, never auto-deleted: with no PR to check,
+    there is no code-based way to tell "this is a dead review-pin branch
+    mirroring an already-squash-merged PR" from "this is unpushed unmerged
+    work" — that distinction needs a human, same as a remote branch with no
+    PR at all.
+    """
+    base = default_branch()
+    if not base:
+        raise RuntimeError(
+            "cannot determine the default branch (origin/HEAD unset, and no "
+            "local main or master) — refusing to guess what 'merged' means"
+        )
+    protected = branches_in_use() | {base, "main", "master"}
+    already_merged = {name for name, _ in merged}
+
+    out = []
+    for line in _git("branch", "--format=%(refname:short) %(objectname:short)").splitlines():
+        if not line.strip():
+            continue
+        name, _, sha = line.strip().partition(" ")
+        if name in protected or name in already_merged:
+            continue
+        if _remote_ref_exists(name):
+            continue  # has a remote ref; remote_branches() surveys it instead
+        out.append({
+            "name": name,
+            "sha": sha,
+            "unique_commits": _unique_commits(sha, base),
+        })
+    return out
+
+
 def _pr_states() -> dict[str, dict]:
     """headRefName -> {state, base, head_oid}, in one call rather than per branch.
 
@@ -239,14 +289,18 @@ def remote_branches() -> tuple[list[tuple[str, str]], list[dict]]:
     """
     base = default_branch()
     protected = branches_in_use() | {base, "main", "master"}
-    states = _pr_states()
 
     # Ancestry is judged against what origin ACTUALLY has, not a local ref that
     # may be behind — or, if the default branch was ever rewritten, may still
     # contain a lineage origin has dropped, which would make unmerged work look
-    # like an ancestor. Refreshed first so remote-only commits are present to
-    # compare at all.
+    # like an ancestor. Refreshed first, before `gh` is even called, so a
+    # prune happens regardless of whether `gh` succeeds afterward — pruning
+    # only on the success path left a stale local remote-tracking ref for a
+    # genuinely-deleted-upstream branch in place whenever `gh` failed, which
+    # made `local_only_branches()` wrongly see it as still having a remote
+    # (opskit #228 review).
     fetch_error = _fetch()
+    states = _pr_states()
     base_ref = f"origin/{base}" if base and _remote_ref_exists(base) else base
 
     dead, no_pr = [], []
@@ -316,14 +370,17 @@ def survey() -> dict:
         dead_remote, undecided, remote_error = [], [], str(exc)
 
     try:
-        local, local_error = merged_local_branches(), ""
+        local = merged_local_branches()
+        local_only = local_only_branches(local)
+        local_error = ""
     except RuntimeError as exc:
-        local, local_error = [], str(exc)
+        local, local_only, local_error = [], [], str(exc)
 
     return {
         "default_branch": default_branch(),
         "in_use": sorted(branches_in_use()),
         "local_merged": local,
+        "local_no_remote": local_only,
         "local_error": local_error,
         "remote_dead": dead_remote,
         "remote_no_pr": undecided,
@@ -389,6 +446,17 @@ def report(state: dict) -> None:
             count = f"{n} unmerged commit(s)" if n >= 0 else "unknown commit count"
             print(f"    {entry['name']}  ({entry['sha']}, {entry['state']}, {count})")
         print(f"  Inspect one with:  git log --oneline {base}..origin/<name>")
+
+    local_only = state.get("local_no_remote", [])
+    if local_only:
+        print(f"\n  {len(local_only)} local branch(es) have no remote ref at all and are")
+        print(f"  not a literal ancestor of {base}. NOT deleted — with no PR to check,")
+        print("  there's no code-based way to tell dead leftover from unpushed work:")
+        for entry in local_only:
+            n = entry["unique_commits"]
+            count = f"{n} unmerged commit(s)" if n >= 0 else "unknown commit count"
+            print(f"    {entry['name']}  ({entry['sha']}, {count})")
+        print(f"  Inspect one with:  git log --oneline {base}..<name>")
 
     if not local and not dead:
         print("\nNothing to remove.")

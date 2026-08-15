@@ -106,6 +106,99 @@ def test_a_branch_checked_out_in_a_worktree_is_never_offered(repo):
     assert "in-a-worktree" not in [n for n, _ in mod.merged_local_branches()]
 
 
+def test_a_local_ancestor_branch_with_no_remote_is_already_covered_not_duplicated(repo):
+    """merged_local_branches() already finds literal ancestors regardless of
+    remote — local_only_branches() must not re-list it, or it would be
+    offered for deletion twice under two different names."""
+    mod = _load(repo)
+    merged = mod.merged_local_branches()
+
+    local_only = mod.local_only_branches(merged)
+
+    assert "merged-branch" not in [e["name"] for e in local_only]
+
+
+def test_a_local_only_non_ancestor_branch_surfaces_for_manual_judgment(repo):
+    """opskit #228: a squash-merged PR's local branch (or one that was just
+    never pushed) has no remote ref and is never a literal ancestor of the
+    default branch — invisible to merged_local_branches() (not an ancestor)
+    and to remote_branches() (nothing to survey). Must surface here instead
+    of disappearing from the tool entirely."""
+    mod = _load(repo)
+    merged = mod.merged_local_branches()
+
+    local_only = mod.local_only_branches(merged)
+
+    names = [e["name"] for e in local_only]
+    assert "unmerged-branch" in names
+    entry = next(e for e in local_only if e["name"] == "unmerged-branch")
+    assert entry["unique_commits"] == 1
+
+
+def test_a_local_only_branch_is_never_auto_deleted():
+    """No PR exists to check for a branch with no remote ref at all, so there
+    is no code-based way to distinguish a dead leftover from unpushed work —
+    survey() must report it, main() must never pass it to _delete_local()."""
+    text = SCRIPT.read_text()
+    assert "local_no_remote" in text
+    # The only two things ever handed to _delete_local are local_merged
+    # (from merged_local_branches) — local_no_remote must not join them.
+    delete_call = next(
+        line for line in text.splitlines() if "_delete_local(state[" in line
+    )
+    assert "local_no_remote" not in delete_call
+
+
+def test_a_branch_with_a_remote_ref_is_left_to_remote_branches(repo, monkeypatch):
+    """A local branch that DOES have a remote counterpart is remote_branches()'s
+    job to classify — local_only_branches() must not also claim it, or the
+    same branch would be reported under two different, possibly conflicting
+    verdicts."""
+    mod = _load(repo)
+    monkeypatch.setattr(mod, "_remote_ref_exists", lambda name: name == "unmerged-branch")
+    merged = mod.merged_local_branches()
+
+    local_only = mod.local_only_branches(merged)
+
+    assert "unmerged-branch" not in [e["name"] for e in local_only]
+
+
+def test_a_stale_tracking_ref_is_pruned_even_when_gh_fails(repo, monkeypatch):
+    """opskit #228 review: remote_branches() used to call _pr_states() (the gh
+    call) before _fetch() (the --prune). When gh failed, the function raised
+    before ever fetching, so a stale refs/remotes/origin/<name> for a branch
+    genuinely deleted upstream was never pruned that run --
+    local_only_branches() then saw the stale ref and wrongly concluded the
+    branch still had a remote, making it invisible everywhere -- the exact
+    bug #228 was filed to fix, just reached through gh failure instead of a
+    squash merge. _fetch() must run before _pr_states(), so the prune
+    happens regardless of whether gh succeeds afterward."""
+    bare = repo.parent / "bare-origin.git"
+    git(repo.parent, "init", "-q", "--bare", str(bare))
+    git(repo, "remote", "add", "origin", str(bare))
+    git(repo, "push", "-q", "origin", "unmerged-branch")
+    git(repo, "fetch", "-q", "origin")
+    assert git(repo, "rev-parse", "--verify", "-q",
+               "refs/remotes/origin/unmerged-branch", check=False).returncode == 0
+
+    # Delete it upstream for real, without touching the now-stale local
+    # tracking ref -- this is what git fetch --prune exists to clean up.
+    git(bare, "branch", "-D", "unmerged-branch")
+
+    mod = _load(repo)
+    monkeypatch.setattr(mod, "_pr_states", lambda: (_ for _ in ()).throw(
+        RuntimeError("gh pr list failed: not authenticated")))
+
+    state = mod.survey()
+
+    assert state["remote_error"], "gh's failure must still be surfaced"
+    names = [e["name"] for e in state["local_no_remote"]]
+    assert "unmerged-branch" in names, (
+        "the stale tracking ref must be pruned by _fetch() before "
+        "_pr_states() can fail and hide the branch from local_only_branches()"
+    )
+
+
 def test_applying_removes_the_merged_branch_and_keeps_the_rest(repo, capsys):
     mod = _load(repo)
 
