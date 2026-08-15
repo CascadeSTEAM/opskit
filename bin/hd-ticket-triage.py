@@ -36,7 +36,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent.resolve()
 ERPNEXT_SERVER = REPO_ROOT / "mcp" / "erpnext-mcp-server.py"
-MCP_RUN = REPO_ROOT / "bin" / "mcp-run.sh"
 ACTIVE_ENV_RESOLVER = REPO_ROOT / "bin" / "active_env.py"
 
 STALE_DAYS = 14
