@@ -289,14 +289,18 @@ def remote_branches() -> tuple[list[tuple[str, str]], list[dict]]:
     """
     base = default_branch()
     protected = branches_in_use() | {base, "main", "master"}
-    states = _pr_states()
 
     # Ancestry is judged against what origin ACTUALLY has, not a local ref that
     # may be behind — or, if the default branch was ever rewritten, may still
     # contain a lineage origin has dropped, which would make unmerged work look
-    # like an ancestor. Refreshed first so remote-only commits are present to
-    # compare at all.
+    # like an ancestor. Refreshed first, before `gh` is even called, so a
+    # prune happens regardless of whether `gh` succeeds afterward — pruning
+    # only on the success path left a stale local remote-tracking ref for a
+    # genuinely-deleted-upstream branch in place whenever `gh` failed, which
+    # made `local_only_branches()` wrongly see it as still having a remote
+    # (opskit #228 review).
     fetch_error = _fetch()
+    states = _pr_states()
     base_ref = f"origin/{base}" if base and _remote_ref_exists(base) else base
 
     dead, no_pr = [], []

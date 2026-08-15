@@ -163,6 +163,42 @@ def test_a_branch_with_a_remote_ref_is_left_to_remote_branches(repo, monkeypatch
     assert "unmerged-branch" not in [e["name"] for e in local_only]
 
 
+def test_a_stale_tracking_ref_is_pruned_even_when_gh_fails(repo, monkeypatch):
+    """opskit #228 review: remote_branches() used to call _pr_states() (the gh
+    call) before _fetch() (the --prune). When gh failed, the function raised
+    before ever fetching, so a stale refs/remotes/origin/<name> for a branch
+    genuinely deleted upstream was never pruned that run --
+    local_only_branches() then saw the stale ref and wrongly concluded the
+    branch still had a remote, making it invisible everywhere -- the exact
+    bug #228 was filed to fix, just reached through gh failure instead of a
+    squash merge. _fetch() must run before _pr_states(), so the prune
+    happens regardless of whether gh succeeds afterward."""
+    bare = repo.parent / "bare-origin.git"
+    git(repo.parent, "init", "-q", "--bare", str(bare))
+    git(repo, "remote", "add", "origin", str(bare))
+    git(repo, "push", "-q", "origin", "unmerged-branch")
+    git(repo, "fetch", "-q", "origin")
+    assert git(repo, "rev-parse", "--verify", "-q",
+               "refs/remotes/origin/unmerged-branch", check=False).returncode == 0
+
+    # Delete it upstream for real, without touching the now-stale local
+    # tracking ref -- this is what git fetch --prune exists to clean up.
+    git(bare, "branch", "-D", "unmerged-branch")
+
+    mod = _load(repo)
+    monkeypatch.setattr(mod, "_pr_states", lambda: (_ for _ in ()).throw(
+        RuntimeError("gh pr list failed: not authenticated")))
+
+    state = mod.survey()
+
+    assert state["remote_error"], "gh's failure must still be surfaced"
+    names = [e["name"] for e in state["local_no_remote"]]
+    assert "unmerged-branch" in names, (
+        "the stale tracking ref must be pruned by _fetch() before "
+        "_pr_states() can fail and hide the branch from local_only_branches()"
+    )
+
+
 def test_applying_removes_the_merged_branch_and_keeps_the_rest(repo, capsys):
     mod = _load(repo)
 
