@@ -56,7 +56,7 @@
     ct_storage: local-lvm
     ct_template_storage: local
     ct_bridge: vmbr0
-    ct_ostemplate_name: debian-12-standard_12.7-1_amd64.tar.zst
+    ct_ostemplate_name: debian-12-standard_12.12-1_amd64.tar.zst
     ct_unprivileged: true
     ct_onboot: false
     ct_start_after_create: false
@@ -242,30 +242,40 @@
       changed_when: true
       when: existing_ct.rc != 0
 
-    - name: Write a default-deny firewall rules file for the container
+    - name: Write a default-deny firewall rules file for the container  # noqa: command-instead-of-module
       # Third of the three things Proxmox needs, the other two being the vNIC's
       # firewall=1 and the datacenter switch asserted above. An empty rules file
       # with policy_in: DROP means nothing reaches the container until a rule is
       # added deliberately. Hardening beyond this posture is a separate task.
       #
-      # No `mode:` here, deliberately. /etc/pve is pmxcfs, a FUSE cluster
-      # filesystem that hardcodes its own permissions and rejects chmod() with
-      # EPERM. The copy module chmods after writing, so setting mode makes this
-      # task fail on a real node — halfway through provisioning, after the
-      # container already exists.
-      ansible.builtin.copy:
-        dest: "/etc/pve/firewall/{{ ct_id }}.fw"
-        content: |
-          [OPTIONS]
-          enable: 1
-          policy_in: DROP
-          policy_out: ACCEPT
+      # A plain shell redirect, not ansible.builtin.copy. /etc/pve is pmxcfs, a
+      # FUSE cluster filesystem that rejects both chmod() (the documented
+      # reason `mode:` is never set on files here) and, proven live during
+      # #209's runner-CT provisioning (opskit provision-runner-lxc.yml,
+      # commit c80d9a5), the atomic tmp-file-plus-rename dance copy uses even
+      # with unsafe_writes: true — both failed with EPERM against a real node.
+      # `cat > file <<'EOF'` does nothing but open/write/close, the one
+      # sequence pmxcfs actually supports. A per-line ignore: the linter's
+      # suggested replacement is the module this exists to avoid.
+      #
+      # Still gated on existing_ct.rc != 0, deliberately: this play's contract
+      # is create-only, never reconfigure (enforced by
+      # test_creation_only_runs_when_the_container_is_absent). That means a
+      # container that got created but whose rules file failed to write on a
+      # prior run is NOT self-healed by re-running this play — it takes the
+      # "already exists" branch and skips straight past this task, silently
+      # leaving that container without a rules file (opskit #240).
+      ansible.builtin.shell: |
+        cat > /etc/pve/firewall/{{ ct_id }}.fw <<'FWEOF'
+        [OPTIONS]
+        enable: 1
+        policy_in: DROP
+        policy_out: ACCEPT
 
-          [RULES]
-          # Intentionally empty: default-deny. Add rules deliberately, never by
-          # default-permit (opskit #150, #187).
-        force: false
+        [RULES]
+        FWEOF
       when: existing_ct.rc != 0
+      changed_when: true
 
     - name: Start the container
       ansible.builtin.command: "pct start {{ ct_id }}"
