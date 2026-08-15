@@ -14,6 +14,12 @@ data/
 # published/communal document. See SESSION-LOG.md's own header (opskit #217).
 /SESSION-LOG.md
 
+# Same reasoning as SESSION-LOG.md above: local session-to-session handoff,
+# not a collaborative/published document. Detailed real-data handoffs live in
+# the gitignored environment layer; this was only ever a generic pointer to
+# those, so losing shared-repo tracking costs nothing.
+/RESUME.md
+
 # Semaphore state (generated from catalogue, not canonical)
 semaphore-state/
 
