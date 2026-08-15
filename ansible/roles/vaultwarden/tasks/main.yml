@@ -29,12 +29,13 @@
     owner: root
     group: root
     mode: "0640"
+  no_log: true  # rendered file embeds the ADMIN_TOKEN Argon2id hash
   notify: restart vaultwarden
 
 - name: Enable vaultwarden at boot
   ansible.builtin.command: "rc-update add {{ vaultwarden_service }} default"
   register: vaultwarden_rc_update
-  changed_when: "'already installed' not in (vaultwarden_rc_update.stderr | default(''))"
+  changed_when: "'already installed' not in (vaultwarden_rc_update.stdout | default(''))"
 
 - name: Check vaultwarden service status
   ansible.builtin.command: "rc-service {{ vaultwarden_service }} status"
