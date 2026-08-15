@@ -162,6 +162,44 @@ def test_creation_only_runs_when_the_container_is_absent():
         )
 
 
+def test_firewall_rules_file_presence_is_verified_on_every_run():
+    """opskit #240: the create-only gate means a container created but whose
+    rules-file write failed on a prior run is never re-attempted — the
+    'already exists' branch skips straight past it. This check must run
+    regardless of existing_ct, so that gap fails loudly instead of silently
+    leaving an unfirewalled container behind."""
+    stat_tasks = [
+        t for t in _flatten(_tasks())
+        if t.get("ansible.builtin.stat", {}).get("path") == "/etc/pve/firewall/{{ ct_id }}.fw"
+    ]
+    assert stat_tasks, "nothing checks whether the rules file actually exists"
+    for task, guard in _with_guards(_tasks()):
+        if task in stat_tasks:
+            assert "existing_ct" not in guard, (
+                "the rules-file existence check must not be gated on "
+                "existing_ct, or it never runs for a container that already "
+                "exists — exactly the case this test guards against"
+            )
+
+
+def test_a_missing_firewall_rules_file_fails_the_run_loudly():
+    asserts = [
+        t for t in _flatten(_tasks())
+        if "ansible.builtin.assert" in t
+        and "ct_firewall_rules_file" in str(t["ansible.builtin.assert"].get("that", ""))
+    ]
+    assert asserts, "nothing asserts on the rules-file stat result"
+    condition = str(asserts[0]["ansible.builtin.assert"]["that"])
+    assert "stat.exists" in condition
+
+    for task, guard in _with_guards(_tasks()):
+        if task in asserts:
+            assert "existing_ct" not in guard, (
+                "the loud-failure assert must also run unconditionally, or "
+                "an existing container with a missing rules file passes silently"
+            )
+
+
 def test_no_task_sets_a_mode_on_the_proxmox_cluster_filesystem():
     """/etc/pve is pmxcfs, a FUSE filesystem that rejects chmod() with EPERM.
     The copy module chmods after writing, so a `mode:` there fails the run
