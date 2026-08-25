@@ -14,7 +14,8 @@
 # Files updated: pyproject.toml, install.sh
 
 set -euo pipefail
-readonly REPO_ROOT="$(git rev-parse --show-toplevel)"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+readonly REPO_ROOT
 
 _usage() {
     echo "Usage:" >&2
