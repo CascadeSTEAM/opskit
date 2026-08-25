@@ -627,7 +627,7 @@ _opskit_completion() {{
 complete -F _opskit_completion opskit
 """
 
-COMPLETION_ZSH = """\
+COMPLETION_ZSH = r"""\
 #compdef opskit
 _opskit() {{
     local -a commands
