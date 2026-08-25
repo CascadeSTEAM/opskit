@@ -10,6 +10,7 @@ OPSKIT = ROOT / "bin" / "opskit"
 
 
 def run_env_create(tmp_root: Path, name: str, *extra: str):
+    """Run `opskit env --create <name> --subnets ...` and return result."""
     return subprocess.run(
         [sys.executable, str(OPSKIT), "env", "--create", name, "--subnets", "192.0.2.0/24", *extra],
         capture_output=True,

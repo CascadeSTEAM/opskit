@@ -572,13 +572,18 @@ def cmd_lint(args):
 
 def cmd_init(args):
     target = Path(args.path or ".").resolve()
+    extra: list[str] = []
+    if args.name:
+        extra += ['--name', args.name]
+    if args.classification:
+        extra += ['--classification', args.classification]
+    if args.sync:
+        extra += ['--sync', args.sync]
+    if args.force:
+        extra.append('--force')
     result = subprocess.run(
-        [sys.executable, str(SCRIPT_DIR / 'opskit-aware.py'), 'init',
-         str(target),
-         '--name', args.name,
-         '--classification', args.classification,
-         '--sync', args.sync,
-         *(['--force'] if args.force else [])],
+        [sys.executable, str(SCRIPT_DIR / 'opskit-aware.py'), 'init', str(target)]
+        + extra,
         cwd=str(target),
         env={**os.environ, 'OPSKIT_ROOT': str(REPO_ROOT)},
         capture_output=True,
