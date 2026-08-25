@@ -4,17 +4,50 @@ How to stand up a **fully capable** opskit workstation — one where `make test`
 passes, the pre-commit guards run, playbooks execute, and the domain subagents
 can actually reach devices through their sanctioned tool paths.
 
-A bare `git clone` plus `bash install.sh` gets you the CLI. It does **not** get
-you a working toolkit: the Ansible collections are gitignored, the MCP servers
-that back the subagents live outside this repo, and every credential path
-depends on an unlocked vault session. This document covers the whole chain.
+## Quick start (recommended)
 
-Run `bash install.sh` at any point to see which of these layers are present —
-it checks each dependency below and reports what a missing one disables.
+```bash
+# 1. Clone the repo
+git clone <opskit remote> $HOME/Projects/opskit
+cd $HOME/Projects/opskit
 
----
+# 2. Run the installer — interactive wizard on TTY, diagnostic in a pipe
+bash install.sh
+```
 
-## 0. What "installed" means
+`install.sh` is **idempotent**: re-running it skips what's already done and
+reports what's missing. On TTY it launches a **wizard** that walks you through
+each step in plain language; in a pipe or with `--check` it runs diagnostic
+only.
+
+| Flag | Behaviour |
+|------|-----------|
+| *(none, TTY)* | Interactive wizard — step by step |
+| `--auto` | Non-interactive — skips done, auto-approves |
+| `--check` | Diagnostic only — reports state, installs nothing |
+| `--quick` | Installs only missing `apt` packages |
+| `--refresh` | Wipes state, reinstalls everything |
+
+State lives in `~/.opskit-install/state/` (safe to delete).
+
+At the end, the installer lists **manual steps** (SSH config, vault access,
+environment clone) with copy-paste commands — these require your credentials
+and cannot be automated.
+
+For a fully capable workstation, the wizard guides you through these layers:
+
+| Layer | What it installs |
+|-------|-----------------|
+| 1. CLI tools | `curl`, `git`, `sudo`, `unzip`, `xclip` (apt) |
+| 2. Python 3 + pip | `python3`, `python3-venv`, `python3-pip` |
+| 3. Ansible | `ansible-core` in an isolated venv (`~/.local/opskit-ansible`) |
+| 4. OpsKit CLI | Symlink of `bin/opskit` into `~/.local/bin` |
+| 5. MCP setup | Scaffold + credential guidance (vault required) |
+
+Layers 1–4 are automated. Layer 5 and everything in §§6–7 below requires
+credentials that must be provided manually.
+
+## What "installed" means
 
 Installation is five separable layers. You can stop after any of them; each
 one buys a specific capability.
@@ -29,6 +62,14 @@ one buys a specific capability.
 
 Layers 1–3 are reproducible from this repo alone. Layers 4 and 5 require
 material that is deliberately **not** in git — see §6 and §7.
+
+## Manual install (advanced)
+
+If you prefer to install each layer by hand, or need a non-standard setup,
+the sections below document each layer and its dependencies in detail.
+For most users, `bash install.sh` replaces these sections entirely.
+
+---
 
 ---
 
@@ -378,7 +419,7 @@ remote MCP server that authenticates as you.
 Run these in order. Each one gates the next.
 
 ```bash
-bash install.sh                     # full dependency preflight
+bash install.sh --check             # dependency preflight (or just: bash install.sh)
 bash bin/setup-hooks.sh --check     # commit guards active
 opskit check                        # core deps + hooks + environments
 make test                           # the CI gate
@@ -420,7 +461,7 @@ Then verify the agent layer, which none of the above touches:
 Shortest correct order for a new workstation:
 
 ```bash
-# 1. base
+# 1. base (installer handles most of this)
 sudo apt install -y git python3 python3-venv python3-pip nmap \
                     openssh-client curl jq make shellcheck pipx
 #    + gitleaks binary → /usr/local/bin
@@ -429,9 +470,9 @@ sudo apt install -y git python3 python3-venv python3-pip nmap \
 nvm install 22 && npm install -g mikromcp @bitwarden/cli
 pipx install --include-deps ansible && pipx install ansible-lint
 
-# 3. repo
+# 3. repo + installer
 git clone <opskit remote> && cd opskit
-bash install.sh
+bash install.sh                         # wizard or: bash install.sh --auto
 bash bin/setup-hooks.sh
 make deps
 ansible-galaxy collection install -r requirements.yml
@@ -447,5 +488,5 @@ export BW_SESSION=$(bw unlock --raw)
 
 # 5. environments + verify
 bash bin/env-sync.sh <env> clone
-bash install.sh && opskit check && make test
+bash install.sh --check && opskit check && make test
 ```
