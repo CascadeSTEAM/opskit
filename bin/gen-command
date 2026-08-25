@@ -1,0 +1,597 @@
+#!/usr/bin/env python3
+"""gen-command — scaffold an opencode slash command + skill pair.
+
+Creates a complete, consistent command + skill triple:
+  1. SKILL.md in .opencode/skills/<name>/
+  2. Command markdown in .opencode/command/<name>.md
+  3. Ladder registration via automation-ladder.py
+
+Usage:
+  bin/gen-command <name>                          # interactive wizard
+  bin/gen-command <name> --auto --description ... # non-interactive
+  bin/gen-command --check <name>                   # validate one pair
+  bin/gen-command --check-all                      # audit all scaffolded commands
+  bin/gen-command <name> --dry-run --description ... # preview without writing
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+DEFAULT_COMMANDS_DIR = Path(".opencode") / "command"
+DEFAULT_SKILLS_DIR = Path(".opencode") / "skills"
+
+TEMPLATES = {
+    "skill-loader": (
+        'Call the skill tool to load the "{name}" skill, '
+        "then follow its instructions exactly.\n\n$ARGUMENTS"
+    ),
+    "inline": (
+        "# {name}\n\n"
+        "{description}\n\n"
+        "## Steps\n\n"
+        "1. <procedure steps>\n\n"
+        "## Failure handling\n\n"
+        "- <failure mode -> what to do>\n\n"
+        "## Do NOT\n\n"
+        "- <anti-pattern>\n"
+    ),
+    "hybrid": (
+        'Call the skill tool to load the "{name}" skill, '
+        "then follow its instructions exactly.\n\n"
+        "$ARGUMENTS",
+    ),
+}
+
+
+# ── Config helpers ────────────────────────────────────────────────────────────
+
+
+def write_command_file(cmd_dir: Path, name: str, description: str, template: str) -> Path:
+    """Write a command markdown file with YAML frontmatter."""
+    cmd_dir.mkdir(parents=True, exist_ok=True)
+    cmd_file = cmd_dir / f"{name}.md"
+
+    # Create backup if exists
+    if cmd_file.is_file():
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup = cmd_file.with_suffix(cmd_file.suffix + f".bak-{stamp}")
+        backup.write_text(cmd_file.read_text())
+
+    # Write with frontmatter
+    content = f"---\ndescription: {description}\n---\n\n{template}\n"
+    cmd_file.write_text(content)
+    return cmd_file
+
+
+def read_command_file(cmd_dir: Path, name: str) -> dict | None:
+    """Read a command markdown file, return (description, template)."""
+    cmd_file = cmd_dir / f"{name}.md"
+    if not cmd_file.is_file():
+        return None
+
+    content = cmd_file.read_text()
+    # Extract frontmatter
+    import re
+    fm_match = re.match(r"^---\n(.*?)\n---\n?(.*)$", content, re.DOTALL)
+    if fm_match:
+        fm_text = fm_match.group(1)
+        template = fm_match.group(2).strip()
+        desc = ""
+        for line in fm_text.split("\n"):
+            if line.startswith("description:"):
+                desc = line.split(":", 1)[1].strip()
+                break
+        return {"description": desc, "template": template}
+    return {"description": "", "template": content.strip()}
+
+
+# ── Ladder helpers ────────────────────────────────────────────────────────────
+
+
+def find_automation_ladder() -> Path | None:
+    """Find automation-ladder.py relative to this script's location."""
+    script_dir = Path(__file__).resolve().parent
+    ladder = script_dir / "automation-ladder.py"
+    if ladder.is_file():
+        return ladder
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "bin" / "automation-ladder.py"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def call_ladder(subcmd: str, extra_args: list[str]) -> dict:
+    """Run an automation-ladder.py subcommand, return its JSON output."""
+    ladder = find_automation_ladder()
+    if not ladder:
+        print(
+            f"WARNING: automation-ladder.py not found near {Path(__file__).resolve()}",
+            file=sys.stderr,
+        )
+        return {}
+
+    result = subprocess.run(
+        [sys.executable, str(ladder), subcmd] + extra_args,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f"Ladder error ({subcmd}): {result.stderr.strip()}", file=sys.stderr)
+        if subcmd in ("new-skill", "tick", "sync-skills"):
+            sys.exit(1)
+        return {}
+
+    try:
+        return json.loads(result.stdout.strip())
+    except json.JSONDecodeError:
+        return {}
+
+
+# ── Template helpers ──────────────────────────────────────────────────────────
+
+
+def render_template(name: str, template_type: str, description: str) -> str:
+    """Render a command template string."""
+    if template_type == "inline":
+        tmpl = TEMPLATES["inline"]
+        return tmpl.format(name=name, description=description)
+    tmpl = TEMPLATES[template_type]
+    if isinstance(tmpl, tuple):
+        tmpl = tmpl[0]
+    return tmpl.format(name=name)
+
+
+# ── Validation helpers ────────────────────────────────────────────────────────
+
+
+def validate_name(name: str) -> str:
+    """Validate and normalize command/skill name."""
+    if not name or not name.strip():
+        return ""
+    return name.strip().lower().replace("_", "-")
+
+
+def validate_description(desc: str) -> bool:
+    """Return True if description is non-empty and meaningful."""
+    if not desc or not desc.strip():
+        return False
+    return len(desc.strip()) >= 10
+
+
+def validate_triggers(triggers: str) -> list[str]:
+    """Parse comma-separated triggers into a clean list."""
+    if not triggers or not triggers.strip():
+        return []
+    return [t.strip() for t in triggers.split(",") if t.strip()]
+
+
+def skill_file_exists(name: str) -> bool:
+    """Check if .opencode/skills/<name>/SKILL.md exists."""
+    local = DEFAULT_SKILLS_DIR / name / "SKILL.md"
+    if local.is_file():
+        return True
+    return False
+
+
+def command_file_exists(name: str, cmd_dir: Path) -> bool:
+    """Check if .opencode/command/<name>.md exists."""
+    cmd_file = cmd_dir / f"{name}.md"
+    return cmd_file.is_file()
+
+
+def skill_in_ladder(name: str) -> bool:
+    """Check if skill is registered in automation-ladder ledger."""
+    result = call_ladder("status", [])
+    skills = result.get("skills", {})
+    return name in skills and skills[name].get("count", 0) > 0
+
+
+# ── Wizard (interactive) ─────────────────────────────────────────────────────
+
+
+def wizard(name: str) -> dict:
+    """Interactive wizard to collect command parameters."""
+    if not name:
+        name = _prompt("Command name (e.g. my-skill): ", default="")
+        if not name.strip():
+            print("ERROR: name is required", file=sys.stderr)
+            sys.exit(1)
+    name = validate_name(name)
+
+    type_choices = "skill-loader, inline, hybrid"
+    type_default = "skill-loader"
+    type_val = _prompt(
+        f"Template type ({type_choices}): ",
+        default=type_default,
+        choices=["skill-loader", "inline", "hybrid"],
+    )
+
+    desc = _prompt(
+        "Description (what does it do, when to use it): ",
+        default="",
+    )
+    if not validate_description(desc):
+        print("ERROR: description must be at least 10 characters", file=sys.stderr)
+        sys.exit(1)
+
+    default_triggers = f"{name}, do {name}, handle {name}"
+    triggers_str = _prompt(
+        f"Triggers (comma-separated, e.g. '{default_triggers}'): ",
+        default=default_triggers,
+    )
+    triggers = validate_triggers(triggers_str)
+    if not triggers:
+        triggers = [name, f"do {name}"]
+
+    return {
+        "name": name,
+        "type": type_val,
+        "description": desc,
+        "triggers": ", ".join(triggers),
+    }
+
+
+def _prompt(
+    question: str,
+    default: str = "",
+    choices: list[str] | None = None,
+) -> str:
+    """Simple interactive prompt with optional choices."""
+    if default:
+        q = f"{question} [{default}]: "
+    else:
+        q = f"{question}: "
+
+    try:
+        answer = input(q)
+    except EOFError:
+        answer = ""
+
+    answer = answer.strip()
+    if not answer and default:
+        return default
+
+    if choices and answer not in choices:
+        print(f"  Valid choices: {', '.join(choices)}")
+        return _prompt(question, default, choices)
+
+    return answer
+
+
+# ── Scaffold ──────────────────────────────────────────────────────────────────
+
+
+def cmd_scaffold(name: str, auto: bool, **kwargs) -> dict:
+    """Scaffold a new command + skill pair."""
+    cmd_dir = kwargs.get("cmd_dir", DEFAULT_COMMANDS_DIR)
+    skills_dir = kwargs.get("skills_dir", DEFAULT_SKILLS_DIR)
+
+    has_explicit = any(kwargs.get(k) for k in ("description", "triggers", "type"))
+
+    if auto or kwargs.get("dry_run", False) or has_explicit:
+        if not name:
+            print("ERROR: name is required", file=sys.stderr)
+            sys.exit(1)
+        name = validate_name(name)
+
+        params = {
+            "name": name,
+            "type": kwargs.get("type", "skill-loader"),
+            "description": kwargs.get("description", ""),
+            "triggers": kwargs.get("triggers", ""),
+        }
+
+        if not validate_description(params["description"]):
+            print(
+                "ERROR: description is required "
+                "(use --description)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        if not params["triggers"]:
+            params["triggers"] = f"{name}, do {name}"
+
+        params["triggers"] = ", ".join(validate_triggers(params["triggers"]))
+    else:
+        params = wizard(name)
+
+    name = params["name"]
+    template_type = params["type"]
+    description = params["description"]
+
+    force = kwargs.get("force", False)
+    dry_run = kwargs.get("dry_run", False)
+
+    exists_skill = skill_file_exists(name)
+    exists_cmd = command_file_exists(name, cmd_dir)
+
+    if (exists_skill or exists_cmd) and not force:
+        parts = []
+        if exists_skill:
+            parts.append(f"skill file exists at {skills_dir}/{name}/SKILL.md")
+        if exists_cmd:
+            parts.append(f"command file exists at {cmd_dir}/{name}.md")
+        print(f"ERROR: {name} already exists: {'; '.join(parts)}", file=sys.stderr)
+        print(f"  Use --force to overwrite.", file=sys.stderr)
+        sys.exit(1)
+
+    if dry_run:
+        template = render_template(name, template_type, description)
+        triggers_list = validate_triggers(params["triggers"])
+        return {
+            "dry_run": True,
+            "name": name,
+            "template_type": template_type,
+            "description": description,
+            "triggers": triggers_list,
+            "skill_file": f"{skills_dir}/{name}/SKILL.md",
+            "command_file": f"{cmd_dir}/{name}.md",
+            "command_entry": {
+                "description": description,
+                "template": template,
+            },
+            "ladder_calls": [
+                f"automation-ladder.py new-skill --name {name} "
+                f"--description \"{description}\" "
+                f"--triggers \"{params['triggers']}\"",
+                "automation-ladder.py sync-skills",
+                f"automation-ladder.py tick --skill {name}",
+            ],
+            "note": "No files written (--dry-run).",
+        }
+
+    # Step 1: Create or update skill
+    if not force or not (skills_dir / name / "SKILL.md").exists():
+        # Skill doesn't exist or not forcing — create fresh
+        call_ladder(
+            "new-skill",
+            [
+                "--name", name,
+                "--description", description,
+                "--triggers", params["triggers"],
+            ],
+        )
+    else:
+        # Overwriting existing skill — update via tick, don't re-create
+        call_ladder("tick", ["--skill", name])
+
+    # Step 2: Ensure symlinks
+    call_ladder("sync-skills", [])
+
+    # Step 3: Ensure ladder counter is set
+    call_ladder("tick", ["--skill", name])
+
+    # Step 4: Write command file
+    template = render_template(name, template_type, description)
+    cmd_file = write_command_file(cmd_dir, name, description, template)
+
+    return {
+        "created": {
+            "skill_file": f"{skills_dir}/{name}/SKILL.md",
+            "command_file": str(cmd_file),
+        },
+        "ladder": {
+            "registered": True,
+            "count": 1,
+            "note": (
+                f"Skill '{name}' registered. "
+                f">3 ticks will offer codification (script/MCP tool)."
+            ),
+        },
+        "name": name,
+        "type": template_type,
+        "description": description,
+        "next_steps": [
+            f"Edit {skills_dir}/{name}/SKILL.md to fill in the procedure steps.",
+            f"Edit {cmd_file} to refine the command template if needed.",
+            "Run `bin/gen-command --check " + name + "` to verify.",
+        ],
+    }
+
+
+# ── Check ─────────────────────────────────────────────────────────────────────
+
+
+def cmd_check(name: str, cmd_dir: Path, skills_dir: Path) -> dict:
+    """Validate one skill + command + ladder triple."""
+    results = {
+        "name": name,
+        "checks": {},
+    }
+
+    # Check 1: Skill file exists
+    results["checks"]["skill_file"] = {
+        "exists": skill_file_exists(name),
+        "path": str(skills_dir / name / "SKILL.md"),
+    }
+
+    # Check 2: Command file exists
+    cmd_exists = command_file_exists(name, cmd_dir)
+    cmd_data = read_command_file(cmd_dir, name) if cmd_exists else None
+    results["checks"]["command_file"] = {
+        "exists": cmd_exists,
+        "has_description": bool(cmd_data and cmd_data.get("description")) if cmd_data else False,
+        "has_template": bool(cmd_data and cmd_data.get("template")) if cmd_data else False,
+    }
+
+    # Check 3: Ladder registration
+    in_ladder = skill_in_ladder(name)
+    results["checks"]["ladder_registration"] = {
+        "registered": in_ladder,
+    }
+
+    # Check 4: Description consistency
+    skill_desc = ""
+    if results["checks"]["skill_file"]["exists"]:
+        skill_path = skills_dir / name / "SKILL.md"
+        content = skill_path.read_text()
+        import re
+        for match in re.finditer(r"^---\n(.*?)\n---", content, re.DOTALL):
+            fm_text = match.group(1)
+            for line in fm_text.split("\n"):
+                if line.startswith("description:"):
+                    skill_desc = line.split(":", 1)[1].strip()
+                    break
+
+    cmd_desc = cmd_data.get("description", "") if cmd_data else ""
+
+    results["checks"]["description_consistency"] = {
+        "skill_matches_command": skill_desc == cmd_desc,
+        "skill_desc": skill_desc,
+        "command_desc": cmd_desc,
+    }
+
+    # Overall — each check has its own pass criterion
+    def check_ok(check: dict) -> bool:
+        if "exists" in check:
+            return check["exists"]
+        if "registered" in check:
+            return check["registered"]
+        if "skill_matches_command" in check:
+            return check["skill_matches_command"]
+        return True
+
+    all_pass = all(check_ok(c) for c in results["checks"].values())
+    results["overall"] = "PASS" if all_pass else "FAIL"
+    return results
+
+
+def cmd_check_all(cmd_dir: Path, skills_dir: Path) -> dict:
+    """Audit all scaffolded commands."""
+    if not cmd_dir.is_dir():
+        return {
+            "total": 0,
+            "commands": {},
+            "summary": {"total": 0, "passing": 0, "failing": 0},
+        }
+
+    # Find all command files
+    cmd_files = sorted(cmd_dir.glob("*.md"))
+    results = {
+        "total": len(cmd_files),
+        "commands": {},
+        "summary": {},
+    }
+
+    for cmd_file in cmd_files:
+        name = cmd_file.stem
+        check = cmd_check(name, cmd_dir, skills_dir)
+        results["commands"][name] = check
+
+    passing = sum(
+        1 for c in results["commands"].values() if c.get("overall") == "PASS"
+    )
+    results["summary"] = {
+        "total": len(results["commands"]),
+        "passing": passing,
+        "failing": len(results["commands"]) - passing,
+    }
+    return results
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "name",
+        nargs="?",
+        help="Command/skill name (e.g. my-skill)",
+    )
+
+    # Scaffold options
+    parser.add_argument(
+        "--auto", action="store_true",
+        help="Non-interactive mode (all params via flags)",
+    )
+    parser.add_argument(
+        "--description", default=None,
+        help="Command description (required with --auto)",
+    )
+    parser.add_argument(
+        "--triggers", default=None,
+        help="Comma-separated trigger phrases",
+    )
+    parser.add_argument(
+        "--type", default="skill-loader",
+        choices=["skill-loader", "inline", "hybrid"],
+        help="Command template type (default: skill-loader)",
+    )
+    parser.add_argument(
+        "--cmd-dir", type=Path, default=DEFAULT_COMMANDS_DIR,
+        help=f"Commands directory (default: {DEFAULT_COMMANDS_DIR})",
+    )
+    parser.add_argument(
+        "--skills-dir", type=Path, default=DEFAULT_SKILLS_DIR,
+        help=f"Skills directory (default: {DEFAULT_SKILLS_DIR})",
+    )
+
+    # Subcommand flags
+    check_group = parser.add_mutually_exclusive_group()
+    check_group.add_argument(
+        "--check", metavar="NAME",
+        help="Validate one skill+command+ladder triple",
+    )
+    check_group.add_argument(
+        "--check-all", action="store_true",
+        help="Audit all scaffolded commands",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Show what would be created without writing",
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Overwrite existing skill + command",
+    )
+
+    args = parser.parse_args()
+
+    # Subcommands
+    if args.check:
+        result = cmd_check(args.check, args.cmd_dir, args.skills_dir)
+        print(json.dumps(result, indent=2))
+        sys.exit(0 if result.get("overall") == "PASS" else 1)
+
+    if args.check_all:
+        result = cmd_check_all(args.cmd_dir, args.skills_dir)
+        print(json.dumps(result, indent=2))
+        summary = result.get("summary", {})
+        fail_count = summary.get("failing", 0)
+        sys.exit(1 if fail_count > 0 else 0)
+
+    # Scaffold (default action)
+    if not args.name:
+        parser.print_help(sys.stderr)
+        sys.exit(1)
+
+    result = cmd_scaffold(
+        args.name,
+        args.auto,
+        description=args.description,
+        triggers=args.triggers,
+        type=args.type,
+        cmd_dir=args.cmd_dir,
+        skills_dir=args.skills_dir,
+        dry_run=args.dry_run,
+        force=args.force,
+    )
+
+    print(json.dumps(result, indent=2))
+
+
+if __name__ == "__main__":
+    main()
