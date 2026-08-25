@@ -2,8 +2,10 @@
 """
 opskit — unified CLI for network operations.
 
-  opskit init my-env --subnets 192.0.2.0/24        scaffold a new environment
+  opskit env create my-env --subnets 192.0.2.0/24  scaffold a new environment
   opskit env my-env                                switch to environment
+  opskit env                                       show active environment
+  opskit init [path]                               scaffold OpsKit member manifest
   opskit scan                                      full scan pipeline
   opskit status                                    inventory summary
   opskit lint                                      inventory vs device record check
@@ -66,7 +68,7 @@ def _resolve_env(name: str | None) -> str:
         sys.exit(1)
     if not _env_yml(name).exists():
         print(f"ERROR: Environment '{name}' not found.", file=sys.stderr)
-        print(f"  Run: opskit init {name} --subnets <cidr,...>", file=sys.stderr)
+        print(f"  Run: opskit env create {name} --subnets <cidr,...>", file=sys.stderr)
         sys.exit(1)
     return name
 
@@ -151,7 +153,7 @@ network:
 """
 
 
-def cmd_init(args):
+def cmd_env_create(args):
     name = args.name
     if not name:
         # Interactive mode
@@ -448,32 +450,56 @@ def cmd_env(args):
             print(e)
         return
 
+    if args.create:
+        cmd_env_create(args)
+        return
+
     if args.name:
-        result = subprocess.run(
-            ['bash', str(SCRIPT_DIR / 'switch-env.sh'), args.name],
-            cwd=str(REPO_ROOT),
-        )
-        sys.exit(result.returncode)
-    else:
-        current = _active_env()
-        if current:
-            config = _load_env(current)
-            print(f"  Active: {config.get('display_name', current)} ({current})")
-            print(f"  Subnets: {', '.join(config.get('subnets', {}).values())}")
-        else:
-            print("  No active environment.")
-        envs = _list_envs()
-        if envs:
-            print(f"\n  Available environments ({len(envs)}):")
-            for e in envs:
+        env_yml = _env_yml(args.name)
+        if env_yml.exists():
+            result = subprocess.run(
+                ['bash', str(SCRIPT_DIR / 'switch-env.sh'), args.name],
+                cwd=str(REPO_ROOT),
+            )
+            sys.exit(result.returncode)
+        # Environment doesn't exist — offer to scaffold it
+        print(f"  Environment '{args.name}' does not exist.")
+        print()
+        print(f"  Options:")
+        print(f"    opskit env create {args.name} --subnets 192.0.2.0/24  # scaffold now")
+        print(f"    opskit env create                                    # interactive scaffold")
+        if _list_envs():
+            print(f"\n  Existing environments:")
+            for e in _list_envs():
                 try:
                     cfg = _load_env(e)
                     print(f"    {e:20s}  {cfg.get('display_name', '')}")
                 except Exception:
                     print(f"    {e:20s}")
+        else:
+            print("\n  No environments yet — run: opskit env create")
+        sys.exit(1)
 
-        if not current:
-            print("\n  Run: opskit env <name>  to switch")
+    current = _active_env()
+    if current:
+        config = _load_env(current)
+        print(f"  Active: {config.get('display_name', current)} ({current})")
+        print(f"  Subnets: {', '.join(config.get('subnets', {}).values())}")
+    else:
+        print("  No active environment.")
+    envs = _list_envs()
+    if envs:
+        print(f"\n  Available environments ({len(envs)}):")
+        for e in envs:
+            try:
+                cfg = _load_env(e)
+                print(f"    {e:20s}  {cfg.get('display_name', '')}")
+            except Exception:
+                print(f"    {e:20s}")
+
+    if not current:
+        print("\n  Run: opskit env create <name>  to create an environment")
+        print(f"  Then: opskit env <name>       to switch")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -541,6 +567,30 @@ def cmd_lint(args):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# init (OpsKit-aware member scaffold)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def cmd_init(args):
+    target = Path(args.path or ".").resolve()
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / 'opskit-aware.py'), 'init',
+         str(target),
+         '--name', args.name,
+         '--classification', args.classification,
+         '--sync', args.sync,
+         *(['--force'] if args.force else [])],
+        cwd=str(target),
+        env={**os.environ, 'OPSKIT_ROOT': str(REPO_ROOT)},
+        capture_output=True,
+        text=True,
+    )
+    print(result.stdout, end='')
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end='')
+    sys.exit(result.returncode)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # setup-completion
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -552,7 +602,10 @@ _opskit_completion() {{
     COMPREPLY=()
 
     case "${{words[1]}}" in
-        init|env)
+        env)
+            COMPREPLY=( $(compgen -W "create" -- "$cur") )
+            ;;
+        init)
             COMPREPLY=( $(compgen -W "" -- "$cur") )
             ;;
         scan|status|lint)
@@ -562,7 +615,7 @@ _opskit_completion() {{
             COMPREPLY=( $(compgen -W "bash zsh" -- "$cur") )
             ;;
         *)
-            COMPREPLY=( $(compgen -W "init scan status lint env setup-completion" -- "$cur") )
+            COMPREPLY=( $(compgen -W "env init scan status lint env create setup-completion" -- "$cur") )
             ;;
     esac
 }}
@@ -573,7 +626,13 @@ COMPLETION_ZSH = """\
 #compdef opskit
 _opskit() {{
     local -a commands
-    commands=(init:'scaffold new environment' scan:'full network scan' status:'inventory summary' lint:'inventory vs device record check' env:'switch environment' setup-completion:'install tab completion')
+    commands=(env:'show or switch active environment'
+              env\ create:'scaffold a new environment'
+              init:'scaffold OpsKit member manifest'
+              scan:'full network scan'
+              status:'inventory summary'
+              lint:'inventory vs device record check'
+              setup-completion:'install tab completion')
     _describe 'command' commands
     _arguments '--env[environment name]:env:'
 }}
@@ -654,7 +713,7 @@ def cmd_check(args):
         if len(envs) > 5:
             print("  " + " " * 28 + f"... and {len(envs) - 5} more")
     else:
-        warn("no environments found (run: opskit init <name>)")
+        warn("no environments found (run: opskit env create <name>)")
 
     # Active env
     active = _active_env()
@@ -729,8 +788,9 @@ def main():
         epilog="""
 examples:
   opskit check                                    verify everything is ready
-  opskit init homelab --subnets 192.0.2.0/24   scaffold a new environment
+  opskit env create homelab --subnets 192.0.2.0/24  scaffold a new environment
   opskit env homelab                              switch to environment
+  opskit init                                     scaffold OpsKit member manifest
   opskit scan                                     discover + enrich + resolve
   opskit scan --dry-run                           preview without touching network
   opskit status                                   inventory summary
@@ -753,12 +813,17 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
     # setup
     pu = sub.add_parser('setup', help='install python dependencies + git hooks')
 
-    # init
-    pi = sub.add_parser('init', help='scaffold a new environment')
-    pi.add_argument('name', nargs='?', help='environment name (slug) — prompts interactively if omitted')
-    pi.add_argument('--display-name', help='human-readable name')
-    pi.add_argument('--subnets', help='comma-separated CIDR ranges (e.g. "192.0.2.0/24,198.51.100.0/24")')
-    pi.add_argument('--ticket-prefix', help='helpdesk ticket prefix (e.g. "ACME")')
+    # init — scaffold OpsKit member manifest in a project
+    pi = sub.add_parser('init', help='scaffold .opskit/ member manifest')
+    pi.add_argument('path', nargs='?', default='.', help='target directory (default: cwd)')
+    pi.add_argument('--name', help='member name (default: slug of dir name)')
+    pi.add_argument('--classification', default='public',
+                    choices=['public', 'internal', 'client'],
+                    help='data classification for the member')
+    pi.add_argument('--sync', default='symlink',
+                    choices=['clone', 'symlink'],
+                    help='how OpsKit syncs the member')
+    pi.add_argument('--force', action='store_true', help='overwrite existing .opskit/ (backs up)')
 
     # scan
     ps = sub.add_parser('scan', help='full network scan pipeline')
@@ -783,10 +848,16 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
     pl = sub.add_parser('lint', help='check inventory hosts against device YAMLs')
     pl.add_argument('--env', help='environment name (default: ACTIVE_ENV)')
 
-    # env
+    # env — show/switch environment; env --create scaffolds a new one
     pe = sub.add_parser('env', help='show or switch active environment')
     pe.add_argument('name', nargs='?', help='environment name to switch to')
     pe.add_argument('--list', action='store_true', help='list environment names only')
+    pe.add_argument('--create', action='store_true',
+                    help='scaffold a new environment (use name arg or prompt)')
+    # env --create shares the same sub-options as the old 'init'
+    pe.add_argument('--display-name', help='human-readable name (for create)')
+    pe.add_argument('--subnets', help='comma-separated CIDR ranges (e.g. "192.0.2.0/24", for create)')
+    pe.add_argument('--ticket-prefix', help='helpdesk ticket prefix (e.g. "ACME", for create)')
 
     # setup-completion
     pc = sub.add_parser('setup-completion', help='install tab completion')
@@ -804,7 +875,10 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
     elif args.command == 'lint':
         cmd_lint(args)
     elif args.command == 'env':
-        cmd_env(args)
+        if getattr(args, 'create', False):
+            cmd_env_create(args)
+        else:
+            cmd_env(args)
     elif args.command == 'check':
         cmd_check(args)
     elif args.command == 'setup':

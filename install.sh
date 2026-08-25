@@ -376,7 +376,7 @@ except Exception: sys.exit(1)
         note_ok "environments" "$ENV_COUNT configured"
     else
         note_warn "environments" "none — the toolkit has nothing to operate on" \
-            "opskit init <name>   |   bash bin/env-sync.sh <env> clone"
+            "opskit env create <name>   |   bash bin/env-sync.sh <env> clone"
     fi
 
     if [ -f "$REPO_ROOT/.env" ]; then
@@ -413,7 +413,7 @@ echo ""
 echo -e "${BOLD}      Done.  Try it:  opskit --help${NC}"
 echo ""
 echo "  Example first run:"
-echo "    opskit init homelab --subnets 198.51.100.0/24"
+echo "    opskit env create homelab --subnets 198.51.100.0/24"
 echo "    opskit env homelab"
 echo "    opskit scan"
 
