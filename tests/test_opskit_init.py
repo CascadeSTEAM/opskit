@@ -1,4 +1,4 @@
-"""Tests for `opskit init` — scaffold + case-collision guard (issue #23)."""
+"""Tests for `opskit env create` — scaffold environment + case-collision guard (issue #23)."""
 import subprocess
 import sys
 from pathlib import Path
@@ -9,9 +9,18 @@ ROOT = Path(__file__).resolve().parent.parent
 OPSKIT = ROOT / "bin" / "opskit"
 
 
-def run_init(tmp_root: Path, name: str, *extra: str):
+def run_env_create(tmp_root: Path, name: str, *extra: str):
     return subprocess.run(
-        [sys.executable, str(OPSKIT), "init", name, "--subnets", "192.0.2.0/24", *extra],
+        [sys.executable, str(OPSKIT), "env", "--create", name, "--subnets", "192.0.2.0/24", *extra],
+        capture_output=True,
+        text=True,
+        env={"OPSKIT_ROOT": str(tmp_root), "PATH": "/usr/bin:/bin"},
+    )
+
+
+def run_env_switch(tmp_root: Path, name: str):
+    return subprocess.run(
+        [sys.executable, str(OPSKIT), "env", name],
         capture_output=True,
         text=True,
         env={"OPSKIT_ROOT": str(tmp_root), "PATH": "/usr/bin:/bin"},
@@ -24,8 +33,8 @@ def tmp_root(tmp_path):
     return tmp_path
 
 
-def test_init_scaffolds_environment(tmp_root):
-    result = run_init(tmp_root, "acme")
+def test_env_create_scaffolds_environment(tmp_root):
+    result = run_env_create(tmp_root, "acme")
     assert result.returncode == 0, result.stderr
     env_dir = tmp_root / "environments" / "acme"
     assert (env_dir / "env.yml").is_file()
@@ -34,16 +43,16 @@ def test_init_scaffolds_environment(tmp_root):
     assert (env_dir / "datasets" / "devices").is_dir()
 
 
-def test_init_refuses_exact_duplicate(tmp_root):
-    assert run_init(tmp_root, "acme").returncode == 0
-    result = run_init(tmp_root, "acme")
+def test_env_create_refuses_exact_duplicate(tmp_root):
+    assert run_env_create(tmp_root, "acme").returncode == 0
+    result = run_env_create(tmp_root, "acme")
     assert result.returncode == 1
     assert "already exists" in result.stderr
 
 
-def test_init_refuses_case_insensitive_duplicate(tmp_root):
-    assert run_init(tmp_root, "acme").returncode == 0
-    result = run_init(tmp_root, "ACME")
+def test_env_create_refuses_case_insensitive_duplicate(tmp_root):
+    assert run_env_create(tmp_root, "acme").returncode == 0
+    result = run_env_create(tmp_root, "ACME")
     assert result.returncode == 1
     assert "differs" in result.stderr
     assert "only by case" in result.stderr
@@ -52,21 +61,47 @@ def test_init_refuses_case_insensitive_duplicate(tmp_root):
     assert not (tmp_root / "environments" / "ACME").exists()
 
 
-def test_init_case_collision_detected_mixed_case(tmp_root):
-    assert run_init(tmp_root, "AcmeCorp").returncode == 0
-    result = run_init(tmp_root, "acmecorp")
+def test_env_create_case_collision_detected_mixed_case(tmp_root):
+    assert run_env_create(tmp_root, "AcmeCorp").returncode == 0
+    result = run_env_create(tmp_root, "acmecorp")
     assert result.returncode == 1
     assert "AcmeCorp" in result.stderr
 
 
-def test_init_distinct_names_coexist(tmp_root):
-    assert run_init(tmp_root, "acme").returncode == 0
-    result = run_init(tmp_root, "acme-lab")
+def test_env_create_distinct_names_coexist(tmp_root):
+    assert run_env_create(tmp_root, "acme").returncode == 0
+    result = run_env_create(tmp_root, "acme-lab")
     assert result.returncode == 0, result.stderr
     assert (tmp_root / "environments" / "acme-lab" / "env.yml").is_file()
 
 
-def test_init_works_without_environments_dir(tmp_path):
-    result = run_init(tmp_path, "acme")
+def test_env_create_works_without_environments_dir(tmp_path):
+    result = run_env_create(tmp_path, "acme")
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "environments" / "acme" / "env.yml").is_file()
+
+
+# ── `env <name>` switch (existing env) ──────────────────────────────────────
+
+def test_env_switch_existing_env(tmp_root):
+    # Create the environment first
+    assert run_env_create(tmp_root, "acme").returncode == 0
+    # Then switch to it
+    result = run_env_switch(tmp_root, "acme")
+    assert result.returncode == 0
+
+
+# ── `env <name>` offers to create (missing env) ────────────────────────────
+
+def test_env_missing_offers_create(tmp_root):
+    result = run_env_switch(tmp_root, "nonexistent")
+    assert result.returncode == 1
+    assert "does not exist" in result.stdout
+    assert "opskit env create" in result.stdout
+
+
+def test_env_missing_no_envs_at_all(tmp_path):
+    result = run_env_switch(tmp_path, "nonexistent")
+    assert result.returncode == 1
+    assert "does not exist" in result.stdout
+    assert "opskit env create" in result.stdout

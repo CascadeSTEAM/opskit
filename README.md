@@ -21,7 +21,7 @@ cd opskit
 bash install.sh              # symlink to PATH, install completions, preflight deps
 opskit check                 # verify everything
 opskit setup                 # install pip deps + git hooks
-opskit init homelab --subnets 192.0.2.0/24
+opskit env create homelab --subnets 192.0.2.0/24
 opskit env homelab
 opskit scan                  # nmap → YAML → enrich → resolve topology
 opskit status                # inventory summary
@@ -33,8 +33,8 @@ opskit status                # inventory summary
 |---------|---------|
 | `opskit check` | Verify dependencies (python, nmap, ansible, pip packages, hooks) |
 | `opskit setup` | Install pip packages + configure git hooks |
-| `opskit init <name>` | Scaffold a new environment in `environments/<name>/` |
-| `opskit env [<name>]` | Show or switch active environment |
+| `opskit env create <name>` | Scaffold a new environment in `environments/<name>/` |
+| `opskit env [<name>]` | Show active environment, or switch to `<name>` (offers to create if missing) |
 | `opskit scan` | Full pipeline: discover → parse → write → enrich → resolve uplinks |
 | `opskit status` | Inventory summary by device role/type |
 | `opskit setup-completion [bash|zsh]` | Install tab completion |
