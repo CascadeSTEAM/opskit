@@ -25,7 +25,7 @@ A member self-declares what it contributes via a `.opskit/pack.yml` manifest
 `bin/opskit-aware.py init|check` — see `docs/opskit-aware.md`. This directory's
 `.opskit/pack.yml` (plus the tiny `agents/`, `skills/`, `docs/` it references) is
 the committed, `check`-able reference instance. OpsKit-side mount/sync tooling
-(`bin/project-sync.sh`, clone/pull/status/mount) is tracked separately.
+(`bin/project_sync.py`, clone/pull/status/mount) is tracked separately.
 
 ## Rules for a member
 
