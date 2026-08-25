@@ -40,8 +40,8 @@ fi
 # Validate semver
 [[ "$NEW_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid version: $NEW_VER" >&2; exit 1; }
 
-# Check we're on a clean working tree
-if [[ -n "$(git status --porcelain)" ]]; then
+# Check we're on a clean working tree (ignore untracked files)
+if [[ -n "$(git diff --name-only)" || -n "$(git diff --cached --name-only)" ]]; then
     echo "Working tree is dirty — commit or stash first." >&2
     exit 1
 fi
