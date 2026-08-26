@@ -1,4 +1,4 @@
-"""Tests for `opskit env create` — scaffold environment + case-collision guard (issue #23)."""
+"""Tests for `opskit env --create` — scaffold environment + case-collision guard (issue #23)."""
 import subprocess
 import sys
 from pathlib import Path
@@ -98,11 +98,11 @@ def test_env_missing_offers_create(tmp_root):
     result = run_env_switch(tmp_root, "nonexistent")
     assert result.returncode == 1
     assert "does not exist" in result.stdout
-    assert "opskit env create" in result.stdout
+    assert "opskit env --create" in result.stdout
 
 
 def test_env_missing_no_envs_at_all(tmp_path):
     result = run_env_switch(tmp_path, "nonexistent")
     assert result.returncode == 1
     assert "does not exist" in result.stdout
-    assert "opskit env create" in result.stdout
+    assert "opskit env --create" in result.stdout
