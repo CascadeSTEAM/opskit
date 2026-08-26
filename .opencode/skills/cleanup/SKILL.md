@@ -2,7 +2,7 @@
 name: cleanup
 description: Prune the branch and worktree mess a backlog run leaves behind — report first, remove on one confirmation
 mode: skill
-triggers: cleanup,clean up,prune,tidy,stale branches,housekeeping
+triggers: /cleanup,cleanup,clean up,prune,tidy,stale branches,housekeeping
 ---
 
 # cleanup
