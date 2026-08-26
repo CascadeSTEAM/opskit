@@ -7,7 +7,7 @@ triggers: cleanup,clean up,prune,tidy,stale branches,housekeeping
 
 # cleanup
 
-> Load this skill at the end of a `/plow`, or periodically on its own. A plow
+> Load this skill at the end of a `/grind`, or periodically on its own. A grind
 > run creates a branch per issue and a worktree per review agent; none of the
 > leftovers break anything, which is exactly why they pile up.
 
@@ -71,5 +71,5 @@ remote one.
 
 ## Related
 
-- `plow` skill — invokes this as its final phase
+- `grind` skill — invokes this as its final phase
 - `docs/client-data-policy.md` — why branch names count as published
