@@ -187,3 +187,109 @@ def test_the_server_declares_no_secrets_in_the_example_map():
 
     assert "collab" in example, "collab must be declared, or its launch check fails"
     assert example["collab"] == {}, "an empty object is how 'no secrets' is declared"
+
+
+# ── skill → command drift ──────────────────────────────────────────────────────
+
+def _make_skill_repo(tmp_path, skills_with_slash=True):
+    """Create a minimal repo with skills (some with slash triggers, some without)."""
+    root = tmp_path / "repo"
+    oc = root / ".opencode"
+    oc.mkdir(parents=True)
+    (oc / "skills" / "slashy").mkdir(parents=True)
+    (oc / "skills" / "plain").mkdir(parents=True)
+    (oc / "skills" / "slashy" / "SKILL.md").write_text(
+        "---\nname: slashy\ndescription: has slash\nmode: skill\n"
+        "triggers: /slashy,slashy,plow\n---\nbody\n"
+    )
+    (oc / "skills" / "plain" / "SKILL.md").write_text(
+        "---\nname: plain\ndescription: no slash\nmode: skill\n"
+        "triggers: plain,thing\n---\nbody\n"
+    )
+    cmd_dir = oc / "command"
+    # Optionally create one command file
+    return root
+
+
+def test_drift_reports_skills_with_slash_triggers_but_no_command(tmp_path):
+    """Skills whose triggers: include / patterns but lack a command file
+    are flagged as needing one."""
+    root = _make_skill_repo(tmp_path)
+    mod = _load(root)
+    result = json.loads(mod.collab_skill_command_drift())
+
+    assert result["total_skills"] >= 1
+    assert result["total_commands"] == 0
+    assert any(s["name"] == "slashy" for s in result["skills_needing_command_file"])
+
+
+def test_drift_passes_when_command_exists(tmp_path):
+    root = _make_skill_repo(tmp_path)
+    cmd_dir = root / ".opencode" / "command"
+    cmd_dir.mkdir(parents=True)
+    (cmd_dir / "slashy.md").write_text(
+        "---\ndescription: test\n---\nCall the skill tool.\n\n$ARGUMENTS\n"
+    )
+    mod = _load(root)
+    result = json.loads(mod.collab_skill_command_drift())
+
+    assert result["total_skills"] == 2
+    assert result["total_commands"] == 1
+    assert result["ok"] is True
+    assert not any(s["name"] == "slashy" for s in result["skills_needing_command_file"])
+
+
+def test_drift_counts_all_skills(tmp_path):
+    root = _make_skill_repo(tmp_path)
+    mod = _load(root)
+    result = json.loads(mod.collab_skill_command_drift())
+
+    assert result["total_skills"] == 2
+
+
+def test_create_generates_command_files(tmp_path):
+    root = _make_skill_repo(tmp_path)
+    mod = _load(root)
+    result = json.loads(mod.collab_create_commands(["slashy"]))
+
+    assert result["created"] == ["slashy"]
+    assert result["errors"] == []
+    cmd_file = root / ".opencode" / "command" / "slashy.md"
+    assert cmd_file.exists()
+    content = cmd_file.read_text()
+    assert "---" in content
+    assert "Call the skill tool to load the \"slashy\" skill" in content
+    assert "$ARGUMENTS" in content
+
+
+def test_create_skips_existing_command_file(tmp_path):
+    root = _make_skill_repo(tmp_path)
+    cmd_dir = root / ".opencode" / "command"
+    cmd_dir.mkdir(parents=True)
+    (cmd_dir / "slashy.md").write_text("---\ndescription: existing\n---\nold\n")
+    mod = _load(root)
+    result = json.loads(mod.collab_create_commands(["slashy"]))
+
+    assert "slashy" in result["skipped"]
+    # Verify the file was NOT overwritten
+    cmd_file = cmd_dir / "slashy.md"
+    assert cmd_file.read_text() == "---\ndescription: existing\n---\nold\n"
+
+
+def test_create_uses_skill_triggers_in_description(tmp_path):
+    root = _make_skill_repo(tmp_path)
+    mod = _load(root)
+    mod.collab_create_commands(["slashy"])
+    content = (root / ".opencode" / "command" / "slashy.md").read_text()
+
+    assert "/slashy" in content
+    assert "slashy" in content
+
+
+def test_create_reports_missing_skill(tmp_path):
+    root = _make_skill_repo(tmp_path)
+    mod = _load(root)
+    result = json.loads(mod.collab_create_commands(["nonexistent"]))
+
+    assert any("nonexistent" in e for e in result["errors"])
+    assert result["created"] == []

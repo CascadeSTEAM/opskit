@@ -118,3 +118,34 @@ Skills live at: `.opencode/skills/<name>/SKILL.md`
 
 Each skill is its own subdirectory. The directory name must match the `name` frontmatter field.
 OpenCode auto-discovers all skills from `.opencode/skills/` — no registration needed in `opencode.jsonc`.
+
+## ⚠ Critical: Opencode Slash Commands Are Separate From Skills
+
+**This has caused repeated session waste.** Opencode has TWO separate discovery mechanisms:
+
+1. **Skills** → `.opencode/skills/<name>/SKILL.md` — auto-discovered, triggered by `triggers:` frontmatter
+2. **Slash commands** → `.opencode/command/<name>.md` — explicit file, file stem = command name (e.g. `cleanup.md` → `/cleanup`)
+
+A skill with `/command` in its triggers does **NOT** automatically get a slash command. To create `/command`, you must also create `.opencode/command/<name>.md` with this exact format:
+
+```yaml
+---
+description: <skill description>. Use for: /<name>, <triggers>...
+---
+
+Call the skill tool to load the "<name>" skill, then follow its instructions exactly.
+
+$ARGUMENTS
+```
+
+**To check which skills need command files:**
+```bash
+python3 bin/mcp-call.py collab collab_skill_command_drift
+```
+
+**To auto-generate missing command files:**
+```bash
+python3 bin/mcp-call.py collab collab_create_commands '["skill1", "skill2"]'
+```
+
+This was automated in `collab_skill_command_drift` and `collab_create_commands` (2026-08-26). **Always run the check before creating a slash command by hand.**
