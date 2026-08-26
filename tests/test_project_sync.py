@@ -267,6 +267,8 @@ class TestSync:
         src_repo = tmp_path / "src-repo"
         src_repo.mkdir()
         subprocess.run(["git", "init"], cwd=src_repo, capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(src_repo), "config", "user.email", "test@example.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(src_repo), "config", "user.name", "test"], capture_output=True, check=True)
         (src_repo / "README").write_text("hi")
         subprocess.run(["git", "-C", str(src_repo), "add", "."], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(src_repo), "commit", "-m", "init"], capture_output=True, check=True)
