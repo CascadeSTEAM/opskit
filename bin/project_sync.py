@@ -412,7 +412,6 @@ def cmd_pull() -> dict:
 
 def _parse_frontmatter(text: str) -> tuple[dict, str]:
     """Split frontmatter from body. Returns (fm_dict, body_text)."""
-    import re
     # Handle empty frontmatter (---\n---) and non-empty cases
     m = re.match(r"^---\n(.*?)(?:\n---\n)(.*)", text, re.DOTALL)
     if not m:
@@ -458,8 +457,8 @@ def _render_claude_agent_wrapper(
     # Build trust overlay
     trust_bash = trust.get("bash", "ask")
     trust_tool_deny = list(trust.get("tool_deny", []))
-    # Merge deny lists
-    all_denies = list(set(tool_denies + trust_tool_deny))
+    # Merge deny lists — include scalar denies (bash/other permission scalars)
+    all_denies = list(set(tool_denies + scalar_denies + trust_tool_deny))
 
     fm_yaml = yaml.safe_dump(
         {"name": name, "description": desc, "member": member_name},
@@ -559,7 +558,6 @@ def cmd_mount(args: argparse.Namespace | None = None) -> dict:
                 continue
 
         trust = pack.get("trust", {}) or {}
-        member_errors: list[dict] = []
         rendered_agents: list[str] = []
         rendered_skills: list[str] = []
 

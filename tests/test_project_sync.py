@@ -454,6 +454,58 @@ class TestMount:
         # Symlink target should be relative: ../../../projects/test-member/agents/test.md
         assert oc_agent.readlink() == Path("../../../projects") / "test-member" / "agents/test.md"
 
+        # Verify CC wrapper was created (file, not symlink — generated text)
+        cc_dir = tmp_path / ".claude" / "agents"
+        cc_agent = cc_dir / "test-member-test.md"
+        assert cc_agent.is_file()
+        assert "test-member" in cc_agent.read_text()
+
+    def test_mount_scalar_denies_merged(self, tmp_path: Path):
+        """Scalar permission denies (e.g. bash: deny) must appear in the wrapper."""
+        member = tmp_path / "member"
+        member.mkdir()
+        opskit_dir = member / ".opskit"
+        opskit_dir.mkdir()
+
+        pack = {
+            "contract": 1,
+            "name": "scalar-test",
+            "data_classification": "public",
+            "agents": [{"path": "agents/test.md"}],
+            "skills": [{"path": "skills/test-skill"}],
+            "trust": {"bash": "ask", "tool_deny": []},
+        }
+        (opskit_dir / "pack.yml").write_text(yaml.safe_dump(pack))
+
+        agents_dir = member / "agents"
+        agents_dir.mkdir()
+        # Agent with scalar deny in permission (frontmatter, not body comment)
+        (agents_dir / "test.md").write_text(
+            "---\nmode: subagent\nname: test\ndescription: test agent\n"
+            "permission:\n  bash: deny\n---\n\nbody\n"
+        )
+        # Skill directory must exist for cmd_mount to render it
+        skills_dir = member / "skills" / "test-skill"
+        skills_dir.mkdir(parents=True)
+        (skills_dir / "SKILL.md").write_text("---\nname: test-skill\n---\n\nTest\n")
+
+        remotes = tmp_path / ".project-remotes"
+        remotes.write_text(f"scalar-test {member}\n")
+        projects = tmp_path / "projects"
+        projects.mkdir()
+        link = projects / "scalar-test"
+        link.symlink_to(member)
+
+        ps._REMOTES = remotes
+        ps._PROJECTS = projects
+
+        result = ps.cmd_mount()
+        assert result["summary"]["mounted"] == 1
+        # Scalar deny must appear in the CC wrapper (Claude Code generated file,
+        # not the OpenCode symlink which uses a different relative path)
+        wrapper = (tmp_path / ".claude" / "agents" / "scalar-test-test.md").read_text()
+        assert "DENY" in wrapper and "bash" in wrapper
+
     def test_mount_invalid_pack(self, tmp_path: Path):
         """Member with invalid YAML pack.yml."""
         member = tmp_path / "bad-member"
