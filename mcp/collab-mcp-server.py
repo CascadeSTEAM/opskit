@@ -188,6 +188,164 @@ def collab_tool_drift() -> str:
     }, indent=2)
 
 
+def _command_names() -> set[str]:
+    """Return set of slash command names from .opencode/command/*.md files."""
+    cmd_dir = REPO_ROOT / ".opencode" / "command"
+    if not cmd_dir.is_dir():
+        return set()
+    return {p.stem for p in cmd_dir.iterdir() if p.is_file() and p.suffix == ".md"}
+
+
+def _read_frontmatter(text: str) -> tuple[dict, str]:
+    """Return (fm_dict, body) for a doc with '---' YAML frontmatter."""
+    m = re.match(r"^---\n(.*?)\n---\n?(.*)$", text, re.DOTALL)
+    if not m:
+        return {}, text
+    try:
+        import yaml
+        fm = yaml.safe_load(m.group(1)) or {}
+    except Exception:
+        fm = {}
+    return fm, m.group(2)
+
+
+def _command_for_skill(name: str, desc: str, triggers: str) -> str:
+    """Generate a .opencode/command/<name>.md file from skill metadata."""
+    use_triggers = f"/{name}, {triggers}" if triggers else f"/{name}, {name}"
+    # Build unique trigger list, preserving order
+    parts = [t.strip() for t in use_triggers.split(",")]
+    seen = set()
+    unique = []
+    for p in parts:
+        lower = p.lower()
+        if lower not in seen:
+            seen.add(lower)
+            unique.append(p)
+    use_line = ", ".join(unique)
+    description_line = desc if f"/{name}" in desc else f"{desc}. Use for: {use_line}."
+    return (
+        f"---\n"
+        f"description: {description_line}\n"
+        f"---\n"
+        f"\n"
+        f"Call the skill tool to load the \"{name}\" skill, then follow its "
+        f"instructions exactly.\n"
+        f"\n"
+        f"$ARGUMENTS\n"
+    )
+
+
+@mcp.tool()
+def collab_skill_command_drift() -> str:
+    """Compare skills against .opencode/command/*.md files.
+
+    Opencode slash commands are defined in .opencode/command/<name>.md — the file
+    stem is the command name (e.g. cleanup.md → /cleanup). Skills live in
+    .opencode/skills/<name>/SKILL.md and are a separate discovery mechanism. A skill
+    without a corresponding command file is not a bug (skills can be auto-triggered
+    via the triggers: frontmatter), but any skill whose triggers: include a
+    /command pattern should have a command file — and this tool flags skills that
+    are missing from the command directory for manual review.
+    """
+    skill_dir = REPO_ROOT / ".opencode" / "skills"
+    cmd_dir = REPO_ROOT / ".opencode" / "command"
+
+    if not skill_dir.is_dir():
+        return json.dumps({"error": f"{skill_dir} does not exist"}, indent=2)
+
+    cmd_names = _command_names()
+
+    # Gather skill metadata
+    skills: list[dict] = []
+    for sd in sorted(skill_dir.iterdir()):
+        if not (sd / "SKILL.md").is_file():
+            continue
+        fm, body = _read_frontmatter((sd / "SKILL.md").read_text())
+        desc = str(fm.get("description") or "").strip()
+        triggers = str(fm.get("triggers") or "").strip()
+        has_slash_trigger = bool(re.search(r"/[a-z]", triggers))
+        skills.append({
+            "name": sd.name,
+            "has_slash_trigger": has_slash_trigger,
+            "triggers": triggers,
+            "description": desc,
+        })
+
+    # Check which skills need command files (those with slash triggers)
+    needs_command = [
+        s for s in skills
+        if s["name"] not in cmd_names and s["has_slash_trigger"]
+    ]
+
+    # Report all skills vs commands (not just slash-trigger ones)
+    skill_names = {s["name"] for s in skills}
+
+    return json.dumps({
+        "command_files": sorted(cmd_names),
+        "skills_without_command": sorted(skill_names - cmd_names),
+        "skills_needing_command_file": [
+            {"name": s["name"], "triggers": s["triggers"]}
+            for s in needs_command
+        ],
+        "total_skills": len(skills),
+        "total_commands": len(cmd_names),
+        "ok": len(needs_command) == 0,
+        "note": ("Skills auto-trigger via triggers: frontmatter — they do not "
+                 "need a command file to be discovered. A command file is "
+                 "only needed when the operator wants /command. This tool flags "
+                 "skills whose triggers include / patterns but lack a command "
+                 "file so they can be manually reviewed and created."),
+    }, indent=2)
+
+
+@mcp.tool()
+def collab_create_commands(skills: list[str]) -> str:
+    """Create .opencode/command/<name>.md files for the named skills.
+
+    Takes a list of skill names (e.g. ["grind", "cleanup"]). Uses the skill's
+    description and triggers: frontmatter to generate the command file.
+    Does not overwrite existing command files.
+    """
+    skill_dir = REPO_ROOT / ".opencode" / "skills"
+    cmd_dir = REPO_ROOT / ".opencode" / "command"
+    cmd_dir.mkdir(parents=True, exist_ok=True)
+
+    created: list[str] = []
+    skipped: list[str] = []
+    errors: list[str] = []
+
+    import yaml
+
+    for name in sorted(skills):
+        skill_md = skill_dir / name / "SKILL.md"
+        cmd_file = cmd_dir / f"{name}.md"
+
+        if cmd_file.exists():
+            skipped.append(name)
+            continue
+
+        if not skill_md.is_file():
+            errors.append(f"{name}: SKILL.md not found")
+            continue
+
+        text = skill_md.read_text()
+        fm, _ = _read_frontmatter(text)
+        desc = str(fm.get("description") or "").strip()
+        triggers = str(fm.get("triggers") or "").strip()
+
+        content = _command_for_skill(name, desc, triggers)
+        cmd_file.write_text(content)
+        created.append(name)
+
+    return json.dumps({
+        "created": created,
+        "skipped": skipped,
+        "errors": errors,
+        "note": ("Command files written to .opencode/command/. Restart the "
+                 "opencode session for new slash commands to be discovered."),
+    }, indent=2)
+
+
 @mcp.tool()
 def collab_propose_improvements() -> str:
     """Propose changes to the governing docs. Returns text; writes nothing, ever.
@@ -228,6 +386,18 @@ def collab_propose_improvements() -> str:
             "change": f"AGENTS.md documents `{path}` which does not exist",
         })
 
+    # Skill → command drift: skills with slash triggers but no .opencode/command/<name>.md
+    drift = json.loads(collab_skill_command_drift())
+    for entry in drift["skills_needing_command_file"]:
+        proposals.append({
+            "priority": "medium",
+            "why": ("a slash command that does not work wastes the session — the skill "
+                   "is auto-discovered but /command does not resolve"),
+            "change": (f"skill `{entry['name']}` has slash triggers ({entry['triggers']}) "
+                       f"but no `.opencode/command/{entry['name']}.md` — create it or remove "
+                       f"the slash triggers"),
+        })
+
     text = _read("AGENTS.md")
     if text and len(text.splitlines()) > 300:
         proposals.append({
@@ -255,3 +425,10 @@ if __name__ == "__main__":
         print(collab_propose_improvements())
     else:
         mcp.run(transport="stdio")
+
+
+if __name__ == "__main__" and "--test" in sys.argv:
+    # Standalone test mode (not an MCP tool invocation)
+    print(collab_skill_command_drift())
+    print()
+    print(collab_propose_improvements())
