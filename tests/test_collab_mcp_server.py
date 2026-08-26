@@ -293,3 +293,37 @@ def test_create_reports_missing_skill(tmp_path):
 
     assert any("nonexistent" in e for e in result["errors"])
     assert result["created"] == []
+
+
+def test_read_frontmatter_handles_colons_in_values():
+    """Long descriptions with colons (e.g. 'Use for: /foo') must not break
+    the YAML parser; the fallback line-parser should recover them."""
+    text = (
+        "---\n"
+        "name: test\n"
+        "description: Probe something. Use for: /test, test\n"
+        "mode: skill\n"
+        "triggers: /test\n"
+        "---\nbody\n"
+    )
+    fm, body = _load(Path("/tmp"))._read_frontmatter(text)
+
+    assert fm["description"] == "Probe something. Use for: /test, test"
+    assert body.strip() == "body"
+
+
+def test_read_frontmatter_returns_empty_on_broken_yaml():
+    """Completely invalid YAML should return an empty dict, not crash."""
+    text = "no frontmatter here\n"
+    fm, body = _load(Path("/tmp"))._read_frontmatter(text)
+
+    assert fm == {}
+
+
+def test_read_frontmatter_works_with_valid_yaml_too():
+    fm, body = _load(Path("/tmp"))._read_frontmatter(
+        "---\nname: valid\nmode: skill\n---\nbody\n"
+    )
+
+    assert fm["name"] == "valid"
+    assert fm["mode"] == "skill"
