@@ -1,8 +1,8 @@
 ---
 name: grind
-description: Unified backlog processor — triage all work items (PRs, issues, local tasks), rank them by composite score, and work through them one at a time from review/plan through test to merge. Persists state across sessions so an interrupted run resumes exactly where it left off. Use when the user says "/grind", "grind", "plow through", "clear the backlog", "work the queue", "finish what's left", "/resume", or asks to complete remaining tasks.
+description: Unified backlog processor — triage all work items (PRs, issues, local tasks), rank them by composite score, and work through them one at a time from review/plan through test to merge. Persists state across sessions so an interrupted run resumes exactly where it left off. Use when the user says "/grind", "grind", "plow", "/plow", "plow through", "clear the backlog", "backlog sweep", "work the queue", "finish what's left", "backlog", "/resume", or asks to complete remaining tasks.
 mode: skill
-triggers: grind,/grind,plow,/plow,resume,/resume,backlog,clear backlog,work the queue
+triggers: grind,/grind,plow,/plow,resume,/resume,backlog,clear backlog,work the queue,plow through,backlog sweep,finish what's left
 ---
 
 # Grind
@@ -20,6 +20,13 @@ A unified skill for processing any backlog — GitHub PRs, GitHub issues, local 
 - A working tree with no uncommitted changes (or work in an isolated branch)
 - **Never touch live infrastructure.** OpsKit handles that.
 
+## Usage tracking
+
+0. Track usage: `python3 bin/automation-ladder.py tick --skill grind` — if the
+   output has `"offer_upgrade": true`, offer codification per Development
+   Principles (repo script: this is dev-workflow); permanent "no" →
+   `python3 bin/automation-ladder.py mute --skill grind`.
+
 ## RESUME.md — human-readable session log
 
 `RESUME.md` is a human-readable log that persists across sessions even when
@@ -31,7 +38,7 @@ needs human attention. Update it alongside `grind-state.md` at these points:
   it with a fresh "Session Summary" header.
 - **After completing an item** (merged PR, closed issue, shipped local task):
   append one line to "Session Summary" with the item number/type, title
-  (shortened), and outcome (merged/closed/shipped).
+  (shortened), and outcome (merged/closed/shipped/resolved).
 - **Phase 1 (Triage):** Update the "Task List" section with the scored queue.
   Format: `- **[priority]** <description> — score N — Status: pending|in-progress`
   where `[priority]` is `[critical]`, `[should]`, `[nice]`, or `[milestone]`.
@@ -115,74 +122,105 @@ every time:
 
 ## Phase 0 — Sync
 
-1. **Re-sync with upstream.** `git fetch --all --prune`.
-    - **Rate-limit check:** run `gh auth status 2>&1 | grep "rate limit"`.
-      If rate-limited, log in `## Notes` and stop (resume when the rate limit
-      resets — the check succeeds on restart when enough time has passed).
-    - If current branch is `main` (or `master`), do a hard reset:
-      `git reset --hard origin/main`. This ensures the working tree is clean
-      and matches upstream before any work begins.
+1. **Guard: repo/dev work only.** Never touch live infrastructure.
 
-2. **Check `grind-state.md`** (git-ignored; create if absent).
-    - If it exists and has content, load the current item, type, and phase,
-      then jump to that phase.
-    - If empty or absent, proceed to Phase 1.
-    - If `# Phase` is `"Awaiting Merge"`, stop and ask the user to review.
-      Do not proceed.
+2. **Re-sync with upstream.** `git fetch --all --prune`.
+   - Pull only if `main` is the current branch (worktree sessions base on
+     `origin/main` — never check out `main` in a shared checkout).
+   - **Rate-limit check:** run `gh auth status 2>&1 | grep "rate limit"`.
+     If rate-limited, log in `## Notes` and stop (resume when the rate limit
+     resets — the check succeeds on restart when enough time has passed).
+   - If current branch is `main` (or `master`), do a hard reset:
+     `git reset --hard origin/main`. This ensures the working tree is clean
+     and matches upstream before any work begins.
 
-3. **Sync RESUME.md** — load any existing `RESUME.md`. Do NOT rewrite it
+3. **Announce the toolset** (`gh`, `bin/fix-issue.sh`, review tooling), get one
+   go/no-go for the whole run.
+
+4. **Check `grind-state.md`** (git-ignored; create if absent).
+   - If it exists and has content, load the current item, type, and phase,
+     then jump to that phase.
+   - If empty or absent, proceed to Phase 1.
+   - If `# Phase` is `"Awaiting Merge"`, stop and ask the user to review.
+     Do not proceed.
+
+5. **Sync RESUME.md** — load any existing `RESUME.md`. Do NOT rewrite it
    in Phase 0 — Session Summary grows across runs. Only Active, Awaiting
    Review, and Task List sections are overwritten.
 
 ## Phase 1 — Triage and Select
 
-3. **Collect all remaining work items.** Sources:
-    - **PRs:** `gh pr list --state open`
-    - **Issues:** `gh issue list --state open`
-    - **Local tasks:** TODO/FIXME comments, known issues, existing
-      `plans/*.md` files, any `grind-state.md` left by a prior run
-    - **Existing plans:** scan `plans/*.md` for stubs with no corresponding
-      queue entry — add them as `local` items with a description from the
-      plan's task section.
+6. **Collect all remaining work items.** Sources:
+   - **PRs:** `gh pr list --state open`
+   - **Issues:** `gh issue list --state open`
+   - **Local tasks:** TODO/FIXME comments, known issues, existing
+     `plans/*.md` files, any `grind-state.md` left by a prior run
+   - **Existing plans:** scan `plans/*.md` for stubs with no corresponding
+     queue entry — add them as `local` items with a description from the
+     plan's task section.
 
-4. **Dedupe and connect issues.** Read the collected issues as one set:
-    - **Unambiguous duplicates** (one issue clearly describes all the same
-      changes as another): close as duplicate with a cross-reference comment
-      (`Duplicate of #n`). Do not add the duplicate to the queue.
-    - **Ambiguous overlaps**: cross-link with a comment on both issues,
-      keep both open, add both to the queue.
-    - **Self-contained issues**: add directly to the queue.
-    This step is skipped for PRs (GitHub handles PR dedup) and local tasks.
-    - **On closing a duplicate:** append to RESUME.md Session Summary:
-      `- Closed #N as duplicate of #M`.
+7. **Validity check (issues only).** For each open issue, verify it's still
+   live against the current state of `main`, not just its own text: grep for
+   the file/behavior it describes, check whether a merged PR/commit already
+   resolved the root cause without closing the ticket (`git log --grep`/`gh
+   pr list --search`), and confirm anything it references (a ticket, a file,
+   an env) still exists. Closing on this basis needs more than a coincidental
+   grep hit or an unrelated PR touching the same file — read the actual
+   diff/commit and confirm it addresses the issue's specific root cause, not
+   just its vicinity, before treating it as resolved. An issue whose root
+   cause is confirmed already fixed gets closed as "Resolved by #<pr/sha>"
+   with a comment quoting or pointing at the specific evidence (reversible),
+   not carried forward or silently dropped. This is a code-based check, not a
+   re-read of the issue prose — the same evidence standard the
+   `ticket-triage` skill applies to HD Tickets.
 
-5. **Score each remaining item** on two axes:
-    - **Priority (1–5):** How much does this unblock other work? How critical
-      is it for the project's maturity? Use the triad:
-      *simple over complex, importance over less-immediate, impact over cosmetic*
-    - **Speed (1–5):** How quickly can a capable agent complete it?
-    - **Boost:** If `plans/<item-key>.md` already exists, add **+1** to
-      priority (capped at 5). An existing plan means effort was invested —
-      prioritize finishing it.
-    - **Composite score:** `priority × speed`. Higher is better.
+8. **Assignment filter (issues only).** `gh issue view <n> --json assignees`
+   per issue. Unassigned or assigned to the operator: fair game, proceed.
+   Assigned to anyone else: that is someone else's in-flight work, not
+   backlog — skip it untouched (no comment, no reassignment) and report it
+   as skipped. Never add yourself as a second assignee alongside someone
+   already on it.
 
-6. **Rank by composite score.** Higher scores first.
+9. **Dedupe and connect issues.** Read the collected issues as one set:
+   - **Unambiguous duplicates** (one issue clearly describes all the same
+     changes as another): close as duplicate with a cross-reference comment
+     (`Duplicate of #n`). Do not add the duplicate to the queue.
+   - **Ambiguous overlaps**: cross-link with a comment on both issues,
+     keep both open, add both to the queue.
+   - **Self-contained issues**: add directly to the queue.
+   This step is skipped for PRs (GitHub handles PR dedup) and local tasks.
+   - **On closing a duplicate:** append to RESUME.md Session Summary:
+     `- Closed #N as duplicate of #M`.
+   - **On closing a resolved issue:** append to RESUME.md Session Summary:
+     `- Resolved #N by #<pr/sha>`.
 
-7. **Pick the top-ranked item.** Determine its type and assign the starting phase:
-    - `pr` → **Review** (review + fix cycle)
-    - `issue` → **Plan** (draft, critique, refine)
-    - `local` → **Plan** (if complex) or **Execution** (if straightforward)
+10. **Score each remaining item** on two axes:
+   - **Priority (1–5):** How much does this unblock other work? How critical
+     is it for the project's maturity? Use the triad:
+     *simple over complex, importance over less-immediate, impact over cosmetic*
+   - **Speed (1–5):** How quickly can a capable agent complete it?
+   - **Boost:** If `plans/<item-key>.md` already exists, add **+1** to
+     priority (capped at 5). An existing plan means effort was invested —
+     prioritize finishing it.
+   - **Composite score:** `priority × speed`. Higher is better.
 
-8. **Update `grind-state.md`.** Rewrite with the full queue (completed items
+11. **Rank by composite score.** Higher scores first.
+
+12. **Pick the top-ranked item.** Determine its type and assign the starting phase:
+   - `pr` → **Review** (review + fix cycle)
+   - `issue` → **Plan** (draft, critique, refine)
+   - `local` → **Plan** (if complex) or **Execution** (if straightforward)
+
+13. **Update `grind-state.md`.** Rewrite with the full queue (completed items
    removed, stale items removed, discovered items added), set `## Active` to
    the picked item and phase, then **repeat from step 1** (the sync step).
    On restart, step 0 sees the phase and jumps in.
 
-8b. **Update RESUME.md — Active + Task List.** Rewrite the "Active" section:
-    `- **<identifier>** — <type> (#<num>) — <phase>` if the item has a
-    number. Rewrite the "Task List" section with the scored queue. Map scores
-    to priority labels: critical (≥20), should (12–19), nice (5–11), low (<5).
-    Format: `- **[label]** <desc> — score <N> — Status: pending|in-progress`.
+13b. **Update RESUME.md — Active + Task List.** Rewrite the "Active" section:
+   `- **<identifier>** — <type> (#<num>) — <phase>` if the item has a
+   number. Rewrite the "Task List" section with the scored queue. Map scores
+   to priority labels: critical (≥20), should (12–19), nice (5–11), low (<5).
+   Format: `- **[label]** <desc> — score <N> — Status: pending|in-progress`.
 
 ## Phase 2 — Type Dispatcher
 
@@ -191,133 +229,146 @@ phase sequence.
 
 ### Type: PR → Review
 
-9. **Review the PR.** Call the skill tool to load the `review` skill and apply
+14. **Review the PR.** Call the skill tool to load the `review` skill and apply
    its procedure to this PR. Post explicit review comments — a PR is never
-   "reviewed" by assertion alone. Findings feed the fix cycle in step 10.
-10. **Fix findings.** In an isolated worktree of the PR branch
-    (`git worktree add grind/pr-<n>`, never switch the shared checkout), fix
-    each finding, commit, push, then wait for CI.
-    - **Diverged branch:** if `git push` is rejected with `non-fast-forward`
-      or `refs/heads/*: refs/heads/*` divergence, fetch origin, rebase the
-      worktree branch onto `origin/main`, then retry the push.
-11. **Handle CI:** Retry failed CI once (force-push again). If it flaked, retry
-    up to 2× total. If still failing, comment on the PR, skip to the next item.
-12. **Merge on green.** Invoking `/grind` pre-authorizes the merge. The external
-    reviewer is still *requested* on every PR but a pending review does not block.
-    Human-blocked (changes requested, approval branch protection required but
-    missing, red CI you cannot fix, conflicting intent) → skip and report.
-13. **After merging, re-sync.** `git fetch --all --prune; git reset --hard origin/main`.
-     This keeps the working tree aligned with upstream so the next item doesn't
-     diverge. Update state, **repeat from step 1**. The loop picks the next item.
-    - **Append to RESUME.md Session Summary:** one line like `- Merged PR #N — "<title>"`.
+   "reviewed" by assertion alone. Findings feed the fix cycle in step 15.
+
+15. **Fix findings.** In an isolated worktree of the PR branch
+   (`git worktree add grind/pr-<n>`, never switch the shared checkout), fix
+   each finding, commit, push, then wait for CI.
+   - **Diverged branch:** if `git push` is rejected with `non-fast-forward`
+     or `refs/heads/*: refs/heads/*` divergence, fetch origin, rebase the
+     worktree branch onto `origin/main`, then retry the push.
+
+16. **Handle CI:** Retry failed CI once (force-push again). If it flaked, retry
+   up to 2× total. If still failing, comment on the PR, skip to the next item.
+
+17. **Merge on green.** Invoking `/grind` pre-authorizes the merge. The external
+   reviewer is still *requested* on every PR but a pending review does not block.
+   Human-blocked (changes requested, approval branch protection required but
+   missing, red CI you cannot fix, conflicting intent) → skip and report.
+
+18. **After merging, re-sync.** `git fetch --all --prune; git reset --hard origin/main`.
+   This keeps the working tree aligned with upstream so the next item doesn't
+   diverge. Update state, **repeat from step 1**. The loop picks the next item.
+   - **Append to RESUME.md Session Summary:** one line like `- Merged PR #N — "<title>"`.
 
 ### Type: Issue/Local → Plan
 
-14. **Draft the plan.** Write `plans/<item-key>.md` with:
-    - **Task:** What and why
-    - **Scope:** In / Out
-    - **Steps:** Ordered actions
-    - **Tests:** What to add/update
-    - **Acceptance criteria:** How to verify
+19. **Draft the plan.** Write `plans/<item-key>.md` with:
+   - **Task:** What and why
+   - **Scope:** In / Out
+   - **Steps:** Ordered actions
+   - **Tests:** What to add/update
+   - **Acceptance criteria:** How to verify
 
-15. **Critique the plan.** Read it back and add a critique:
-    - **Flaws:** Logical gaps, missing edge cases
-    - **Gaps:** Vague steps, missing dependencies
-    - **Alternatives:** Simpler approaches
-    - **Risk:** What could go wrong
+20. **Critique the plan.** Read it back and add a critique:
+   - **Flaws:** Logical gaps, missing edge cases
+   - **Gaps:** Vague steps, missing dependencies
+   - **Alternatives:** Simpler approaches
+   - **Risk:** What could go wrong
 
-16. **Refine.** Incorporate the critique. Rewrite to close gaps and remove
-    unnecessary complexity.
+21. **Refine.** Incorporate the critique. Rewrite to close gaps and remove
+   unnecessary complexity.
 
-17. **Set Phase: Execution** in state, **repeat from step 1**. Dispatcher routes
-    to Execution for the same item on the next pass.
+22. **Set Phase: Execution** in state, **repeat from step 1**. Dispatcher routes
+   to Execution for the same item on the next pass.
 
 ### Type: Local → Plan or Execution
 
 - If the task has an existing `plans/` file, follow the issue plan path (steps
-  14–16).
+  19–21).
 - If the task is straightforward (one file, one change), skip to **Execution**.
 
 ### Type: Issue/Local → Execution
 
-18. **Work through the plan** step by step. Apply each step:
-    - Create/edit files as described
-    - Add or update tests
-    - Run the test suite after each meaningful change
-    - If a step fails, diagnose and fix
-19. **If the plan needs changing** mid-execution, update `plans/<item-key>.md`.
-    Note why.
-20. **Set Phase: Testing Required** in state, **repeat from step 1**. Dispatcher
-    routes to Testing on the next pass.
+23. **Work through the plan** step by step. Apply each step:
+   - Create/edit files as described
+   - Add or update tests
+   - Run the test suite after each meaningful change
+   - If a step fails, diagnose and fix
+
+24. **If the plan needs changing** mid-execution, update `plans/<item-key>.md`.
+   Note why.
+
+25. **Set Phase: Testing Required** in state, **repeat from step 1**. Dispatcher
+   routes to Testing on the next pass.
 
 ### Phase: Testing Required
 
-21. **Run the full test suite.** From the project root, run the canonical test
-    command.
-22. **If tests fail:**
-    - Read the failure output
-    - Diagnose and fix the code (or the test, if the test is wrong)
-    - Re-run the full suite
-    - Repeat until all tests pass
-    - Retry transient flakes up to 2× before giving up
-23. **If the fix is ambiguous** (two plausible repairs, neither clearly better),
-    stop and report to the user.
-24. **Run the linter/formatter** if the project has one. Fix any issues.
-25. **Set Phase: Shipping** in state, **repeat from step 1**. Dispatcher routes
-    to Shipping on the next pass.
+26. **Run the full test suite.** From the project root, run the canonical test
+   command.
+
+27. **If tests fail:**
+   - Read the failure output
+   - Diagnose and fix the code (or the test, if the test is wrong)
+   - Re-run the full suite
+   - Repeat until all tests pass
+   - Retry transient flakes up to 2× before giving up
+
+28. **If the fix is ambiguous** (two plausible repairs, neither clearly better),
+   stop and report to the user.
+
+29. **Run the linter/formatter** if the project has one. Fix any issues.
+
+30. **Set Phase: Shipping** in state, **repeat from step 1**. Dispatcher routes
+   to Shipping on the next pass.
 
 ### Phase: Shipping
 
-26. **Rebase onto current origin/main.** Before creating/using a branch, ensure
-    it diverges from the latest `origin/main`:
-    - If the branch exists locally, rebase it onto `origin/main`.
-    - If this is a brand-new branch, create it from `origin/main`.
-    - If `git push` is rejected for divergence, rebase and force-push once, then
-      abort with an error if that fails too.
-27. **Create or use a branch:** `grind/<type>-<item-key>`.
-28. **Commit and push** the complete set of changes with a clear commit message.
-29. **Create a PR.**
-    - If `gh` CLI available: `gh pr create` with a description
-    - If `gh` CLI is unavailable or the PR creation fails: output the branch
-      name, URL, and a draft PR description, then stop and report to the user.
-30. **Set Phase: Awaiting Merge** with the PR URL. Set item `status: awaiting-merge`
-    in the queue (do NOT move to `## Completed` — it has not been merged yet).
-    **Repeat from step 1**. Step 0 sees `Awaiting Merge` and stops for user review.
-    After human review and merge, grind restarts and loads the next item.
-    - **Update RESUME.md Awaiting Review:** set to the current item with PR URL and branch.
-    - **Append to RESUME.md Session Summary:** `- Shipped PR #N — "<title>" (awaiting merge)`.
+31. **Rebase onto current origin/main.** Before creating/using a branch, ensure
+   it diverges from the latest `origin/main`:
+   - If the branch exists locally, rebase it onto `origin/main`.
+   - If this is a brand-new branch, create it from `origin/main`.
+   - If `git push` is rejected for divergence, rebase and force-push once, then
+     abort with an error if that fails too.
+
+32. **Create or use a branch:** `grind/<type>-<item-key>`.
+
+33. **Commit and push** the complete set of changes with a clear commit message.
+
+34. **Create a PR.**
+   - If `gh` CLI available: `gh pr create` with a description
+   - If `gh` CLI is unavailable or the PR creation fails: output the branch
+     name, URL, and a draft PR description, then stop and report to the user.
+
+35. **Set Phase: Awaiting Merge** with the PR URL. Set item `status: awaiting-merge`
+   in the queue (do NOT move to `## Completed` — it has not been merged yet).
+   **Repeat from step 1**. Step 0 sees `Awaiting Merge` and stops for user review.
+   After human review and merge, grind restarts and loads the next item.
+   - **Update RESUME.md Awaiting Review:** set to the current item with PR URL and branch.
+   - **Append to RESUME.md Session Summary:** `- Shipped PR #N — "<title>" (awaiting merge)`.
 
 ## Phase 3 — Cleanup (runs after the queue empties)
 
-31. **Survey leftovers.** A grind run creates a worktree per PR review and a
-    branch per issue. None of the leftovers break anything — which is why they
-    accumulate. Survey with:
-    ```
-    git worktree list --porcelain
-    git branch --merged origin/main --format="%(refname:short)" | grep "^grind/"
-    ```
-    or `bin/repo-cleanup.py` if available.
+36. **Survey leftovers.** A grind run creates a worktree per PR review and a
+   branch per issue. None of the leftovers break anything — which is why they
+   accumulate. Survey with:
+   ```
+   git worktree list --porcelain
+   git branch --merged origin/main --format="%(refname:short)" | grep "^grind/"
+   ```
+   or `bin/repo-cleanup.py` if available.
 
-32. **Cleanup is NOT pre-authorized.** Show the operator the list of stale
-    worktrees and grind branches and remove on one go-ahead:
-    ```
-    git worktree remove grind/pr-<n>      # for each stale worktree
-    git branch -d grind/<type>-<identifier>  # for each merged branch
-    ```
+37. **Cleanup is NOT pre-authorized.** Load the `cleanup` skill to handle the
+   actual pruning. Show the operator the list of stale worktrees and grind
+   branches and remove on one go-ahead. **Cleanup deletes published refs — it
+   asks before doing anything.**
 
-33. **Produce the end-of-run report.** Summarize:
-    - PRs merged (links)
-    - Issues completed (links)
-    - Duplicates closed (with cross-references)
-    - Items skipped + why
-    - Cleanup performed or declined
-    - Remaining queue (human-blocked items, awaiting-merge items)
+38. **Produce the end-of-run report.** Summarize:
+   - PRs merged (links)
+   - Issues completed (links)
+   - Duplicates closed (with cross-references)
+   - Issues resolved as stale (with evidence)
+   - Items skipped + why
+   - Cleanup performed or declined
+   - Remaining queue (human-blocked items, awaiting-merge items)
 
-34. **Append to RESUME.md Session Summary.** One summary line:
-    `- **[date]** Grind run: <N> merged, <M> closed, <K> shipped, <R> remaining`.
-    Clear the "Active" section (no active item when run ends). Remove any
-    "Awaiting Review" entries (they either merged or were skipped). Keep
-    the "Task List" with what remains.
+39. **Append to RESUME.md Session Summary.** One summary line:
+   `- **[date]** Grind run: <N> merged, <M> closed, <K> shipped, <R> remaining`.
+   Clear the "Active" section (no active item when run ends). Remove any
+   "Awaiting Review" entries (they either merged or were skipped). Keep
+   the "Task List" with what remains.
 
 ## Stop Conditions
 
@@ -326,10 +377,21 @@ phase sequence.
 - A step requires human judgment that cannot be deferred. Report the blocker
   and stop.
 - Rate-limited by GitHub API — log in `## Notes`, stop, resume when reset.
-- The queue is empty (only human-blocked items remain).
+- The queue is empty (only human-blocked or other-assigned items remain).
 
 ## Rules
 
+- **Repo hard rules stay in force:** linked branch (never `main`), full test
+  gate, client-data isolation, document-as-you-go.
+- **/grind pre-authorizes exactly three things:** merging per step 17, closing
+  unambiguous duplicates (step 9), and closing an issue the validity check
+  (step 7) confirms is already resolved — all three are reversible
+  (reopenable) and require a cross-reference comment citing the evidence.
+  Anything else unrequested is offered, not done — including cleanup (step 37),
+  which asks before deleting.
+- **An issue needing live-infrastructure work is not grind material** — skip
+  it and say why (env, ticket, and session-start sequence need a dedicated
+  session).
 - **Never merge to the default branch directly.** Open a PR and let a human
   approve.
 - **Never skip testing.** If there is no test suite, create one or report why
@@ -378,6 +440,7 @@ summary:
 - PRs merged (links)
 - Issues completed (links)
 - Duplicates closed (with cross-references)
-- Items skipped + why
+- Issues resolved as stale (with evidence)
+- Items skipped + why (including anything skipped as already assigned to someone else)
 - Cleanup performed or declined
-- Remaining queue (human-blocked items)
+- Remaining queue (human-blocked items, awaiting-merge items)
