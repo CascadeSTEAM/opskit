@@ -4,7 +4,7 @@
 ###############################################################################
 set -euo pipefail
 
-readonly VERSION="0.2.4"
+readonly VERSION="0.2.5"
 readonly STATE_DIR="$HOME/.opskit-install/state"
 readonly OPSKIT_DIR="${OPSKIT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || echo "$HOME/Projects/opskit")}"
 OPSKIT_BIN="${OPSKIT_BIN:-$OPSKIT_DIR/bin/opskit}"
