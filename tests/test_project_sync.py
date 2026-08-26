@@ -20,14 +20,17 @@ import project_sync as ps
 
 @pytest.fixture(autouse=True)
 def _restore_module_state():
-    """Restore module-level constants after each test."""
+    """Restore module-level constants and env vars after each test."""
     orig_remotes = ps._REMOTES
     orig_projects = ps._PROJECTS
     orig_example = ps._EXAMPLE
+    orig_opskit_root = os.environ.pop("OPSKIT_ROOT", None)
     yield
     ps._REMOTES = orig_remotes
     ps._PROJECTS = orig_projects
     ps._EXAMPLE = orig_example
+    if orig_opskit_root is not None:
+        os.environ["OPSKIT_ROOT"] = orig_opskit_root
 
 
 @pytest.fixture
