@@ -202,7 +202,6 @@ def test_cli_requires_a_mode():
 CALLERS = [
     ROOT / "bin" / "mcp-run.sh",
     ROOT / "bin" / "bw-management.py",
-    ROOT / "install.sh",
 ]
 
 

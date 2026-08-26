@@ -2,7 +2,7 @@
 """
 opskit — unified CLI for network operations.
 
-  opskit env create my-env --subnets 192.0.2.0/24  scaffold a new environment
+  opskit env --create my-env --subnets 192.0.2.0/24  scaffold a new environment
   opskit env my-env                                switch to environment
   opskit env                                       show active environment
   opskit init [path]                               scaffold OpsKit member manifest
@@ -68,7 +68,7 @@ def _resolve_env(name: str | None) -> str:
         sys.exit(1)
     if not _env_yml(name).exists():
         print(f"ERROR: Environment '{name}' not found.", file=sys.stderr)
-        print(f"  Run: opskit env create {name} --subnets <cidr,...>", file=sys.stderr)
+        print(f"  Run: opskit env --create {name} --subnets <cidr,...>", file=sys.stderr)
         sys.exit(1)
     return name
 
@@ -466,8 +466,8 @@ def cmd_env(args):
         print(f"  Environment '{args.name}' does not exist.")
         print()
         print(f"  Options:")
-        print(f"    opskit env create {args.name} --subnets 192.0.2.0/24  # scaffold now")
-        print(f"    opskit env create                                    # interactive scaffold")
+        print(f"    opskit env --create {args.name} --subnets 192.0.2.0/24  # scaffold now")
+        print(f"    opskit env --create                                    # interactive scaffold")
         if _list_envs():
             print(f"\n  Existing environments:")
             for e in _list_envs():
@@ -477,7 +477,7 @@ def cmd_env(args):
                 except Exception:
                     print(f"    {e:20s}")
         else:
-            print("\n  No environments yet — run: opskit env create")
+            print("\n  No environments yet — run: opskit env --create")
         sys.exit(1)
 
     current = _active_env()
@@ -498,7 +498,7 @@ def cmd_env(args):
                 print(f"    {e:20s}")
 
     if not current:
-        print("\n  Run: opskit env create <name>  to create an environment")
+        print("\n  Run: opskit env --create <name>  to create an environment")
         print(f"  Then: opskit env <name>       to switch")
 
 
@@ -620,7 +620,7 @@ _opskit_completion() {{
             COMPREPLY=( $(compgen -W "bash zsh" -- "$cur") )
             ;;
         *)
-            COMPREPLY=( $(compgen -W "env init scan status lint env create setup-completion" -- "$cur") )
+            COMPREPLY=( $(compgen -W "env init scan status lint setup-completion" -- "$cur") )
             ;;
     esac
 }}
@@ -631,8 +631,7 @@ COMPLETION_ZSH = r"""\
 #compdef opskit
 _opskit() {{
     local -a commands
-    commands=(env:'show or switch active environment'
-              env\ create:'scaffold a new environment'
+    commands=(env:'show or switch active environment (use --create to scaffold)'
               init:'scaffold OpsKit member manifest'
               scan:'full network scan'
               status:'inventory summary'
@@ -718,7 +717,7 @@ def cmd_check(args):
         if len(envs) > 5:
             print("  " + " " * 28 + f"... and {len(envs) - 5} more")
     else:
-        warn("no environments found (run: opskit env create <name>)")
+        warn("no environments found (run: opskit env --create <name>)")
 
     # Active env
     active = _active_env()
@@ -793,7 +792,7 @@ def main():
         epilog="""
 examples:
   opskit check                                    verify everything is ready
-  opskit env create homelab --subnets 192.0.2.0/24  scaffold a new environment
+  opskit env --create homelab --subnets 192.0.2.0/24  scaffold a new environment
   opskit env homelab                              switch to environment
   opskit init                                     scaffold OpsKit member manifest
   opskit scan                                     discover + enrich + resolve
