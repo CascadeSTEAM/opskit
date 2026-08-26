@@ -1,6 +1,6 @@
 ---
 name: check-connectivity
-description: Probe active environment network reachability before any network-sensitive operation
+description: Probe active environment network reachability before any network-sensitive operation. Use for: /check-connectivity, check-connectivity, connectivity, network probe
 mode: skill
 triggers: /check-connectivity
 ---
