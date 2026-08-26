@@ -105,3 +105,4 @@ proposals/*
 !proposals/.gitkeep
 plans/*
 !plans/.gitkeep
+grind-state.md
