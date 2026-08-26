@@ -387,6 +387,9 @@ class TestRenderClaudeAgentWrapper:
 class TestMount:
 
     def test_no_remotes(self, tmp_path: Path):
+        projects = tmp_path / "projects"
+        projects.mkdir()
+        ps._PROJECTS = projects
         ps._REMOTES = tmp_path / "empty"
         ps._REMOTES.write_text("")
 
@@ -553,6 +556,9 @@ class TestSyncMount:
         assert result["summary"]["mounted"] >= 0
 
     def test_sync_mount_no_remotes(self, tmp_path: Path):
+        projects = tmp_path / "projects"
+        projects.mkdir()
+        ps._PROJECTS = projects
         ps._REMOTES = tmp_path / "empty"
         ps._REMOTES.write_text("")
 
