@@ -1,0 +1,200 @@
+---
+# deploy-buildsmith.yml — Buildsmith toolchain on an already-provisioned LXC
+# (opskit #251).
+#
+# Layer order: provision-runner-lxc.yml gives the box Docker, an operator
+# account, and SSH keys; this playbook adds the Buildsmith layer on top, the
+# same way the workstation-*-toolchain playbooks layer onto a base guest.
+# Per the IaC rule this is system/deployment state, so this file is the
+# rebuild path — a hand-run `git clone && python3 install.py --dev` is not.
+#
+# What install.py --dev does (and this play therefore does NOT duplicate):
+# virtualenv, editable install, `playwright install chromium` (the BROWSER
+# DOWNLOAD only), and the repo's git hooks. What install.py cannot do on a
+# fresh headless container — and this play therefore does itself — is
+# root-level system state: apt packages, Chromium's shared-library
+# dependencies (`playwright install-deps`), and the clone credentials.
+#
+# GitHub access: the Buildsmith repo is private, so the box clones over SSH
+# with its own dedicated read-only deploy key. This play generates the
+# keypair when absent and FAILS with the public key in the error message if
+# the clone is rejected — add that key as a read-only deploy key on the
+# repo, then re-run. Two runs on first provisioning is expected, exactly
+# like provision-runner-lxc.yml's own two-step. No credential is ever
+# written by this play; the private key never leaves the container.
+#
+# Usage (after provision-runner-lxc.yml plays 1+2 and inventory registration):
+#   ansible-playbook -i environments/$ACTIVE_ENV/ansible/inventory.yml \
+#     ansible/playbooks/deploy-buildsmith.yml -e target_host=<inventory-alias>
+#
+# The sandbox (`buildsmith sandbox up`) is deliberately NOT built here — it
+# is a disposable, slow-to-build compose stack the operator/agent brings up
+# on demand, application-shaped rather than convergence-shaped. The final
+# report names it as the next step instead.
+
+- name: Deploy the Buildsmith toolchain
+  hosts: "{{ target_host }}"  # noqa: syntax-check[specific]
+  gather_facts: true
+  become: true
+
+  vars:
+    # The account Buildsmith runs as — the same non-root operator account
+    # provision-runner-lxc.yml creates, never root (its docker-group
+    # membership is what lets the sandbox compose stack run).
+    buildsmith_user: claude
+    buildsmith_repo: git@github.com:CascadeSTEAM/buildsmith.git
+    buildsmith_ref: main
+    buildsmith_home: "/home/{{ buildsmith_user }}"
+    buildsmith_dest: "{{ buildsmith_home }}/Projects/buildsmith"
+    # Dedicated deploy key for the clone — per-purpose, revocable on GitHub
+    # without touching any other credential.
+    deploy_key_path: "{{ buildsmith_home }}/.ssh/buildsmith_deploy"
+    # Verification gate: `buildsmith test` proves the install including the
+    # LOCAL_ONLY safety gates. Skippable only for a deliberately quick pass.
+    run_test_suite: true
+
+  tasks:
+    - name: Require the parameters that must never be guessed
+      ansible.builtin.assert:
+        that:
+          - target_host is defined
+        fail_msg: >-
+          Pass -e target_host=<inventory-alias>. No default on purpose — this
+          play installs software and writes to a real container; it must
+          never pick one by accident.
+
+    - name: Check the operator account exists (provision-runner-lxc.yml's job)
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ buildsmith_user }}"
+
+    - name: Check Docker is usable by the operator account
+      # Buildsmith's install.py probes `docker info` itself and its sandbox
+      # is a compose stack — a docker client with no reachable daemon is its
+      # documented most-common failure, so fail here, early and clearly,
+      # instead of half-installing.
+      ansible.builtin.command: docker info
+      become_user: "{{ buildsmith_user }}"
+      changed_when: false
+
+    - name: Install system packages Buildsmith needs
+      # python3-venv: Ubuntu ships python3 without venv; install.py's first
+      # real act is `python -m venv`, which otherwise fails with an apt hint.
+      ansible.builtin.apt:
+        name:
+          - git
+          - python3
+          - python3-venv
+          - openssh-client
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Refuse a Python older than Buildsmith's floor (>=3.11)
+      ansible.builtin.command: python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'
+      changed_when: false
+
+    - name: Generate the dedicated read-only deploy key when absent
+      # ssh-keygen + creates, not community.crypto.openssh_keypair — that
+      # collection is not in the repo's pinned set (requirements.yml), and
+      # one keypair does not justify growing it.
+      become_user: "{{ buildsmith_user }}"
+      ansible.builtin.command:
+        cmd: >-
+          ssh-keygen -t ed25519 -N ''
+          -C 'buildsmith-deploy@{{ inventory_hostname }}'
+          -f '{{ deploy_key_path }}'
+        creates: "{{ deploy_key_path }}"
+
+    - name: Read the deploy public key (for the failure report below)
+      ansible.builtin.slurp:
+        src: "{{ deploy_key_path }}.pub"
+      register: deploy_pubkey
+
+    - name: Pin the deploy key to github.com in the operator's SSH config
+      # An IdentitiesOnly host block, not a global key: the operator account
+      # may carry other keys (provision-runner-lxc.yml installs two), and
+      # GitHub authenticates by first key offered — without this pin the
+      # wrong key wins and the clone fails confusingly.
+      become_user: "{{ buildsmith_user }}"
+      ansible.builtin.blockinfile:
+        path: "{{ buildsmith_home }}/.ssh/config"
+        create: true
+        mode: "0600"
+        marker: "# {mark} buildsmith deploy key (ansible-managed)"
+        block: |
+          Host github.com-buildsmith
+              Hostname github.com
+              User git
+              IdentityFile {{ deploy_key_path }}
+              IdentitiesOnly yes
+
+    - name: Ensure the projects directory exists
+      ansible.builtin.file:
+        path: "{{ buildsmith_home }}/Projects"
+        state: directory
+        owner: "{{ buildsmith_user }}"
+        group: "{{ buildsmith_user }}"
+        mode: "0755"
+
+    - name: Clone or update the Buildsmith repo
+      become_user: "{{ buildsmith_user }}"
+      ansible.builtin.git:
+        repo: "{{ buildsmith_repo | replace('git@github.com:', 'git@github.com-buildsmith:') }}"
+        dest: "{{ buildsmith_dest }}"
+        version: "{{ buildsmith_ref }}"
+        accept_newhostkey: true
+      register: buildsmith_clone
+      failed_when: false
+
+    - name: Explain a rejected clone instead of failing cryptically
+      ansible.builtin.assert:
+        that:
+          - buildsmith_clone is not failed
+        fail_msg: >-
+          The clone was rejected. Most likely the deploy key is not yet added
+          to the repo — add this PUBLIC key as a READ-ONLY deploy key on
+          {{ buildsmith_repo }} and re-run:
+          {{ deploy_pubkey.content | b64decode | trim }}
+          (Original error: {{ buildsmith_clone.msg | default('unknown') }})
+
+    - name: Run Buildsmith's own bootstrap (venv, editable install, browser, hooks)
+      # install.py is idempotent and owns everything user-scoped; duplicating
+      # its steps here would just drift from it. It must NOT run as root —
+      # the venv, the browser cache, and the git hooks all belong to the
+      # operator account.
+      become_user: "{{ buildsmith_user }}"
+      ansible.builtin.command:
+        cmd: python3 install.py --dev
+        chdir: "{{ buildsmith_dest }}"
+      register: bootstrap
+      changed_when: "'created' in bootstrap.stdout or 'installed' in bootstrap.stdout"
+
+    - name: Install Chromium's system libraries (the one root step install.py cannot do)
+      # `playwright install chromium` downloads the browser but a headless
+      # container lacks its shared libraries; install-deps is Playwright's
+      # own apt mapping for exactly this. Root by necessity, hence here and
+      # not in install.py.
+      ansible.builtin.command:
+        cmd: "{{ buildsmith_dest }}/.venv/bin/python -m playwright install-deps chromium"
+      register: pw_deps
+      changed_when: "'0 upgraded, 0 newly installed' not in pw_deps.stdout"
+
+    - name: Prove the install — run the Buildsmith test suite
+      become_user: "{{ buildsmith_user }}"
+      ansible.builtin.command:
+        cmd: "{{ buildsmith_dest }}/.venv/bin/buildsmith test"
+        chdir: "{{ buildsmith_dest }}"
+      changed_when: false
+      when: run_test_suite | bool
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          Buildsmith deployed at {{ buildsmith_dest }} on
+          {{ inventory_hostname }} as {{ buildsmith_user }}
+          ({{ 'test suite passed' if (run_test_suite | bool)
+              else 'test suite SKIPPED by request' }}).
+          Next steps, on demand, as {{ buildsmith_user }}:
+          `buildsmith sandbox up` to build the pinned Frappe sandbox
+          (slow first time), `buildsmith sandbox status` for the login.

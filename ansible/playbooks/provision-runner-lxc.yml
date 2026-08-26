@@ -61,7 +61,12 @@
 #     -e ct_ip=<address/prefix> -e ct_gateway=<address> \
 #     -e ssh_allow_source=<cidr-admitted-for-ssh> \
 #     -e ct_host=<inventory-alias-for-the-new-ct> \
-#     -e recovery_pubkey="<contents of a freshly generated recovery keypair>"
+#     -e '{"recovery_pubkey": "<contents of a freshly generated recovery keypair>"}'
+# recovery_pubkey MUST be passed in the JSON form above. The plain
+# -e recovery_pubkey="ssh-ed25519 AAAA... comment" form silently truncates at
+# the first space (ansible splits one -e string into several key=value words),
+# and the authorized_key module then dies with the unhelpful "list index out
+# of range". Hit live while provisioning a second box from this file.
 # (Play 1 reports "already exists" and does nothing further on this second
 # run — safe to repeat.)
 #
