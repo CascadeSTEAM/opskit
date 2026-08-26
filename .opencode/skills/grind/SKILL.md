@@ -282,22 +282,32 @@ phase sequence.
 
 ### Type: Issue/Local → Execution
 
-23. **Work through the plan** step by step. Apply each step:
-   - Create/edit files as described
-   - Add or update tests
-   - Run the test suite after each meaningful change
-   - If a step fails, diagnose and fix
+**Worktree rule (permanent):** The primary checkout MUST always stay on `main`
+with no uncommitted changes. All work on this repo happens in a worktree.
+Before starting execution, create a worktree:
+`git worktree add -b grind/<type>-<identifier> worktree/grind/<type>-<identifier> main`
+(where `worktree/` is the worktree root — create it if absent). All commits,
+edits, and test runs happen inside that worktree (e.g.
+`git -C worktree/grind/issue-170`). The main checkout is never checked out on
+a feature branch.
+
+23. **Work through the plan** step by step inside the worktree. Apply each step:
+    - Create/edit files as described
+    - Add or update tests
+    - Run the test suite after each meaningful change
+    - If a step fails, diagnose and fix inside the worktree
 
 24. **If the plan needs changing** mid-execution, update `plans/<item-key>.md`.
-   Note why.
+    Note why.
 
 25. **Set Phase: Testing Required** in state, **repeat from step 1**. Dispatcher
-   routes to Testing on the next pass.
+    routes to Testing on the next pass.
 
 ### Phase: Testing Required
 
-26. **Run the full test suite.** From the project root, run the canonical test
-   command.
+26. **Run the full test suite.** From the worktree, run the canonical test
+    command (e.g. `python -m pytest` from inside
+    `worktree/grind/issue-170`).
 
 27. **If tests fail:**
    - Read the failure output
@@ -323,9 +333,15 @@ phase sequence.
    - If `git push` is rejected for divergence, rebase and force-push once, then
      abort with an error if that fails too.
 
-32. **Create or use a branch:** `grind/<type>-<item-key>`.
+32. **Create or use a worktree branch:** `grind/<type>-<item-key>`.
+    Create the worktree from `origin/main` (or the main checkout's `main`
+    branch) — never from a feature branch checked out in the shared checkout:
+    `git worktree add -b grind/<type>-<item-key> worktree/grind/<type>-<item-key> main`.
+    The main checkout stays on `main` at all times.
 
-33. **Commit and push** the complete set of changes with a clear commit message.
+33. **Commit and push** from the worktree:
+    `git -C worktree/grind/<type>-<item-key> commit -m "..."` then
+    `git -C worktree/grind/<type>-<item-key> push -u origin grind/<type>-<item-key>`.
 
 34. **Create a PR.**
    - If `gh` CLI available: `gh pr create` with a description
