@@ -197,15 +197,28 @@ def _command_names() -> set[str]:
 
 
 def _read_frontmatter(text: str) -> tuple[dict, str]:
-    """Return (fm_dict, body) for a doc with '---' YAML frontmatter."""
+    """Return (fm_dict, body) for a doc with '---' YAML frontmatter.
+
+    Uses yaml.safe_load first; falls back to a line-parser that handles
+    long values containing colons (which confuse the YAML parser).
+    """
     m = re.match(r"^---\n(.*?)\n---\n?(.*)$", text, re.DOTALL)
     if not m:
         return {}, text
+    raw = m.group(1)
     try:
         import yaml
-        fm = yaml.safe_load(m.group(1)) or {}
+        fm = yaml.safe_load(raw) or {}
     except Exception:
-        fm = {}
+        # Fallback: parse "key: value" lines, handling colons in values.
+        # YAML spec: key, then ': ', then value to end-of-line.
+        fm: dict[str, str] = {}
+        for line in raw.splitlines():
+            colon_idx = line.find(": ")
+            if colon_idx > 0:
+                key = line[:colon_idx].strip()
+                value = line[colon_idx + 2:]
+                fm[key] = value
     return fm, m.group(2)
 
 
