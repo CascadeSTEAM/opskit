@@ -16,7 +16,9 @@ Every command reads from environments/<env>/env.yml.  No hardcoded hostnames.
 
 from __future__ import annotations
 import argparse
+import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -782,6 +784,248 @@ def cmd_setup(args):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# idea — capture an idea to the local ledger
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def resolve_idea_target(args) -> tuple[Path, str]:
+    """Resolve the ledger path and project name for idea capture.
+
+    Returns (ledger_path, project_label) where:
+      - ledger_path is the absolute path to the ideas.md file
+      - project_label is a human-readable name for display (e.g. "opskit", "/path/to/project")
+    """
+    from pathlib import Path as P
+
+    # Explicit --ledger wins
+    if args.ledger:
+        ledger_path = P(args.ledger).resolve()
+        project_label = args.ledger
+        return ledger_path, project_label
+
+    # Explicit --project: resolve as path or known name
+    if args.project:
+        proj = P(args.project)
+        if proj.exists() and (proj / ".opskit" / "pack.yml").exists():
+            # opskit-aware project
+            ledger = proj / "docs" / "ideas.md"
+            return ledger, str(proj)
+        if (proj / "docs" / "ideas.md").exists():
+            return proj / "docs" / "ideas.md", str(proj)
+        # Maybe it's a known project name — check environments/
+        env_path = REPO_ROOT / "environments" / args.project
+        if env_path.exists():
+            # It's an env name — use opskit ledger
+            return REPO_ROOT / "docs" / "ideas.md", "opskit"
+        # Treat as path
+        if proj.is_dir():
+            ledger = proj / "docs" / "ideas.md"
+            return ledger, str(proj)
+
+    # Auto-detect: resolve the actual git repo root (handles worktrees)
+    cwd = P.cwd().resolve()
+    git_root = None
+
+    # For worktrees, git rev-parse --show-toplevel returns the worktree path,
+    # not the main checkout. We detect worktrees and resolve to the main repo.
+    dot_git = P.cwd() / ".git"
+    actual_root = None
+    if dot_git.is_file():
+        # Worktree: .git is a file pointing to the real git dir
+        try:
+            content = dot_git.read_text().strip()
+            m = re.match(r"gitdir: (.+)", content)
+            if m:
+                gitdir = Path(m.group(1))
+                # Main repo .git dir is at: <git-common-dir> or <gitdir>/../../
+                # gitdir paths look like: /main/.git/worktrees/<wt-name>
+                # The main .git is the parent of the 'worktrees' directory
+                if "worktrees" in gitdir.parts:
+                    parts = gitdir.parts
+                    idx = parts.index("worktrees")
+                    # idx-1 is the worktree name, idx-2 is .git
+                    if idx >= 2:
+                        actual_root = P("/").joinpath(*parts[:idx-1])
+        except (OSError, ValueError):
+            pass
+
+    if actual_root:
+        # Inside a worktree — check if it's opskit or opskit-aware
+        if actual_root == REPO_ROOT:
+            return actual_root / "docs" / "ideas.md", actual_root.name or str(actual_root)
+        if (actual_root / ".opskit" / "pack.yml").exists():
+            return actual_root / "docs" / "ideas.md", str(actual_root)
+
+    if not git_root:
+        try:
+            out = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                capture_output=True, text=True, check=True, timeout=5,
+            )
+            git_root = Path(out.stdout.strip()).resolve()
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+            pass
+
+    if git_root and git_root != actual_root:
+        # Inside a git repo — check if it's opskit or opskit-aware
+        if git_root == REPO_ROOT or REPO_ROOT in (git_root.parents or []):
+            return git_root / "docs" / "ideas.md", git_root.name if git_root.name else str(git_root)
+        if (git_root / ".opskit" / "pack.yml").exists():
+            return git_root / "docs" / "ideas.md", str(git_root)
+
+    # Fallback: prompt
+    print(f"Could not auto-detect a project from {cwd}.")
+    print(f"Use --project <name-or-path> or --ledger <path-to-ideas.md>")
+    print(f"For now, defaulting to: {REPO_ROOT / 'docs' / 'ideas.md'}")
+    return REPO_ROOT / "docs" / "ideas.md", "opskit (fallback)"
+
+
+def _ensure_ledger(ledger_path: Path, project_label: str) -> None:
+    """Create docs/ideas.md with a minimal table header if it doesn't exist."""
+    if ledger_path.exists():
+        return
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    header = (
+        "# Idea Ledger\n"
+        "\n"
+        "Raw enhancement/tooling ideas land here first — not as individual GitHub\n"
+        "issues. Manage this table with `python3 <opskit-root>/bin/idea.py`.\n"
+        "\n"
+        "| Date | Desire (1-5) | Title | Description | Status | GH# |\n"
+        "|------|--------------|-------|-------------|--------|-----|\n"
+    )
+    ledger_path.write_text(header)
+    # Stage it in git
+    try:
+        subprocess.run(
+            ["git", "add", str(ledger_path)],
+            cwd=Path(ledger_path).parent.parent,
+            capture_output=True, check=True, timeout=10,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        pass
+
+
+def _prompt(label: str) -> str:
+    """Read a line from stdin."""
+    sys.stdout.write(label)
+    sys.stdout.flush()
+    try:
+        return input()
+    except EOFError:
+        return ""
+
+
+def cmd_idea_handler(args) -> None:
+    """Handle the `opskit idea` subcommand."""
+    ledger_path, project_label = resolve_idea_target(args)
+
+    # Ensure ledger exists (create minimal one if needed)
+    _ensure_ledger(ledger_path, project_label)
+
+    # Get idea text
+    if args.text:
+        text = args.text
+    else:
+        print(f"Capturing idea for {project_label} ({ledger_path})")
+        text = _prompt("What's your idea? ")
+    if not text.strip():
+        print("ERROR: no idea provided", file=sys.stderr)
+        sys.exit(1)
+
+    # Determine repo root for idea-cmd.py (ledger's parent.parent)
+    ledger_repo_root = ledger_path.parent.parent
+
+    # Get desire level
+    if args.desire is None:
+        desire_str = _prompt("Importance (1-5, default 3): ")
+        try:
+            desire = int(desire_str.strip()) if desire_str.strip() else 3
+            if desire < 1:
+                desire = 1
+            if desire > 5:
+                desire = 5
+        except ValueError:
+            desire = 3
+    else:
+        desire = args.desire
+
+    # Title from first sentence or first 80 chars of text
+    title_text = text.strip()
+    title = title_text[:80] + ("..." if len(title_text) > 80 else "")
+
+    # Run dedupe check
+    dedupe_script = SCRIPT_DIR / "idea-cmd.py"
+    try:
+        dedupe_result = subprocess.run(
+            [sys.executable, str(dedupe_script), "--file", str(ledger_path),
+             "dedupe", title, "--gh"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if dedupe_result.returncode == 0:
+            dedupe_data = json.loads(dedupe_result.stdout)
+            if dedupe_data.get("count", 0) > 0:
+                print(f"\nPotential duplicates found ({dedupe_data['count']}):")
+                for m in dedupe_data["matches"]:
+                    if m.get("type") == "ledger":
+                        print(f"  Ledger row {m['row']}: \"{m['title']}\" "
+                              f"(status: {m['status']}, desire: {m['desire']})")
+                    else:
+                        print(f"  GH #{m['number']}: \"{m['title']}\" "
+                              f"({m['state']}) — {m['url']}")
+                confirm = _prompt("\nCreate a new idea anyway? (y/n): ")
+                if confirm.strip().lower() not in ("y", "yes"):
+                    print("Cancelled.")
+                    return
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+        pass  # dedupe failed silently, proceed with capture
+
+    # Capture: add to ledger via bin/idea.py
+    # First, run idea-cmd.py capture to get structured JSON
+    try:
+        capture_result = subprocess.run(
+            [sys.executable, str(dedupe_script), "--file", str(ledger_path),
+             "capture", "--title", title, "--desc", text.strip()],
+            capture_output=True, text=True, timeout=10,
+        )
+        if capture_result.returncode == 0:
+            captured = json.loads(capture_result.stdout)
+            # Now use idea.py to actually add the row
+            idea_script = SCRIPT_DIR / "idea.py"
+            add_result = subprocess.run(
+                [sys.executable, str(idea_script), "--file", str(ledger_path),
+                 "add", "--desire", str(desire),
+                 "--title", captured["title"],
+                 "--desc", captured["description"]],
+                capture_output=True, text=True, timeout=10,
+            )
+            if add_result.returncode == 0:
+                print(f"\n✓ Added to {project_label} ledger: {captured['title']} (desire: {desire})")
+                print(f"  Ledger: {ledger_path}")
+                # Suggest next steps
+                print(f"\n  Next steps:")
+                print(f"    Run:   opskit idea  # to capture another idea")
+                print(f"    Or:    bin/idea.py list  # view all ideas")
+                return
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as e:
+        print(f"ERROR: failed to capture idea: {e}", file=sys.stderr)
+
+    # Fallback: direct idea.py call
+    idea_script = SCRIPT_DIR / "idea.py"
+    add_result = subprocess.run(
+        [sys.executable, str(idea_script), "--file", str(ledger_path),
+         "add", "--desire", str(desire),
+         "--title", title,
+         "--desc", text.strip()],
+        capture_output=True, text=True, timeout=10,
+    )
+    if add_result.returncode == 0:
+        print(f"\n✓ Added to {project_label} ledger: {title} (desire: {desire})")
+    else:
+        print(f"ERROR: {add_result.stderr}", file=sys.stderr)
+        sys.exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # main
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -800,6 +1044,8 @@ examples:
   opskit status                                   inventory summary
   opskit lint                                     flag inventory hosts missing device YAML
   opskit setup                                    install python deps + hooks
+  opskit idea "add a dark mode"                   capture an idea to the local ledger
+  opskit idea --desire 5 "fix auth bug"           capture with explicit importance
 
   opskit also works without the install:
     python3 bin/opskit ...
@@ -868,6 +1114,18 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
     pc.add_argument('shell', nargs='?', default='bash', choices=['bash', 'zsh'],
                     help='shell (bash or zsh)')
 
+    # idea — capture an idea to the local ledger
+    pi = sub.add_parser('idea', help='capture an idea to the local idea ledger')
+    pi.add_argument('text', nargs='?', default=None,
+                    help='the idea (prompts if omitted)')
+    pi.add_argument('--desire', type=int, choices=range(1, 6), default=None,
+                    help='importance 1-5 (prompts if omitted)')
+    pi.add_argument('--project', default=None,
+                    help='project name or path (default: auto-detect from PWD)')
+    pi.add_argument('--ledger', default=None,
+                    help='explicit path to ideas.md ledger file (overrides --project)')
+    pi.set_defaults(func=cmd_idea_handler)
+
     args = p.parse_args()
 
     if args.command == 'init':
@@ -889,6 +1147,8 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
         cmd_setup(args)
     elif args.command == 'setup-completion':
         cmd_completion(args)
+    elif args.command == 'idea':
+        cmd_idea_handler(args)
     else:
         p.print_help()
 
