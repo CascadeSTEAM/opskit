@@ -149,3 +149,34 @@ python3 bin/mcp-call.py collab collab_create_commands '["skill1", "skill2"]'
 ```
 
 This was automated in `collab_skill_command_drift` and `collab_create_commands` (2026-08-26). **Always run the check before creating a slash command by hand.**
+
+## Command Template Choice: Inline vs Skill-Loader
+
+**Use `inline` template by default.** The `inline` template gives the command file access to `$ARGUMENTS` directly, allowing subcommand routing:
+
+```markdown
+---
+description: Backup operations. Use for: /backup, /backup-status, /backup-restore.
+---
+
+# Backup Operations
+
+Parse `$ARGUMENTS` for a subcommand (first word). If no subcommand, default to `status`.
+
+## Subcommands
+
+### `status` (default)
+List snapshots, show sizes...
+
+### `run`
+Run a full backup...
+
+### `restore`
+Restore from snapshot: `restore <type> <date>`...
+```
+
+This enables natural usage: `/backup status`, `/backup restore main 2026-08-26_120000` instead of requiring separate commands like `/backup-status` and `/backup-restore`.
+
+**Use `skill-loader` only** for simple 1:1 dispatch commands where the command does exactly one thing with no subcommand variants.
+
+When in doubt, use `inline` — it supports everything `skill-loader` does and more.
