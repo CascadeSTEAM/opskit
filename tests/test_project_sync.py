@@ -311,3 +311,248 @@ class TestPull:
         assert len(result["pulled"]) == 1
         assert result["pulled"][0]["status"] == "skipped"
         assert result["pulled"][0]["reason"] == "not clone mode"
+
+
+# ── _parse_frontmatter ───────────────────────────────────────────────────────
+
+
+class TestParseFrontmatter:
+
+    def test_no_frontmatter(self):
+        fm, body = ps._parse_frontmatter("just text\n")
+        assert fm == {}
+        assert body == "just text\n"
+
+    def test_with_frontmatter(self):
+        text = "---\nmode: subagent\nname: test\n---\n\nBody here\n"
+        fm, body = ps._parse_frontmatter(text)
+        assert fm == {"mode": "subagent", "name": "test"}
+        assert body == "Body here\n"
+
+    def test_empty_frontmatter(self):
+        text = "---\n---\n\nBody\n"
+        fm, body = ps._parse_frontmatter(text)
+        assert fm == {}
+        assert body == "Body\n"
+
+
+# ── _render_claude_agent_wrapper ─────────────────────────────────────────────
+
+
+class TestRenderClaudeAgentWrapper:
+
+    def test_minimal_agent(self):
+        fm = {"mode": "subagent", "name": "test", "description": "A test agent"}
+        body = "Body content\n"
+        text, has_soft = ps._render_claude_agent_wrapper(
+            name="member-test", fm=fm, body=body,
+            member_name="member", trust={"bash": "ask", "tool_deny": []},
+        )
+        assert "member: member" in text
+        assert "A test agent" in text
+        assert has_soft is False
+
+    def test_agent_with_trust_deny(self):
+        fm = {
+            "mode": "subagent", "name": "test",
+            "description": "A restricted agent",
+            "permission": {"tool_deny": "deny"},
+        }
+        text, has_soft = ps._render_claude_agent_wrapper(
+            name="member-test", fm=fm, body="Body\n",
+            member_name="member", trust={"bash": "ask", "tool_deny": []},
+        )
+        assert has_soft is True
+        assert "DENY tool `tool_deny`" in text
+
+    def test_agent_with_triggers(self):
+        fm = {
+            "mode": "subagent", "name": "test",
+            "description": "A test agent",
+            "triggers": "check status, review logs",
+        }
+        text, _ = ps._render_claude_agent_wrapper(
+            name="member-test", fm=fm, body="Body\n",
+            member_name="member", trust={"bash": "ask", "tool_deny": []},
+        )
+        assert "Use for: check status, review logs." in text
+
+
+# ── Mount ─────────────────────────────────────────────────────────────────────
+
+
+class TestMount:
+
+    def test_no_remotes(self, tmp_path: Path):
+        ps._REMOTES = tmp_path / "empty"
+        ps._REMOTES.write_text("")
+
+        result = ps.cmd_mount()
+        assert result["summary"]["total"] == 0
+        assert result["summary"]["mounted"] == 0
+
+    def test_skips_example_in_mount(self, tmp_member: Path):
+        example = tmp_member.parent / "projects" / "example"
+        example.mkdir(parents=True)
+        (example / ".opskit").mkdir()
+        (example / ".opskit" / "pack.yml").write_text("name: example\n")
+
+        remotes = tmp_member.parent / ".project-remotes"
+        remotes.write_text(f"example {example}\n")
+        projects = tmp_member.parent / "projects"
+        ps._REMOTES = remotes
+        ps._PROJECTS = projects
+        ps._EXAMPLE = example
+
+        result = ps.cmd_mount()
+        assert result["summary"]["total"] == 1
+        assert result["summary"]["skipped"] == 1
+        assert result["mounted"][0]["status"] == "skipped"
+
+    def test_mount_no_mounted_member(self, tmp_path: Path, tmp_member: Path):
+        remotes = tmp_path / ".project-remotes"
+        remotes.write_text(f"test-member {tmp_member}\n")
+        projects = tmp_path / "projects"
+        projects.mkdir()
+        # No mount link created — member not mounted
+        ps._REMOTES = remotes
+        ps._PROJECTS = projects
+
+        result = ps.cmd_mount()
+        # Member is not mounted (no mount link), so it is reported as unmounted
+        assert result["summary"]["total"] == 1
+        assert result["mounted"][0]["status"] == "unmounted"
+
+    def test_mount_with_mounted_member(self, tmp_path: Path, tmp_member: Path):
+        remotes = tmp_path / ".project-remotes"
+        remotes.write_text(f"test-member {tmp_member}\n")
+        projects = tmp_path / "projects"
+        projects.mkdir()
+
+        # Create mount link so member is considered "mounted"
+        link = projects / "test-member"
+        link.symlink_to(tmp_member)
+
+        ps._REMOTES = remotes
+        ps._PROJECTS = projects
+
+        result = ps.cmd_mount()
+        assert result["summary"]["mounted"] == 1
+        assert result["summary"]["agents_rendered"] == 1
+        assert result["summary"]["skills_rendered"] == 1
+
+        # Verify OpenCode agent symlink was created under tmp_path/.opencode/agent/
+        oc_dir = tmp_path / ".opencode" / "agent"
+        oc_agent = oc_dir / "test-member-test.md"
+        assert oc_agent.is_symlink()
+        # Symlink target should be relative: ../../../projects/test-member/agents/test.md
+        assert oc_agent.readlink() == Path("../../../projects") / "test-member" / "agents/test.md"
+
+    def test_mount_invalid_pack(self, tmp_path: Path):
+        """Member with invalid YAML pack.yml."""
+        member = tmp_path / "bad-member"
+        member.mkdir()
+        opskit_dir = member / ".opskit"
+        opskit_dir.mkdir()
+        (opskit_dir / "pack.yml").write_text("invalid: yaml: [[[")
+
+        remotes = tmp_path / ".project-remotes"
+        remotes.write_text(f"bad-member {member}\n")
+        projects = tmp_path / "projects"
+        projects.mkdir()
+        link = projects / "bad-member"
+        link.symlink_to(member)
+
+        ps._REMOTES = remotes
+        ps._PROJECTS = projects
+
+        result = ps.cmd_mount()
+        # Invalid YAML → _load_pack returns {}, which has no "name" key
+        # → reported as error
+        assert result["summary"]["total"] == 1
+        assert len(result["errors"]) == 1
+        assert result["errors"][0]["name"] == "bad-member"
+
+
+# ── Prune ─────────────────────────────────────────────────────────────────────
+
+
+class TestPrune:
+
+    def test_prune_stale_agent_render(self, tmp_path: Path, tmp_member: Path):
+        """Stale agent render from removed member should be pruned."""
+        remotes = tmp_path / ".project-remotes"
+        remotes.write_text(f"test-member {tmp_member}\n")
+        projects = tmp_path / "projects"
+        projects.mkdir()
+        link = projects / "test-member"
+        link.symlink_to(tmp_member)
+
+        # Create stale render in the context dir under tmp_path
+        opskit_dir = tmp_path / ".opencode"
+        agent_dir = opskit_dir / "agent"
+        agent_dir.mkdir(parents=True)
+
+        # Create a stale render for a member that no longer exists
+        stale_link = agent_dir / "removed-member-stale.md"
+        stale_link.write_text("# stale\n")
+
+        ps._REMOTES = remotes
+        ps._PROJECTS = projects
+
+        result = ps.cmd_mount()
+        # The stale render should be pruned
+        assert not stale_link.exists()
+        assert any("agent" in p for p in result.get("pruned", []))
+
+    def test_prune_stale_skill_render(self, tmp_path: Path, tmp_member: Path):
+        """Stale skill render from removed member should be pruned."""
+        remotes = tmp_path / ".project-remotes"
+        remotes.write_text(f"test-member {tmp_member}\n")
+        projects = tmp_path / "projects"
+        projects.mkdir()
+        link = projects / "test-member"
+        link.symlink_to(tmp_member)
+
+        # Stale skill render under tmp_path/.claude/skills/
+        skills_dir = tmp_path / ".claude" / "skills"
+        skills_dir.mkdir(parents=True)
+
+        stale_skill = skills_dir / "removed-member-stale-skill"
+        stale_skill.mkdir()
+
+        ps._REMOTES = remotes
+        ps._PROJECTS = projects
+
+        result = ps.cmd_mount()
+        # The stale skill should be pruned
+        assert not stale_skill.exists()
+
+
+# ── Sync + Mount ──────────────────────────────────────────────────────────────
+
+
+class TestSyncMount:
+
+    def test_sync_mount_basic(self, tmp_path: Path, tmp_member: Path):
+        remotes = tmp_path / ".project-remotes"
+        remotes.write_text(f"test-member {tmp_member}\n")
+        projects = tmp_path / "projects"
+        projects.mkdir()
+
+        # Don't create mount link — sync will create it
+        ps._REMOTES = remotes
+        ps._PROJECTS = projects
+
+        result = ps.cmd_sync_mount()
+        assert "sync" in result
+        assert "mount" in result
+        assert result["summary"]["mounted"] >= 0
+
+    def test_sync_mount_no_remotes(self, tmp_path: Path):
+        ps._REMOTES = tmp_path / "empty"
+        ps._REMOTES.write_text("")
+
+        result = ps.cmd_sync_mount()
+        assert "sync" in result
+        assert "mount" in result
