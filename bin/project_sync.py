@@ -407,6 +407,308 @@ def cmd_pull() -> dict:
     }
 
 
+# ── Mount ─────────────────────────────────────────────────────────────────────
+
+
+def _parse_frontmatter(text: str) -> tuple[dict, str]:
+    """Split frontmatter from body. Returns (fm_dict, body_text)."""
+    # Handle empty frontmatter (---\n---) and non-empty cases
+    m = re.match(r"^---\n(.*?)(?:\n---\n)(.*)", text, re.DOTALL)
+    if not m:
+        # Try empty frontmatter: ---\n---\n body
+        m2 = re.match(r"^---\n---\n(.*)", text, re.DOTALL)
+        if m2:
+            return {}, m2.group(1).lstrip("\n")
+        return {}, text.lstrip("\n")
+    data = yaml.safe_load(m.group(1))
+    if not isinstance(data, dict):
+        data = {}
+    body = m.group(2) if m.group(2) else ""
+    return data, body.lstrip("\n")
+
+
+def _render_claude_agent_wrapper(
+    name: str, fm: dict, body: str, member_name: str, trust: dict
+) -> tuple[str, bool]:
+    """Generate a Claude Code agent wrapper from a member's agent file.
+
+    Translates frontmatter, injects trust overlay, adds member field.
+    Returns (file_text, has_unenforceable_denies).
+    """
+    description = str(fm.get("description") or "").strip()
+    triggers = str(fm.get("triggers") or "").strip()
+
+    _SCALARS = ("bash", "edit", "write", "read")
+    perm = fm.get("permission") if isinstance(fm.get("permission"), dict) else {}
+    tool_perm = perm.get("tool") if isinstance(perm.get("tool"), dict) else {}
+
+    flat_tools = {
+        g: v for g, v in perm.items()
+        if g not in _SCALARS and g != "tool" and isinstance(v, str)
+    }
+    tool_denies = [
+        g for g, v in {**tool_perm, **flat_tools}.items() if v == "deny"
+    ]
+    scalar_denies = [k for k in _SCALARS if perm.get(k) == "deny"]
+
+    base = description.rstrip().rstrip(".")
+    desc = f"{base}. Use for: {triggers}." if triggers else description
+
+    # Build trust overlay
+    trust_bash = trust.get("bash", "ask")
+    trust_tool_deny = list(trust.get("tool_deny", []))
+    # Merge deny lists — include scalar denies (bash/other permission scalars)
+    all_denies = list(set(tool_denies + scalar_denies + trust_tool_deny))
+
+    fm_yaml = yaml.safe_dump(
+        {"name": name, "description": desc, "member": member_name},
+        default_flow_style=False,
+        sort_keys=False,
+        allow_unicode=True,
+        width=4096,
+    ).strip()
+
+    parts = [f"---\n{fm_yaml}\n---\n"]
+    if perm:
+        parts.append(f"<!-- opencode-permission: {json.dumps(perm)} -->\n")
+
+    # Add trust directive
+    parts.append(f"# Trust overlay: bash={trust_bash}, tool_deny={all_denies}\n")
+
+    parts.append(body.lstrip("\n"))
+
+    has_soft = bool(all_denies)
+    if has_soft:
+        lines = [
+            "\n\n## Tool restrictions (advisory under Claude Code)\n\n",
+            "Claude Code does not hard-enforce OpenCode `permission` deny rules. "
+            "Honor these behaviorally; hard enforcement needs a PreToolUse deny "
+            "hook in `.claude/settings.json`.\n\n",
+        ]
+        lines += [f"- DENY tool `{g}`\n" for g in all_denies]
+        parts.append("".join(lines))
+
+    return "".join(parts), has_soft
+
+
+def cmd_mount(args: argparse.Namespace | None = None) -> dict:
+    """Validate members, render agents + skills, prune stale renders.
+
+    For each mounted member:
+      1. Run opskit-aware.py check on the member root
+      2. Render agents (symlinks for OpenCode, generated wrappers for Claude Code)
+      3. Symlink skills into both discovery paths
+      4. Prune stale renders for removed members
+    """
+    # Always derive from _PROJECTS so tests that swap _PROJECTS get mounted
+    # into tmp_path.  OPSKIT_ROOT can override both _PROJECTS and this.
+    _root_env = os.environ.get("OPSKIT_ROOT", "")
+    if _root_env:
+        _ROOT = Path(_root_env)
+    else:
+        _ROOT = _PROJECTS.parent
+    oc_dir = _ROOT / ".opencode" / "agent"
+    cc_dir = _ROOT / ".claude" / "agents"
+    oc_skills_dir = _ROOT / ".opencode" / "skills"
+    cc_skills_dir = _ROOT / ".claude" / "skills"
+
+    oc_dir.mkdir(parents=True, exist_ok=True)
+    cc_dir.mkdir(parents=True, exist_ok=True)
+    oc_skills_dir.mkdir(parents=True, exist_ok=True)
+    cc_skills_dir.mkdir(parents=True, exist_ok=True)
+
+    remotes = parse_remotes(_REMOTES)
+    mounted: list[dict] = []
+    errors: list[dict] = []
+
+    for remote in remotes:
+        name = remote["name"]
+        local = _member_local_dir(remote)
+
+        # Skip committed example/ reference
+        if local == _EXAMPLE:
+            mounted.append({"name": name, "status": "skipped", "reason": "committed reference"})
+            continue
+
+        # Skip unmounted members — run `sync` first to create mount links
+        pack = _load_pack(_member_pack_path(local))
+        if pack is None or not pack.get("name"):
+            if pack is None:
+                errors.append({"name": name, "error": "no pack.yml found"})
+            else:
+                errors.append({"name": name, "error": "pack.yml missing 'name' field"})
+            continue
+        if not _is_mounted(remote, pack):
+            mounted.append({"name": name, "status": "unmounted", "reason": "no mount link (run sync first)"})
+            continue
+
+        # Validate pack.yml via opskit-aware.py check
+        aware_path = _ROOT / "bin" / "opskit-aware.py"
+        if aware_path.is_file():
+            result = subprocess.run(
+                [sys.executable, str(aware_path), "check", str(local)],
+                capture_output=True, text=True,
+            )
+            if result.returncode != 0:
+                errors.append({
+                    "name": name,
+                    "error": "validation failed",
+                    "details": result.stdout.strip()[:500],
+                })
+                continue
+
+        trust = pack.get("trust", {}) or {}
+        rendered_agents: list[str] = []
+        rendered_skills: list[str] = []
+
+        # ── Render agents ──
+        for agent in (pack.get("agents") or []):
+            if not isinstance(agent, dict) or not isinstance(agent.get("path"), str):
+                continue
+            agent_rel = agent["path"]
+            agent_file = local / agent_rel
+            if not agent_file.is_file():
+                errors.append({"name": name, "error": f"agent missing: {agent_rel}"})
+                continue
+
+            # Parse frontmatter to check mode
+            fm, body = _parse_frontmatter(agent_file.read_text())
+            if fm.get("mode") not in ("subagent",):
+                rendered_agents.append({"name": name, "agent": agent_rel, "status": "skipped", "reason": "not mode:subagent"})
+                continue
+
+            # OpenCode: symlink
+            base_name = agent_file.stem
+            oc_link = oc_dir / f"{name}-{base_name}.md"
+            if oc_link.exists() or oc_link.is_symlink():
+                oc_link.unlink()
+            # Relative path from .opencode/agent/ to projects/<name>/agents/<file>
+            oc_target = Path("../../../projects") / name / agent_rel
+            oc_link.symlink_to(oc_target)
+
+            # Claude Code: generate wrapper
+            cc_text, _ = _render_claude_agent_wrapper(
+                name=f"{name}-{base_name}",
+                fm=fm,
+                body=body,
+                member_name=name,
+                trust=trust,
+            )
+            (cc_dir / f"{name}-{base_name}.md").write_text(cc_text)
+
+            rendered_agents.append({"name": name, "agent": agent_rel, "status": "rendered"})
+
+        # ── Render skills ──
+        for skill in (pack.get("skills") or []):
+            if not isinstance(skill, dict) or not isinstance(skill.get("path"), str):
+                continue
+            skill_rel = skill["path"]
+            skill_dir = local / skill_rel
+            if not skill_dir.is_dir():
+                errors.append({"name": name, "error": f"skill dir missing: {skill_rel}"})
+                continue
+
+            skill_name = skill_dir.name
+            prefix = f"{name}-{skill_name}"
+
+            # OpenCode: symlink
+            oc_skill_link = oc_skills_dir / prefix
+            if oc_skill_link.exists() or oc_skill_link.is_symlink():
+                oc_skill_link.unlink()
+            oc_skill_target = Path("../../../projects") / name / skill_rel
+            oc_skill_link.symlink_to(oc_skill_target)
+
+            # Claude Code: symlink (Claude Code follows symlinks for skills)
+            cc_skill_link = cc_skills_dir / prefix
+            if cc_skill_link.exists() or cc_skill_link.is_symlink():
+                cc_skill_link.unlink()
+            cc_skill_link.symlink_to(oc_skill_target)
+
+            rendered_skills.append({"name": name, "skill": skill_rel, "status": "rendered"})
+
+        mounted.append({
+            "name": name,
+            "status": "mounted",
+            "agents_rendered": len(rendered_agents),
+            "skills_rendered": len(rendered_skills),
+            "rendered_agents": rendered_agents,
+            "rendered_skills": rendered_skills,
+        })
+
+    # ── Prune stale renders ──
+    # Build set of all currently-rendered member names
+    active_members = {r["name"] for r in remotes if r["name"] not in ("example",)}
+    pruned: list[dict] = []
+
+    for rendered_dir, kind in [
+        (oc_dir, "agent"), (cc_dir, "agent"),
+        (oc_skills_dir, "skill"), (cc_skills_dir, "skill"),
+    ]:
+        for existing in sorted(rendered_dir.glob("*.md")) if kind == "agent" else sorted(rendered_dir.glob("*")):
+            # Skip directories in skill dir
+            if kind == "skill" and existing.is_dir():
+                stem = existing.name
+            else:
+                stem = existing.stem
+            # Check if this render has no member source
+            # Format: <member-name>-<rest> — try to match member name
+            found = False
+            for m in active_members:
+                if kind == "agent" and stem.startswith(f"{m}-"):
+                    found = True
+                    break
+                if kind == "skill" and stem.startswith(f"{m}-"):
+                    found = True
+                    break
+            if not found:
+                if existing.is_dir():
+                    shutil.rmtree(existing)
+                else:
+                    existing.unlink()
+                pruned.append({
+                    kind: f"{existing.parent.name}/{existing.name}",
+                    "reason": f"no active member with prefix {stem.split('-')[0] if '-' in stem else stem}",
+                })
+
+    total_agents = sum(1 for m in mounted if m.get("status") != "skipped" for _ in m.get("rendered_agents", []))
+    total_skills = sum(1 for m in mounted if m.get("status") != "skipped" for _ in m.get("rendered_skills", []))
+
+    return {
+        "mounted": mounted,
+        "errors": errors,
+        "pruned": pruned,
+        "summary": {
+            "total": len(remotes),
+            "mounted": sum(1 for m in mounted if m.get("status") == "mounted"),
+            "skipped": sum(1 for m in mounted if m.get("status") == "skipped"),
+            "errors": len(errors),
+            "agents_rendered": total_agents,
+            "skills_rendered": total_skills,
+            "pruned": len(pruned),
+        },
+    }
+
+
+# ── Sync + Mount ──────────────────────────────────────────────────────────────
+
+
+def cmd_sync_mount(args: argparse.Namespace | None = None) -> dict:
+    """Sync members (clone/pull + symlink) then mount (validate + render)."""
+    sync_result = cmd_sync()
+    mount_result = cmd_mount()
+
+    return {
+        "sync": sync_result,
+        "mount": mount_result,
+        "summary": {
+            "synced": sync_result.get("summary", {}).get("synced", 0),
+            "failed": sync_result.get("summary", {}).get("failed", 0),
+            "mounted": mount_result.get("summary", {}).get("mounted", 0),
+            "pruned": mount_result.get("summary", {}).get("pruned", 0),
+        },
+    }
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 
@@ -428,16 +730,13 @@ def main() -> None:
     ps = sub.add_parser("pull", help="pull updates for clone members")
     ps.set_defaults(fn=lambda a: cmd_pull())
 
-    # mount + sync-mount (placeholder for Phase 2 — TKT-261)
-    pm = sub.add_parser("mount", help="validate + render agents/skills (Phase 2)")
-    pm.set_defaults(fn=lambda a: {"note": "mount — Phase 2: see TKT-261", "issue": "261"})
+    # mount — validate members, render agents/skills, prune stale
+    pm = sub.add_parser("mount", help="validate + render agents/skills, prune stale")
+    pm.set_defaults(fn=lambda a: cmd_mount())
 
+    # sync-mount — sync + mount in one step
     psm = sub.add_parser("sync-mount", help="sync + mount in one step")
-    psm.set_defaults(fn=lambda a: {
-        "note": "sync-mount — Phase 2: see TKT-261",
-        "steps": ["sync", "mount"],
-        "issue": "261",
-    })
+    psm.set_defaults(fn=lambda a: cmd_sync_mount())
 
     args = parser.parse_args()
     result = args.fn(args)
