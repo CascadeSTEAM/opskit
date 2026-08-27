@@ -608,17 +608,17 @@ def cmd_init(args):
     remotes_file = REPO_ROOT / '.project-remotes'
     entry = f'{member_name} {target}'
     already_present = False
-    if remotes_file.is_file():
-        for line in remotes_file.read_text().splitlines():
-            stripped = line.strip()
-            if stripped and not stripped.startswith('#'):
-                parts = stripped.split()
-                if len(parts) >= 2 and parts[0] == member_name:
-                    already_present = True
-                    break
+    remotes_content = remotes_file.read_text() if remotes_file.is_file() else ''
+    for line in remotes_content.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith('#'):
+            parts = stripped.split()
+            if len(parts) >= 2 and parts[0] == member_name:
+                already_present = True
+                break
     if not already_present:
         with open(remotes_file, 'a') as f:
-            if remotes_file.is_file() and remotes_file.read_text():
+            if remotes_content.strip():
                 f.write('\n')
             f.write(entry + '\n')
         print(f'Added {member_name} to .project-remotes', file=sys.stderr)
@@ -631,7 +631,7 @@ def cmd_init(args):
         capture_output=True,
         text=True,
     )
-    print(sync_result.stdout, end='')
+    print(sync_result.stdout, end='', file=sys.stderr)
     if sync_result.stderr:
         print(sync_result.stderr, file=sys.stderr, end='')
     if sync_result.returncode != 0:
