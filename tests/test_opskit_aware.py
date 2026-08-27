@@ -206,3 +206,110 @@ class TestCheck:
         r = run("check", str(tmp_path))
         assert r.returncode != 0
         assert any("name" in e for e in json.loads(r.stdout)["errors"])
+
+
+# ── Bidirectional init (opskit init integration) ──────────────────────────────
+
+OPSKIT_BIN = ROOT / "bin" / "opskit"
+
+
+def run_opskit(*args: str, env_override: dict | None = None) -> subprocess.CompletedProcess:
+    env = os.environ.copy()
+    env["OPSKIT_ROOT"] = str(ROOT)
+    if env_override:
+        env.update(env_override)
+    return subprocess.run(
+        [sys.executable, str(OPSKIT_BIN), *args],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def make_fake_opskit_root(tmp_path: Path) -> Path:
+    """Create a minimal fake OpsKit root with schema and .project-remotes."""
+    ops_root = tmp_path / "opskit-root"
+    ops_root.mkdir()
+    schemas = ops_root / "schemas"
+    schemas.mkdir()
+    # Copy the real schema so validation works
+    real_schema = ROOT / "schemas" / "project.schema.json"
+    if real_schema.is_file():
+        (schemas / "project.schema.json").write_text(real_schema.read_text())
+    remotes = ops_root / ".project-remotes"
+    remotes.write_text("")
+    return ops_root
+
+
+class TestBidirectionalInit:
+    """Integration tests for the bidirectional init path in bin/opskit."""
+
+    def test_init_generates_opskit_md(self, tmp_path):
+        m = make_member(tmp_path / "my-repo")
+        r = run_opskit("init", str(m))
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert (m / "opskit.md").is_file()
+        text = (m / "opskit.md").read_text()
+        assert "OpsKit Reference" in text
+        assert "opskit member" in text
+
+    def test_init_adds_to_project_remotes(self, tmp_path):
+        m = make_member(tmp_path / "my-repo")
+        ops_root = make_fake_opskit_root(tmp_path)
+        r = run_opskit("init", str(m), env_override={"OPSKIT_ROOT": str(ops_root)})
+        assert r.returncode == 0, r.stdout + r.stderr
+        remotes = ops_root / ".project-remotes"
+        content = remotes.read_text()
+        assert "my-repo" in content
+        assert str(m) in content
+
+    def test_init_no_duplicate_remotes(self, tmp_path):
+        m = make_member(tmp_path / "my-repo")
+        ops_root = make_fake_opskit_root(tmp_path)
+        remotes = ops_root / ".project-remotes"
+        remotes.write_text(f"my-repo {m}\n")
+        r = run_opskit("init", str(m), "--force", env_override={"OPSKIT_ROOT": str(ops_root)})
+        assert r.returncode == 0, r.stdout + r.stderr
+        lines = [l for l in remotes.read_text().splitlines() if l.strip()]
+        matches = [l for l in lines if l.startswith("my-repo")]
+        assert len(matches) == 1, f"expected 1 entry, got {len(matches)}: {matches}"
+
+    def test_init_adds_opencode_reference(self, tmp_path):
+        m = make_member(tmp_path / "my-repo")
+        oc_config = m / "opencode.json"
+        oc_config.write_text(json.dumps({"$schema": "https://opencode.ai/config.json"}))
+        r = run_opskit("init", str(m))
+        assert r.returncode == 0, r.stdout + r.stderr
+        cfg = json.loads(oc_config.read_text())
+        assert "references" in cfg
+        assert "opskit" in cfg["references"]
+        assert "path" in cfg["references"]["opskit"]
+
+    def test_init_skips_existing_opencode_reference(self, tmp_path):
+        m = make_member(tmp_path / "my-repo")
+        oc_config = m / "opencode.json"
+        original = {"references": {"opskit": {"path": "/already/here", "description": "old"}}}
+        oc_config.write_text(json.dumps(original))
+        r = run_opskit("init", str(m), "--force")
+        assert r.returncode == 0, r.stdout + r.stderr
+        cfg = json.loads(oc_config.read_text())
+        assert cfg["references"]["opskit"]["path"] == "/already/here"
+
+    def test_init_opskit_md_respects_force(self, tmp_path):
+        m = make_member(tmp_path / "my-repo")
+        run_opskit("init", str(m))
+        sentinel = "CUSTOM OPSKIT MD"
+        (m / "opskit.md").write_text(sentinel)
+        r = run_opskit("init", str(m))
+        assert r.returncode != 0
+        assert (m / "opskit.md").read_text() == sentinel
+
+    def test_init_opskit_md_force_backs_up(self, tmp_path):
+        m = make_member(tmp_path / "my-repo")
+        run_opskit("init", str(m))
+        (m / "opskit.md").write_text("CUSTOM\n")
+        r = run_opskit("init", str(m), "--force")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert (m / "opskit.md").is_file()
+        backups = list(m.glob("opskit.md.bak.*"))
+        assert len(backups) >= 1
