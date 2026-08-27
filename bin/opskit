@@ -594,6 +594,91 @@ def cmd_init(args):
     print(result.stdout, end='')
     if result.stderr:
         print(result.stderr, file=sys.stderr, end='')
+    if result.returncode != 0:
+        sys.exit(result.returncode)
+
+    # Parse the init output to get the member name
+    try:
+        init_data = json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError):
+        sys.exit(0)
+    member_name = init_data.get('name', target.name)
+
+    # Step 2: Add to .project-remotes if not already present
+    remotes_file = REPO_ROOT / '.project-remotes'
+    entry = f'{member_name} {target}'
+    already_present = False
+    remotes_content = remotes_file.read_text() if remotes_file.is_file() else ''
+    for line in remotes_content.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith('#'):
+            parts = stripped.split()
+            if len(parts) >= 2 and parts[0] == member_name:
+                already_present = True
+                break
+    if not already_present:
+        with open(remotes_file, 'a') as f:
+            if remotes_content.strip():
+                f.write('\n')
+            f.write(entry + '\n')
+        print(f'Added {member_name} to .project-remotes', file=sys.stderr)
+
+    # Step 3: Run sync-mount to create symlinks and render agents/skills
+    # Skip if:
+    #   - the target is inside the OpsKit repo itself (members live under
+    #     projects/ or are the repo root), OR
+    #   - --no-sync-mount was passed (used by tests to avoid modifying the
+    #     repo's .opencode/skills/ and .claude/skills/).
+    # Running sync-mount against the OpsKit repo would modify .opencode/skills/
+    # and .claude/skills/, which breaks test_skill_tree_divergence.
+    _projects = REPO_ROOT / "projects"
+    _inside_opskit = (
+        target == REPO_ROOT
+        or str(target.resolve()).startswith(str(_projects.resolve()))
+    )
+    _skip_sync = args.no_sync_mount or _inside_opskit
+    if not _skip_sync:
+        sync_result = subprocess.run(
+            [sys.executable, str(SCRIPT_DIR / 'project_sync.py'), 'sync-mount'],
+            cwd=str(REPO_ROOT),
+            env={**os.environ, 'OPSKIT_ROOT': str(REPO_ROOT)},
+            capture_output=True,
+            text=True,
+        )
+        print(sync_result.stdout, end='', file=sys.stderr)
+        if sync_result.stderr:
+            print(sync_result.stderr, file=sys.stderr, end='')
+        if sync_result.returncode != 0:
+            sys.exit(sync_result.returncode)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# member — manage OpsKit member projects (sync/mount/status)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def cmd_member(args):
+    """Dispatch member subcommands to project_sync.py."""
+    subcmd = args.member_command
+    if not subcmd:
+        print('usage: opskit member <status|sync|mount|sync-mount|prune>', file=sys.stderr)
+        sys.exit(1)
+
+    valid = ('status', 'sync', 'mount', 'sync-mount', 'prune')
+    if subcmd not in valid:
+        print(f'error: unknown member subcommand {subcmd!r} (choose from: {", ".join(valid)})',
+              file=sys.stderr)
+        sys.exit(1)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / 'project_sync.py'), subcmd],
+        cwd=str(REPO_ROOT),
+        env={**os.environ, 'OPSKIT_ROOT': str(REPO_ROOT)},
+        capture_output=True,
+        text=True,
+    )
+    print(result.stdout, end='')
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end='')
     sys.exit(result.returncode)
 
 
@@ -615,6 +700,9 @@ _opskit_completion() {{
         init)
             COMPREPLY=( $(compgen -W "" -- "$cur") )
             ;;
+        member)
+            COMPREPLY=( $(compgen -W "status sync mount sync-mount prune" -- "$cur") )
+            ;;
         scan|status|lint)
             COMPREPLY=( $(compgen -W "--env --dry-run --discover-only --enrich-only --uplinks-only --skip-enrich --skip-uplinks --no-router --fixture --sudo" -- "$cur") )
             ;;
@@ -622,7 +710,7 @@ _opskit_completion() {{
             COMPREPLY=( $(compgen -W "bash zsh" -- "$cur") )
             ;;
         *)
-            COMPREPLY=( $(compgen -W "env init scan status lint setup-completion" -- "$cur") )
+            COMPREPLY=( $(compgen -W "env init member scan status lint setup-completion" -- "$cur") )
             ;;
     esac
 }}
@@ -635,6 +723,7 @@ _opskit() {{
     local -a commands
     commands=(env:'show or switch active environment (use --create to scaffold)'
               init:'scaffold OpsKit member manifest'
+              member:'manage member projects (sync/mount/status)'
               scan:'full network scan'
               status:'inventory summary'
               lint:'inventory vs device record check'
@@ -1039,6 +1128,11 @@ examples:
   opskit env --create homelab --subnets 192.0.2.0/24  scaffold a new environment
   opskit env homelab                              switch to environment
   opskit init                                     scaffold OpsKit member manifest
+  opskit member status                            show member mount state
+  opskit member sync                              clone/pull members + symlinks
+  opskit member mount                             validate + render agents/skills
+  opskit member sync-mount                        sync + mount in one step
+  opskit member prune                             remove stale rendered items
   opskit scan                                     discover + enrich + resolve
   opskit scan --dry-run                           preview without touching network
   opskit status                                   inventory summary
@@ -1074,6 +1168,14 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
                     choices=['clone', 'symlink'],
                     help='how OpsKit syncs the member')
     pi.add_argument('--force', action='store_true', help='overwrite existing .opskit/ (backs up)')
+    pi.add_argument('--no-sync-mount', action='store_true',
+                    help='skip automatic sync-mount after init')
+
+    # member — manage OpsKit member projects
+    pm = sub.add_parser('member', help='manage member projects (sync/mount/status)')
+    pm.add_argument('member_command', nargs='?',
+                    choices=['status', 'sync', 'mount', 'sync-mount', 'prune'],
+                    help='member subcommand')
 
     # scan
     ps = sub.add_parser('scan', help='full network scan pipeline')
@@ -1149,6 +1251,8 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
         cmd_completion(args)
     elif args.command == 'idea':
         cmd_idea_handler(args)
+    elif args.command == 'member':
+        cmd_member(args)
     else:
         p.print_help()
 
