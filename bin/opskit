@@ -624,18 +624,32 @@ def cmd_init(args):
         print(f'Added {member_name} to .project-remotes', file=sys.stderr)
 
     # Step 3: Run sync-mount to create symlinks and render agents/skills
-    sync_result = subprocess.run(
-        [sys.executable, str(SCRIPT_DIR / 'project_sync.py'), 'sync-mount'],
-        cwd=str(REPO_ROOT),
-        env={**os.environ, 'OPSKIT_ROOT': str(REPO_ROOT)},
-        capture_output=True,
-        text=True,
+    # Skip if:
+    #   - the target is inside the OpsKit repo itself (members live under
+    #     projects/ or are the repo root), OR
+    #   - --no-sync-mount was passed (used by tests to avoid modifying the
+    #     repo's .opencode/skills/ and .claude/skills/).
+    # Running sync-mount against the OpsKit repo would modify .opencode/skills/
+    # and .claude/skills/, which breaks test_skill_tree_divergence.
+    _projects = REPO_ROOT / "projects"
+    _inside_opskit = (
+        target == REPO_ROOT
+        or str(target.resolve()).startswith(str(_projects.resolve()))
     )
-    print(sync_result.stdout, end='', file=sys.stderr)
-    if sync_result.stderr:
-        print(sync_result.stderr, file=sys.stderr, end='')
-    if sync_result.returncode != 0:
-        sys.exit(sync_result.returncode)
+    _skip_sync = args.no_sync_mount or _inside_opskit
+    if not _skip_sync:
+        sync_result = subprocess.run(
+            [sys.executable, str(SCRIPT_DIR / 'project_sync.py'), 'sync-mount'],
+            cwd=str(REPO_ROOT),
+            env={**os.environ, 'OPSKIT_ROOT': str(REPO_ROOT)},
+            capture_output=True,
+            text=True,
+        )
+        print(sync_result.stdout, end='', file=sys.stderr)
+        if sync_result.stderr:
+            print(sync_result.stderr, file=sys.stderr, end='')
+        if sync_result.returncode != 0:
+            sys.exit(sync_result.returncode)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1154,6 +1168,8 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
                     choices=['clone', 'symlink'],
                     help='how OpsKit syncs the member')
     pi.add_argument('--force', action='store_true', help='overwrite existing .opskit/ (backs up)')
+    pi.add_argument('--no-sync-mount', action='store_true',
+                    help='skip automatic sync-mount after init')
 
     # member — manage OpsKit member projects
     pm = sub.add_parser('member', help='manage member projects (sync/mount/status)')

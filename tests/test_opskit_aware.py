@@ -218,8 +218,13 @@ def run_opskit(*args: str, env_override: dict | None = None) -> subprocess.Compl
     env["OPSKIT_ROOT"] = str(ROOT)
     if env_override:
         env.update(env_override)
+    # Add --no-sync-mount to avoid modifying .opencode/skills/ during tests
+    # (which breaks test_skill_tree_divergence).
+    cmd_args = list(args)
+    if len(cmd_args) >= 2 and cmd_args[0] == "init":
+        cmd_args.append("--no-sync-mount")
     return subprocess.run(
-        [sys.executable, str(OPSKIT_BIN), *args],
+        [sys.executable, str(OPSKIT_BIN), *cmd_args],
         capture_output=True,
         text=True,
         env=env,
