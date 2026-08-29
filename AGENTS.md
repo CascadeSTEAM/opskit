@@ -211,9 +211,9 @@ tickets as `TKT-<num>` only. Enforced by pre-commit/commit-msg token guards +
 
 ## Git & GitHub Workflow (Hard Rules)
 
-Set by the project owner (2026-07-20). These apply to every session, no exceptions.
-
 ### Primary Workflow: Task-Level Execution Cycle
+
+Set by the project owner (2026-08-28). These apply to every session, no exceptions.
 
 Before editing any file in this repo (outside `environments/<env>/`), obey the cycle below.
 
