@@ -211,7 +211,46 @@ tickets as `TKT-<num>` only. Enforced by pre-commit/commit-msg token guards +
 
 ## Git & GitHub Workflow (Hard Rules)
 
-Set by the project owner (2026-07-20). These apply to every session, no exceptions.
+### Primary Workflow: Task-Level Execution Cycle
+
+Set by the project owner (2026-08-28). These apply to every session, no exceptions.
+
+Before editing any file in this repo (outside `environments/<env>/`), obey the cycle below.
+
+1. **Sync.** `git fetch --all --prune && git pull` on current branch.
+2. **Worktree.** Never edit the shared primary checkout. Use `bin/fix-issue.sh setup <n>` to create an issue-linked branch + worktree. The primary checkout stays on `main`. **Exception:** `environments/<env>/` layers are separate single-branch repos — direct commit-and-push there is correct.
+3. **Planning discussion.** Questions, research, clarified purpose and goal.
+4. **Write plan** as `##PLAN` in the worktree-reserved `RESUME.md` (gitignored). Critique it for security, appropriateness, stability, maintainability, effectiveness, value. Write critiques into the plan section.
+5. **Resolve flaws.** Cycle through each flaw: propose solution(s) for human to choose or edit, update the section, remove the flaw content. Repeat until clean.
+6. **Ask human** to review. Wait for approval/edit.
+7. **Push plan** to `plans/` (per lifecycle rules) and to the GitHub Issue as public tracking surface.
+8. **Begin task cycle:**
+   a) Take next task, mark in progress.
+   b) **TDD** — write tests before implementation code. Commit tests first.
+   c) Build per task description, validate against tests, commit/ship as you go.
+   d) Mark task "review" when it validates.
+   e) If more tasks: restart cycle. If done: continue.
+9. **Validate** new code with targeted tests. If failing: update issue and plan, return to #5.
+10. **Full test suite** — `make test`, `bash -n` on touched scripts, functional check. If anything fails: record bug in plan and issue, return to #5.
+11. **Create PR** that closes the issue (`Closes #<n>`). Ask if review desired or auto-merge.
+12. **If auto-merge:** full review of the PR (reproduce changes, check against issue), write review in the **user's voice** (concise, direct, no hedging), fix non-trivial issues, merge.
+13. **Refresh** local main branch.
+
+**Trivial changes exemption:** Typo/whitespace/formatting-only changes skip the full cycle. Everything else goes through it.
+
+### PR Conventions
+
+- Reference the issue with `Closes #<n>` so merging closes it.
+- Request a reviewer **other than the author** (default: `CascadeSTEAM/technology-support`).
+- Assign the author as PR manager (`--assignee @me`).
+
+### Voice-Matched Review
+
+When performing an auto-merge review, write the review in the user's characteristic style: concise, direct, no hedging. Model tone from prior commit messages, PR descriptions, and issue comments. Future: dynamic writing-sample gathering for tone modeling.
+
+### Old Workflow (kept as backup — superseded by primary cycle above)
+
+Set by the project owner (2026-07-20). These apply to every session, no exceptions, unless superseded by the primary workflow.
 
 1. **Sync before anything.** Every session starts with `git fetch --all --prune && git pull`
    on the current branch before any other work — avoid conflicts and stale state.
