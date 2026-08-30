@@ -311,6 +311,10 @@ a gitignored `mcp/vault-map.local.json` mapping each env var to a vault
 item/field — copy `mcp/vault-map.example.json` and fill it in. Nothing tracked
 in this repo contains a vault identifier or a tenant name.
 
+Per-server enablement runbooks: `docs/erpnext-mcp-setup.md` (ERPNext/hosted
+helpdesk) and `docs/proxmox-mcp-setup.md` (Proxmox clusters, incl. the
+`PROXMOX_ENV` cluster-selection switch and the `Sys.Audit` role requirement).
+
 > **Check for drift while you migrate.** Wrapper scripts in sibling repos can
 > point at an *older copy* of a server this repo has since superseded. Before
 > copying the config verbatim, diff each wrapper's target against `mcp/` and
