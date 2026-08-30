@@ -152,10 +152,11 @@ bin/mcp-call.py erpnext --list       # this server's tools
 
 ## Step 7 — register in opencode.json
 
-Add an `mcp` entry pointing at **the repo launcher**, not the server script —
-the launcher resolves vault secrets, so no secret ever sits in an agent
-config file (this was the pre-launcher failure mode: router passwords in
-cleartext in `~/.config/opencode/opencode.json`).
+Add an `mcp` entry to your user-level config
+(`~/.config/opencode/opencode.json`) pointing at **the repo launcher**, not
+the server script — the launcher resolves vault secrets, so no secret ever
+sits in an agent config file (this was the pre-launcher failure mode: router
+passwords in cleartext in `~/.config/opencode/opencode.json`).
 
 ```json
 {
