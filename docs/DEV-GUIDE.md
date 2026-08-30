@@ -109,7 +109,8 @@ launch — never paste credentials into the config:
 }
 ```
 `command` is an array of strings, and `type` is required. See
-`docs/erpnext-mcp-setup.md` for the full enablement flow.
+`docs/erpnext-mcp-setup.md` (ERPNext) or `docs/proxmox-mcp-setup.md`
+(Proxmox) for the full enablement flow.
 
 ## Adding a CLI subcommand
 
