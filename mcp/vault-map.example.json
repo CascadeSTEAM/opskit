@@ -10,7 +10,7 @@
     "repo, or an entry in mcp/external-servers.json for a server installed",
     "outside it.",
     "Value = {ENV_VAR: {item, field}}. 'field' is one of password | username |",
-    "notes | <custom field name>, and defaults to password when omitted.",
+    "totp | notes | <custom field name>, and defaults to password when omitted.",
     "",
     "Which variables a server expects is documented in its own module",
     "docstring. Three examples:",
