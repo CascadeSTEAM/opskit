@@ -22,6 +22,13 @@ The MCP server authenticates with **token auth** against a low-privilege
 service account — never the Administrator password, never a plaintext
 password in config.
 
+> **Who can create the keys: an ERPNext System Manager/Admin.** The
+> "Generate New Key" control only exists for users with the right role. If
+> your account lacks it (a standard Agent/helpdesk account can't see it),
+> you need an admin to create the key/secret for the target user — that's
+> the first place to check when "API Credentials" isn't there. Ask the site
+> admin rather than assuming the UI is misconfigured.
+
 In ERPNext, as the service account user (or your own user for a personal
 token):
 
