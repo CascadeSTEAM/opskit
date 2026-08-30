@@ -124,8 +124,15 @@ spawned outside your shell) reads. Write it inside `(umask 077; …)` — a plai
 redirect leaves a live vault key group-readable. Export/establish the session
 **before** starting opencode; servers read it at launch.
 
-Diagnose a stale session: `bin/mcp-run.sh erpnext --check` prints exactly
-which source is failing and how to refresh it.
+> **The session expires when the vault auto-locks.** The `BW_SESSION` token is
+> short-lived; once the vault locks itself, the next server launch fails at
+> secret resolution even though `opencode.jsonc` hasn't changed and the tools
+> vanished from the previous session for no visible reason. Don't chase the
+> config when that happens — refresh the session file first, then restart
+> opencode. Diagnose with `bin/mcp-run.sh erpnext --check`: it prints exactly
+> which source (env var vs file) is stale and how to refresh it. Both the env
+> export and the file go stale; refreshing just the shell you aren't using
+> doesn't help a detached runtime.
 
 ## Step 6 — validate the launch path
 
@@ -150,13 +157,16 @@ bin/mcp-run.sh --list                # servers this repo provides
 bin/mcp-call.py erpnext --list       # this server's tools
 ```
 
-## Step 7 — register in opencode.json
+## Step 7 — register in opencode.json/.jsonc
 
 Add an `mcp` entry to your user-level config
-(`~/.config/opencode/opencode.json`) pointing at **the repo launcher**, not
+(`~/.config/opencode/opencode.json` **or** `opencode.jsonc` — either filename
+is accepted; use whichever exists) pointing at **the repo launcher**, not
 the server script — the launcher resolves vault secrets, so no secret ever
 sits in an agent config file (this was the pre-launcher failure mode: router
-passwords in cleartext in `~/.config/opencode/opencode.json`).
+passwords in cleartext in `~/.config/opencode/opencode.json`). The project
+checkout's own `./opencode.json` is a separate (and minimal) file — the
+`mcp` block belongs in your user-level config.
 
 ```json
 {
@@ -174,9 +184,16 @@ passwords in cleartext in `~/.config/opencode/opencode.json`).
   rejected by opencode.
 - Use the **absolute** path to the launcher; runtime config is evaluated from
   wherever opencode starts.
+- The file is JSONC — both `.json` and `.jsonc` names load, and either may
+  carry comments/`//` lines.
 - **Restart opencode.** Config is loaded once at startup — a running session
   keeps its already-loaded config and will not see the new server until the
   next launch.
+- **Sanity-check before restarting** (simulates exactly what opencode will do
+  at launch, reading the same session file): `unset BW_SESSION; bin/mcp-call.py
+  erpnext --probe` → `OK erpnext 24 tools`. Green means the registered command +
+  the session file are all that's needed; the restart itself only adds config
+  loading.
 
 ## Step 8 — smoke test
 
