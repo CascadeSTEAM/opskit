@@ -95,17 +95,21 @@ MCP servers expose opskit functionality to AI agents. Create `mcp/<name>-mcp-ser
 # mcp/semaphore-mcp-adapter.py
 ```
 
-Register in `opencode.json` to make it available to OpenCode:
+Register in `opencode.json` to make it available to OpenCode. For an in-repo
+server, launch it through `bin/mcp-run.sh` so vault secrets are resolved at
+launch — never paste credentials into the config:
 ```json
 {
   "mcp": {
     "my-service": {
-      "command": "python3",
-      "args": ["mcp/my-service-mcp-server.py"]
+      "type": "local",
+      "command": ["/absolute/path/to/opskit/bin/mcp-run.sh", "my-service"]
     }
   }
 }
 ```
+`command` is an array of strings, and `type` is required. See
+`docs/erpnext-mcp-setup.md` for the full enablement flow.
 
 ## Adding a CLI subcommand
 
