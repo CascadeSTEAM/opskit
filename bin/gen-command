@@ -34,9 +34,12 @@ TEMPLATES = {
     ),
     "inline": (
         "# {name}\n\n"
-        "{description}\n\n"
-        "## Steps\n\n"
-        "1. <procedure steps>\n\n"
+        "Parse `$ARGUMENTS` for a subcommand (first word). If no subcommand, default to `run`.\n\n"
+        "## Subcommands\n\n"
+        "### `run` (default)\n\n"
+        "<procedure steps>\n\n"
+        "### `status`\n\n"
+        "<status/lookup steps>\n\n"
         "## Failure handling\n\n"
         "- <failure mode -> what to do>\n\n"
         "## Do NOT\n\n"
@@ -206,8 +209,8 @@ def wizard(name: str) -> dict:
             sys.exit(1)
     name = validate_name(name)
 
-    type_choices = "skill-loader, inline, hybrid"
-    type_default = "skill-loader"
+    type_choices = "inline, skill-loader, hybrid"
+    type_default = "inline"
     type_val = _prompt(
         f"Template type ({type_choices}): ",
         default=type_default,
@@ -284,7 +287,7 @@ def cmd_scaffold(name: str, auto: bool, **kwargs) -> dict:
 
         params = {
             "name": name,
-            "type": kwargs.get("type", "skill-loader"),
+            "type": kwargs.get("type", "inline"),
             "description": kwargs.get("description", ""),
             "triggers": kwargs.get("triggers", ""),
         }
@@ -526,9 +529,9 @@ def main() -> None:
         help="Comma-separated trigger phrases",
     )
     parser.add_argument(
-        "--type", default="skill-loader",
+        "--type", default="inline",
         choices=["skill-loader", "inline", "hybrid"],
-        help="Command template type (default: skill-loader)",
+        help="Command template type (default: inline — use skill-loader only for simple 1:1 dispatches)",
     )
     parser.add_argument(
         "--cmd-dir", type=Path, default=DEFAULT_COMMANDS_DIR,
