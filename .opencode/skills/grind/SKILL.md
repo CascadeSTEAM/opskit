@@ -123,6 +123,17 @@ every time:
 ## Phase 0 — Sync
 
 1. **Guard: repo/dev work only.** Never touch live infrastructure.
+2. **Guard: worktree isolation.** Verify you are inside a worktree, NOT the
+   main checkout on `main`. If the current directory is `~/Projects/opskit`
+   and the branch is `main` → abort and guide the user to a worktree.
+   The main checkout is READ-ONLY for agents. All file edits MUST happen in
+   a worktree. If you are here, the previous step in the workflow failed to
+   create one. Stop and say: "I'm in the forbidden zone (main checkout on `main`).
+   Creating a worktree: `git worktree add -b grind/<type>-<identifier>
+   worktree/grind/<type>-<identifier> main`" then create it and switch.
+3. **Guard: no uncommitted changes.** Verify `git status` is clean. If not,
+   the previous session left modifications. Either commit them (if intentional)
+   or `git checkout -- .` to discard.
 
 2. **Re-sync with upstream.** `git fetch --all --prune`.
    - Pull only if `main` is the current branch (worktree sessions base on
@@ -397,6 +408,10 @@ a feature branch.
 
 ## Rules
 
+- **🚨 WORKTREE ISOLATION (HARD RULE):** NEVER edit, create, or modify files
+  in `~/Projects/opskit` on branch `main`. The main checkout is READ-ONLY.
+  All work MUST happen inside a worktree created via `git worktree add`.
+  Violation of this rule is a session failure condition.
 - **Repo hard rules stay in force:** linked branch (never `main`), full test
   gate, client-data isolation, document-as-you-go.
 - **/grind pre-authorizes exactly three things:** merging per step 17, closing
