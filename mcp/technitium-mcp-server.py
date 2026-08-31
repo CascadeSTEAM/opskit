@@ -19,6 +19,7 @@ DHCP Tools:
   dhcp_add_reservation    Add a static IP reservation
   dhcp_remove_reservation Remove a static IP reservation
   dhcp_clear_static_routes Remove Option 121 static routes from a scope (fixes Android/Samsung no-internet)
+  dhcp_update_scope_dns   Replace DNS servers in a DHCP scope
 
 Usage:
   python3 scripts/technitium-mcp-server.py            # stdio MCP server
@@ -737,6 +738,66 @@ def dhcp_clear_static_routes(server: str, scope_name: str) -> str:
                 "Option 121 static routes cleared. "
                 "Affected devices must forget + rejoin the network to get a clean lease."
             ),
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def dhcp_update_scope_dns(server: str, scope_name: str, dns_servers: list[str]) -> str:
+    """
+    Update the DNS servers for a DHCP scope.
+
+    This consolidates DNS configuration so clients query only the Technitium
+    server instead of the MikroTik forwarding resolver, which returns NXDOMAIN
+    for local zones.
+
+    Run dhcp_get_scope first to see the current dnsServers list, then use this
+    tool to replace it. Pass dns_servers as a list of IP addresses.
+
+    Args:
+        server:     Server name (see dns_list_servers for configured names)
+        scope_name: Scope name (e.g. 'Default')
+        dns_servers: List of DNS server IPs
+    """
+    try:
+        client = get_client(server)
+
+        # Fetch current scope to get all fields and report before state
+        data = client.get("dhcp/scopes/get", {"name": scope_name})
+        scope = data.get("response", {})
+        current_dns = scope.get("dnsServers", [])
+
+        if current_dns == dns_servers:
+            return json.dumps({
+                "server": server,
+                "scope": scope_name,
+                "message": "DNS servers unchanged — no update needed.",
+            }, indent=2)
+
+        # Update scope preserving all fields that matter to Technitium
+        client.post("dhcp/scopes/set", {
+            "name": scope_name,
+            "newName": scope_name,
+            "startingAddress": scope.get("startingAddress", ""),
+            "endingAddress": scope.get("endingAddress", ""),
+            "subnetMask": scope.get("subnetMask", ""),
+            "routerAddress": scope.get("routerAddress", ""),
+            "dnsServers": ",".join(dns_servers),
+            "staticRoutes": scope.get("staticRoutes", ""),
+            "leaseTime": scope.get("leaseTime", 0),
+            "primaryDNS": "",
+            "secondaryDNS": "",
+            "domainName": scope.get("domainName", ""),
+            "useOtherDNS": "false",
+        })
+
+        return json.dumps({
+            "server": server,
+            "scope": scope_name,
+            "before": current_dns,
+            "after": dns_servers,
+            "message": "DNS servers updated successfully.",
         }, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
