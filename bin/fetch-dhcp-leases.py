@@ -70,7 +70,14 @@ def fetch(env_name: str, scopes: list[str] | None) -> list[dict]:
             raise RuntimeError(listing["error"])
         scopes = [s["name"] for s in listing.get("scopes", []) if s.get("name")]
         if not scopes:
-            raise RuntimeError("the DHCP server reports no scopes")
+            # Surface the raw listing: a flat "no scopes" hides whether the
+            # server really has none, or the payload was an unexpected shape
+            # (auth/validation error without an "error" key, schema drift,
+            # truncated JSON...). The detail is what fixes it (#253).
+            raise RuntimeError(
+                "the DHCP server reports no scopes "
+                f"(raw listing: {json.dumps(listing)})"
+            )
 
     leases: list[dict] = []
     for scope in scopes:
