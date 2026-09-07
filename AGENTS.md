@@ -136,6 +136,16 @@ python3 bin/automation-ladder.py sync-agents   # then restart the agent session
 
 Load the relevant skill before working in its domain.
 
+## Peer Projects
+
+- **Tinker** — self-improving three-node application lineage (Crone/Mother/Maid)
+  running in three LXCs, governed by a human-gated constitution (`CHARTER.md`,
+  `ARCHITECTURE.md`). Tinker's charter (Law 2) restricts it to a scoped slice of
+  OpsKit's capabilities. OpsKit provisions and knows Tinker's environment;
+  Tinker's self-empowered improvement cycle never extends into OpsKit's domain.
+  Boundary: Tinker gets deploy tooling pointed at its own containers, never access
+  to any client environment or the org's other gear. Environment: `environments/tinker/`.
+
 **One tree, not two.** `.opencode/skills/` is the only skill tree; Claude Code
 reaches the same files through `.claude/skills/<name>` symlinks. A second
 tracked tree (`skills/`) existed until #131 and every shared skill had drifted,
