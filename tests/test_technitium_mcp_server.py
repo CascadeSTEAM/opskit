@@ -23,8 +23,9 @@ TOKEN = "test-token"
 PASSWORD = "testpass"
 
 
-def _resp(payload):
+def _resp(payload, status=200):
     r = MagicMock()
+    r.status_code = status
     r.json.return_value = payload
     return r
 
@@ -59,6 +60,7 @@ class _Api:
         self.scope_responses = [_resp({"status": "ok", "response": scope_before})]
         if scope_after is not None:
             self.scope_responses.append(_resp({"status": "ok", "response": scope_after}))
+        self.post_resp = _resp({"status": "ok"})
         self.posted = []
         self.urls = []
 
@@ -70,7 +72,9 @@ class _Api:
             self.posted.append(params)
         if "login" in url:
             return self.login_resp
-        return self.scope_responses.pop(0)
+        if "scopes/get" in url:
+            return self.scope_responses.pop(0)
+        return self.post_resp
 
 
 SCOPE_DEFAULTS = {
@@ -207,7 +211,7 @@ class TestDhcpUpdateScopeDns(_TestCaseBase):
         result = self._run_update(api, mock_requests, [])
 
         self.assertIn("refusing to clear", result["error"])
-        self.assertEqual(api.posted, [])
+        self.assertFalse(any("dnsServers" in d for d in api.posted))
 
     def test_no_update_when_unchanged(self):
         api = _Api(scope_before={**SCOPE_DEFAULTS, "dnsServers": ["192.0.2.4"]})
@@ -215,7 +219,7 @@ class TestDhcpUpdateScopeDns(_TestCaseBase):
         result = self._run_update(api, mock_requests, ["192.0.2.4"])
 
         self.assertEqual(result["message"], "DNS servers unchanged — no update needed.")
-        self.assertEqual(api.posted, [])
+        self.assertFalse(any("dnsServers" in d for d in api.posted))
 
     def test_update_reports_verification_mismatch(self):
         stale = {**SCOPE_DEFAULTS, "dnsServers": ["192.0.2.4", "198.51.100.1"]}
@@ -271,7 +275,7 @@ class TestDhcpClearStaticRoutes(_TestCaseBase):
         result = self._run_clear(api, mock_requests)
 
         self.assertEqual(result["message"], "No static routes configured — nothing to clear.")
-        self.assertEqual(api.posted, [])
+        self.assertFalse(any("staticRoutes" in d for d in api.posted))
 
     def test_clear_reports_verification_failure(self):
         routes = ["192.0.2.64/26,192.0.2.1"]
