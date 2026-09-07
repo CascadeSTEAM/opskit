@@ -36,7 +36,10 @@ CONFIG_PATH_VARS = (
 # the kind of ambient state #122 was about: a developer with an environment pinned
 # would otherwise get different test results from CI. Stripped for the session;
 # tests that need a specific environment pass it explicitly.
-AMBIENT_STATE = ("ACTIVE_ENV",)
+# OPSKIT_ROOT joined it via #296: several scripts and servers resolve their repo
+# root from it, so a developer shell exporting it would point tests (and their
+# subprocesses) at a different checkout than CI sees.
+AMBIENT_STATE = ("ACTIVE_ENV", "OPSKIT_ROOT")
 
 # Credentials a server might read. A developer's exported secrets must not be able
 # to make a test pass — or fail — by accident.
