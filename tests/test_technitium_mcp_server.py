@@ -49,9 +49,9 @@ class _ScopeApi:
 
     def __init__(self, scope_before: dict, scope_after: dict = None):
         self.login_resp = _resp({"status": "ok", "token": TOKEN})
-        self.scope_responses = [scope_before]
+        self.scope_responses = [_resp({"status": "ok", "response": scope_before})]
         if scope_after is not None:
-            self.scope_responses.append(scope_after)
+            self.scope_responses.append(_resp({"status": "ok", "response": scope_after}))
         self.post_resp = _resp({"status": "ok"})
         self.posted_params = []
 
