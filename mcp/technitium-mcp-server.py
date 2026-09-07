@@ -119,9 +119,9 @@ class TechnitiumClient:
         self._login()
 
     def _login(self):
-        resp = requests.get(
+        resp = requests.post(
             f"{self.base_url}/api/user/login",
-            params={"user": self.username, "pass": self.password, "includeToken": "true"},
+            data={"user": self.username, "pass": self.password, "includeToken": "true"},
             timeout=10,
         )
         resp.raise_for_status()
@@ -133,9 +133,17 @@ class TechnitiumClient:
         self.token = data["token"]
 
     def _call(self, method: str, endpoint: str, params: dict = None) -> dict:
+        """POST every request with token + params as a form body.
+
+        Technitium reads parameters from either the query string or the POST
+        form on every supported version (GetQueryOrForm, >= v11.5.3). Sending
+        them in the form body keeps the session token — and any API
+        parameters — out of URL query strings, which the server access log and
+        any proxy on the path would otherwise record (#299). ``method`` is
+        preserved for call-site compatibility but the transport is always POST.
+        """
         all_params = {"token": self.token, **(params or {})}
-        fn = requests.get if method == "GET" else requests.post
-        resp = fn(f"{self.base_url}/api/{endpoint}", params=all_params, timeout=15)
+        resp = requests.post(f"{self.base_url}/api/{endpoint}", data=all_params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
         if data.get("status") == "error":
@@ -181,9 +189,10 @@ def dns_list_servers() -> str:
         ip = cfg["url"].split("//")[1].split(":")[0]
         has_pass = bool(os.environ.get(cfg["env_pass"], ""))
         try:
-            r = requests.get(cfg["url"] + "/api/user/login",
-                             params={"user": "healthcheck", "pass": "x"},
-                             timeout=4)
+            # Plain GET to the server root: any HTTP reply means the service is
+            # up. Reachability must not masquerade as a login, or every listing
+            # writes a failed-auth entry to the server's audit log (#299).
+            r = requests.get(cfg["url"], timeout=4)
             reachable = r.status_code in (200, 401, 400)
         except Exception:
             reachable = False
