@@ -1,6 +1,6 @@
 ---
 name: idea-cmd
-description: Capture ideas interactively — dedupe against ledger + GH, enrich existing rows, plan before building, create GH issues for accepted ideas. Triggers: /idea, "I have an idea", "here's a thought", "capture this"
+description: "Capture ideas interactively \u2014 dedupe against ledger + GH, enrich existing rows, plan before building, create GH issues for accepted ideas. Triggers: /idea, \"I have an idea\", \"here's a thought\", \"capture this\""
 mode: skill
 triggers: /idea, idea,ideas,capture idea,here's a thought,thought,capture this
 ---
