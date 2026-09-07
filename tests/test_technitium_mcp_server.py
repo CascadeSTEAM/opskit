@@ -63,6 +63,7 @@ class _Api:
         self.post_resp = _resp({"status": "ok"})
         self.posted = []
         self.urls = []
+        self.responses = {}
 
     def handle(self, url, data=None, params=None, **kwargs):
         self.urls.append(url)
@@ -72,6 +73,9 @@ class _Api:
             self.posted.append(params)
         if "login" in url:
             return self.login_resp
+        for frag, resp in self.responses.items():
+            if frag in url:
+                return resp
         if "scopes/get" in url:
             return self.scope_responses.pop(0)
         return self.post_resp
@@ -171,6 +175,37 @@ class TestCredentialTransport(_TestCaseBase):
         get_urls = [c.args[0] for c in mock_requests.get.call_args_list]
         self.assertEqual(get_urls, ["http://dns.example.local:5380"])
         self.assertFalse(list(mock_requests.post.call_args_list))
+
+
+class TestUnexpectedEnvelopeSurfaced(_TestCaseBase):
+    """#253: a listing whose response lacks its list key must surface the raw
+    envelope as an error, not return a silently-empty list that a caller like
+    fetch-dhcp-leases.py would read as 'the server has no scopes/leases'."""
+
+    def test_scopes_list_unexpected_envelope_is_an_error(self):
+        api = _Api(scope_before=SCOPE_DEFAULTS)
+        api.responses["dhcp/scopes/list"] = _resp(
+            {"status": "ok", "response": {"zones": ["x"]}})
+        mock_requests = MagicMock()
+        mock_requests.post.side_effect = api.handle
+        mod = _load_with_mock(mock_requests)
+
+        result = json.loads(mod.dhcp_list_scopes(server="test-server"))
+        self.assertIn("error", result)
+        self.assertIn("no 'scopes' key", result["error"])
+        self.assertIn("zones", result["error"])
+
+    def test_leases_list_unexpected_envelope_is_an_error(self):
+        api = _Api(scope_before=SCOPE_DEFAULTS)
+        api.responses["dhcp/leases/list"] = _resp({"status": "ok", "response": {}})
+        mock_requests = MagicMock()
+        mock_requests.post.side_effect = api.handle
+        mod = _load_with_mock(mock_requests)
+
+        result = json.loads(mod.dhcp_list_leases(server="test-server", scope_name="Default"))
+        self.assertIn("error", result)
+        self.assertIn("no 'leases' key", result["error"])
+        self.assertIn("Default", result["error"])
 
 
 class TestDhcpUpdateScopeDns(_TestCaseBase):
