@@ -8,6 +8,7 @@ servers this repo does not ship.
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -78,8 +79,13 @@ def test_match_via_entry_name_not_just_command():
 
 
 def _run(args, **kw):
+    # Pin the subprocess env: an ambient OPSKIT_ROOT — a developer shell
+    # export, or a leak from an earlier test — must not decide which repo the
+    # CLI checks (#296). Without it the script silently checks the wrong tree
+    # and can report "clean" on a config that must ERROR.
+    env = {k: v for k, v in os.environ.items() if k != "OPSKIT_ROOT"}
     return subprocess.run([sys.executable, str(SCRIPT), *args],
-                          capture_output=True, text=True, **kw)
+                          capture_output=True, text=True, env=env, **kw)
 
 
 def test_cli_exit_codes(tmp_path):
