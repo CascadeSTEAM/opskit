@@ -23,12 +23,24 @@ SCRIPT = ROOT / "bin" / "token-inventory.py"
 
 
 def _load(repo_root):
-    """Import with OPSKIT_ROOT pointed at a scratch tree."""
+    """Import with OPSKIT_ROOT pointed at a scratch tree.
+
+    The script reads OPSKIT_ROOT once, at import, so it is restored right
+    after exec_module — leaving it set leaks the scratch path into every
+    later test in the process and their subprocesses (issue #296).
+    """
     import os
+    prior = os.environ.get("OPSKIT_ROOT")
     os.environ["OPSKIT_ROOT"] = str(repo_root)
-    spec = importlib.util.spec_from_file_location("token_inventory", SCRIPT)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    try:
+        spec = importlib.util.spec_from_file_location("token_inventory", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    finally:
+        if prior is None:
+            del os.environ["OPSKIT_ROOT"]
+        else:
+            os.environ["OPSKIT_ROOT"] = prior
     return mod
 
 

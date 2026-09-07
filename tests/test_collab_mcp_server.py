@@ -27,12 +27,26 @@ sys.path.insert(0, str(ROOT / "mcp"))
 
 
 def _load(root: Path):
-    """Import the server with OPSKIT_ROOT pointed at a fixture."""
+    """Import the server with OPSKIT_ROOT pointed at a fixture.
+
+    The server reads OPSKIT_ROOT once, at import time, so the variable is
+    restored immediately after exec_module. Leaving it set leaked the fixture
+    path into every later test in the process — and into their subprocesses,
+    which is how test_check_mcp_wiring's CLI test was handed an empty repo and
+    reported "clean" on a config that must ERROR (issue #296).
+    """
     import importlib.util
+    prior = os.environ.get("OPSKIT_ROOT")
     os.environ["OPSKIT_ROOT"] = str(root)
-    spec = importlib.util.spec_from_file_location(f"collab_{root.name}", SERVER)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    try:
+        spec = importlib.util.spec_from_file_location(f"collab_{root.name}", SERVER)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    finally:
+        if prior is None:
+            del os.environ["OPSKIT_ROOT"]
+        else:
+            os.environ["OPSKIT_ROOT"] = prior
     return mod
 
 
