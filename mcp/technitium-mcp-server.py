@@ -700,6 +700,8 @@ def dhcp_clear_static_routes(server: str, scope_name: str) -> str:
     After clearing, affected devices must reconnect (forget + rejoin WiFi) to get a
     new lease without the bad routes.
 
+    Requires Technitium >= v11.5.3 (omitted-means-preserved update contract).
+
     Args:
         server:     Server name (see dns_list_servers for configured names)
         scope_name: Scope name (e.g. 'Default')
@@ -707,7 +709,7 @@ def dhcp_clear_static_routes(server: str, scope_name: str) -> str:
     try:
         client = get_client(server)
 
-        # Fetch current scope to confirm there are routes and get all other fields
+        # Fetch current scope to confirm there are routes
         data = client.get("dhcp/scopes/get", {"name": scope_name})
         scope = data.get("response", {})
         current_routes = scope.get("staticRoutes", [])
@@ -719,16 +721,25 @@ def dhcp_clear_static_routes(server: str, scope_name: str) -> str:
                 "message": "No static routes configured — nothing to clear.",
             }, indent=2)
 
-        # Update scope with staticRoutes set to empty
+        # Update scope with staticRoutes set to empty (omitted fields are preserved)
         client.post("dhcp/scopes/set", {
             "name": scope_name,
-            "newName": scope_name,
-            "startingAddress": scope.get("startingAddress", ""),
-            "endingAddress": scope.get("endingAddress", ""),
-            "subnetMask": scope.get("subnetMask", ""),
-            "routerAddress": scope.get("routerAddress", ""),
             "staticRoutes": "",
         })
+
+        # Post-write verification: re-fetch and confirm the routes are actually gone
+        data = client.get("dhcp/scopes/get", {"name": scope_name})
+        scope = data.get("response", {})
+        actual_routes = scope.get("staticRoutes", [])
+
+        if actual_routes:
+            return json.dumps({
+                "server": server,
+                "scope": scope_name,
+                "before": current_routes,
+                "after_actual": actual_routes,
+                "error": "write reported success but static routes are still present.",
+            }, indent=2)
 
         return json.dumps({
             "server": server,
@@ -755,6 +766,8 @@ def dhcp_update_scope_dns(server: str, scope_name: str, dns_servers: list[str]) 
     Run dhcp_get_scope first to see the current dnsServers list, then use this
     tool to replace it. Pass dns_servers as a list of IP addresses.
 
+    Requires Technitium >= v11.5.3 (omitted-means-preserved update contract).
+
     Args:
         server:     Server name (see dns_list_servers for configured names)
         scope_name: Scope name (e.g. 'Default')
@@ -763,7 +776,16 @@ def dhcp_update_scope_dns(server: str, scope_name: str, dns_servers: list[str]) 
     try:
         client = get_client(server)
 
-        # Fetch current scope to get all fields and report before state
+        # Refuse an empty list — an empty string would *clear* the scope's DNS
+        # servers on the API, and clearing must never be a typo side effect.
+        if not dns_servers:
+            return json.dumps({
+                "server": server,
+                "scope": scope_name,
+                "error": "refusing to clear DHCP DNS servers: pass an explicit list of servers to use.",
+            }, indent=2)
+
+        # Fetch current scope to report the before state
         data = client.get("dhcp/scopes/get", {"name": scope_name})
         scope = data.get("response", {})
         current_dns = scope.get("dnsServers", [])
@@ -772,31 +794,38 @@ def dhcp_update_scope_dns(server: str, scope_name: str, dns_servers: list[str]) 
             return json.dumps({
                 "server": server,
                 "scope": scope_name,
+                "before": current_dns,
+                "after": dns_servers,
                 "message": "DNS servers unchanged — no update needed.",
             }, indent=2)
 
-        # Update scope preserving all fields that matter to Technitium
+        # Update only the DNS fields; every other field is preserved server-side.
         client.post("dhcp/scopes/set", {
             "name": scope_name,
-            "newName": scope_name,
-            "startingAddress": scope.get("startingAddress", ""),
-            "endingAddress": scope.get("endingAddress", ""),
-            "subnetMask": scope.get("subnetMask", ""),
-            "routerAddress": scope.get("routerAddress", ""),
             "dnsServers": ",".join(dns_servers),
-            "staticRoutes": scope.get("staticRoutes", ""),
-            "leaseTime": scope.get("leaseTime", 0),
-            "primaryDNS": "",
-            "secondaryDNS": "",
-            "domainName": scope.get("domainName", ""),
-            "useOtherDNS": "false",
+            "useThisDnsServer": "false",
         })
+
+        # Post-write verification: re-fetch and compare the actual value
+        data = client.get("dhcp/scopes/get", {"name": scope_name})
+        scope = data.get("response", {})
+        actual_dns = scope.get("dnsServers", [])
+
+        if actual_dns != dns_servers:
+            return json.dumps({
+                "server": server,
+                "scope": scope_name,
+                "before": current_dns,
+                "after_expected": dns_servers,
+                "after_actual": actual_dns,
+                "error": "write reported success but the scope still shows the old DNS servers.",
+            }, indent=2)
 
         return json.dumps({
             "server": server,
             "scope": scope_name,
             "before": current_dns,
-            "after": dns_servers,
+            "after": actual_dns,
             "message": "DNS servers updated successfully.",
         }, indent=2)
     except Exception as e:
