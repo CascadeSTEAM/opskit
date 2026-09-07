@@ -27,21 +27,15 @@ SCRIPT = ROOT / "bin" / "repo-cleanup.py"
 
 
 def _load(repo_root):
-    # OPSKIT_ROOT is read once at import, so restore it right after
-    # exec_module — leaving it set leaks the scratch path into every later
-    # test in the process and their subprocesses (issue #296).
+    # OPSKIT_ROOT is read once at import, so patch.dict restores the prior
+    # environment right after exec_module — leaving it set leaks the scratch
+    # path into every later test in the process and their subprocesses (#296).
     import os
-    prior = os.environ.get("OPSKIT_ROOT")
-    os.environ["OPSKIT_ROOT"] = str(repo_root)
-    try:
+    from unittest import mock
+    with mock.patch.dict(os.environ, {"OPSKIT_ROOT": str(repo_root)}):
         spec = importlib.util.spec_from_file_location("repo_cleanup", SCRIPT)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-    finally:
-        if prior is None:
-            del os.environ["OPSKIT_ROOT"]
-        else:
-            os.environ["OPSKIT_ROOT"] = prior
     return mod
 
 
