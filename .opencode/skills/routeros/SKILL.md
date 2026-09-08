@@ -22,8 +22,9 @@ triggers: mikrotik,routeros,mikromcp,capsman,router,switch,wifi,swos
 | JSON arguments | `bin/mcp-call.py mikromcp run_command '{"routerId":"<id>","command":"/system/resource/print"}'` |
 
 Most tools take `routerId` (omit it for the default router); `list_routers`
-shows the IDs. `--arg` coerces digit-only values to numbers — use `--str k=v`
-for an ID that must stay a string. Output is the tool's structured result as JSON.
+shows the IDs. `--arg` coerces JSON scalars (`12`, `true`, `null`, `1.5`); bare
+words stay strings — use `--str k=v` for an ID that must stay a string. Output
+is the tool's structured result as JSON.
 
 ## Tools You Will Reach For Most
 
