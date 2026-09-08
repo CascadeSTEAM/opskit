@@ -178,6 +178,15 @@ if [ ! -f "$SERVER_PY" ]; then
     mapfile -t EXTERNAL_ARGV < <(external_command "$SERVER")
     if [ "${#EXTERNAL_ARGV[@]}" -gt 0 ]; then
         SERVER_KIND="external"
+        # A global npm binary can be installed yet absent from PATH — sandboxes,
+        # cron, and harness subprocesses run with a minimal env (#314: crush needed
+        # a user-specific PATH pinned for mikromcp). Resolve through npm's own
+        # prefix rather than making every caller pin one.
+        if ! command -v "${EXTERNAL_ARGV[0]}" >/dev/null 2>&1 \
+            && command -v npm >/dev/null 2>&1; then
+            NPM_GLOBAL_BIN="$(npm prefix -g 2>/dev/null)/bin/${EXTERNAL_ARGV[0]}"
+            [ -x "$NPM_GLOBAL_BIN" ] && EXTERNAL_ARGV[0]="$NPM_GLOBAL_BIN"
+        fi
     elif list_external_servers | grep -qxF "$SERVER"; then
         die "external server '$SERVER' declares no 'command' in $(basename "$EXTERNAL_MAP")"
     else
