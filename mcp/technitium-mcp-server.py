@@ -532,7 +532,17 @@ def dhcp_list_scopes(server: str) -> str:
     try:
         client = get_client(server)
         data = client.get("dhcp/scopes/list")
-        scopes = data.get("response", {}).get("scopes", [])
+        response = data.get("response", {})
+        if "scopes" not in response:
+            # Surface the envelope, not an empty list: a missing scopes key
+            # means the server answered something we don't understand (schema
+            # drift, a surviving auth/validation payload), and callers like
+            # fetch-dhcp-leases.py must see that instead of a silent zero.
+            return json.dumps({
+                "error": "unexpected response from dhcp/scopes/list — no 'scopes' key "
+                         f"in response; server said: {json.dumps(data)[:500]}",
+            }, indent=2)
+        scopes = response.get("scopes", [])
         return json.dumps({
             "server": server,
             "count": len(scopes),
@@ -609,7 +619,13 @@ def dhcp_list_leases(server: str, scope_name: str) -> str:
     try:
         client = get_client(server)
         data = client.get("dhcp/leases/list", {"scopeName": scope_name})
-        leases = data.get("response", {}).get("leases", [])
+        response = data.get("response", {})
+        if "leases" not in response:
+            return json.dumps({
+                "error": f"unexpected response from dhcp/leases/list for '{scope_name}' — "
+                         f"no 'leases' key in response; server said: {json.dumps(data)[:500]}",
+            }, indent=2)
+        leases = response.get("leases", [])
         return json.dumps({
             "server": server,
             "scope": scope_name,
