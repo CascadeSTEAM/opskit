@@ -7,8 +7,7 @@ triggers: endsession, end session, shutdown, wrap up, session end
 
 # endsession
 
-Run the session-end shutdown. Load the `endsession` skill
-(`.opencode/skills/endsession/SKILL.md`) and execute its procedure exactly:
+Run the session-end shutdown. Execute its procedure exactly:
 
 1. Definition-of-done check (hard gate): ideas accepted with GH# in
    `docs/ideas.md`, non-trivial work has an issue + linked branch, docs and
