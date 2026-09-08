@@ -21,7 +21,17 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 OPSKIT = ROOT / "bin" / "opskit"
 
-MINIMAL_ENV = {"PATH": "/usr/bin:/bin", "OPSKIT_ROOT": str(ROOT)}
+MINIMAL_ENV = {
+    "PATH": "/usr/bin:/bin",
+    "OPSKIT_ROOT": str(ROOT),
+    # The technitium module reads its server list from the gitignored
+    # mcp/tenants-technitium.local.json when that file exists, else from a
+    # built-in example server. Point it at a path that never exists so the
+    # example is used on every machine — otherwise a test passes on a laptop
+    # that has the local file and fails in CI, which is exactly what happened
+    # when a real server name was substituted here (#316).
+    "TECHNITIUM_SERVERS_FILE": str(ROOT / "tests" / "no-such-technitium-servers.json"),
+}
 
 
 def run_cli(*args):
@@ -106,9 +116,9 @@ def test_dns_records_unknown_server_exit1():
 
 def test_dns_zones_missing_credentials_exit1():
     """Known server without a configured password -> error result -> exit 1."""
-    r = run_cli("dns", "zones", "--server", "yeticraft")
+    r = run_cli("dns", "zones", "--server", "client1")
     assert r.returncode == 1
-    assert "Password for 'yeticraft'" in r.stdout
+    assert "Password for 'client1'" in r.stdout
 
 
 # ── dispatch + output shaping (fake tool module, no network) ──────────────────

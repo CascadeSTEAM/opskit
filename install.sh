@@ -246,7 +246,9 @@ _show_summary() {
         echo ""
         echo "  Running opskit doctor..."
         echo ""
-        "$OPSKIT_BIN" doctor || return 1
+        # --strict: on a workstation a missing bw/uvx or unset hooksPath is a
+        # setup gap worth failing on; a bare CI checkout runs doctor without it.
+        "$OPSKIT_BIN" doctor --strict || return 1
         return 0
     fi
 
