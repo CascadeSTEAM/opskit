@@ -1287,25 +1287,31 @@ def cmd_doctor(args):
             warn(f"  {dep}: not found  (install {dep})")
 
     # npm prefix check
-    npm_prefix = subprocess.run(
-        ['npm', 'prefix', '-g'], capture_output=True, text=True
-    ).stdout.strip()
-    npm_bin = Path(npm_prefix) / 'bin' if npm_prefix else None
-    if npm_bin and npm_bin.exists():
-        ok(f"  npm prefix bin: {npm_bin}")
-    else:
-        warn(f"  npm prefix bin not found")
+    try:
+        npm_prefix = subprocess.run(
+            ['npm', 'prefix', '-g'], capture_output=True, text=True
+        ).stdout.strip()
+        npm_bin = Path(npm_prefix) / 'bin' if npm_prefix else None
+        if npm_bin and npm_bin.exists():
+            ok(f"  npm prefix bin: {npm_bin}")
+        else:
+            warn(f"  npm prefix bin not found")
+    except FileNotFoundError:
+        warn(f"  npm not found")
 
     # 4. Git hooksPath
     print("\nGit hooksPath:")
-    hooks_ok = subprocess.run(
-        ['git', 'config', 'core.hooksPath'],
-        cwd=str(REPO_ROOT), capture_output=True, text=True
-    ).stdout.strip()
-    if '.githooks' in hooks_ok:
-        ok(f"  hooks: {hooks_ok}")
-    else:
-        warn(f"  hooks: not set to .githooks (run: git config core.hooksPath .githooks)")
+    try:
+        hooks_ok = subprocess.run(
+            ['git', 'config', 'core.hooksPath'],
+            cwd=str(REPO_ROOT), capture_output=True, text=True
+        ).stdout.strip()
+        if '.githooks' in hooks_ok:
+            ok(f"  hooks: {hooks_ok}")
+        else:
+            warn(f"  hooks: not set to .githooks (run: git config core.hooksPath .githooks)")
+    except Exception as e:
+        warn(f"  git config check failed: {e}")
 
     # 5. Skill frontmatter strict-YAML lint
     print("\nSkill frontmatter lint:")
@@ -1363,23 +1369,30 @@ def cmd_doctor(args):
     if args.prune:
         print("\nMerge-time cleanup:")
         # Find merged branches
-        merged_branches = subprocess.run(
+        merged_result = subprocess.run(
             ['git', 'branch', '--merged', 'origin/main', '--format=%(refname:short)',
              '--grep=^grind/'],
             capture_output=True, text=True
-        ).stdout.strip().split('\n') if subprocess.run(
-            ['git', 'branch', '--merged', 'origin/main'],
-            capture_output=True, text=True
-        ).returncode == 0 else []
+        )
+        merged_branches = merged_result.stdout.strip().split('\n') if merged_result.returncode == 0 else []
 
         # Find stale worktrees
-        worktrees = subprocess.run(
+        worktrees_result = subprocess.run(
             ['git', 'worktree', 'list', '--porcelain'],
             capture_output=True, text=True
         ).stdout.strip()
 
-        if worktrees:
-            ok(f"  worktrees: {len(worktrees.strip().split('\n'))}")
+        if merged_branches:
+            report("  Merged grind branches",
+                   f"{len(merged_branches)} branches found: {', '.join(merged_branches)}",
+                   "Run `git branch -d` to delete them")
+        else:
+            ok(f"  no merged grind branches")
+
+        if worktrees_result:
+            report("  Stale worktrees found",
+                   worktrees_result,
+                   "Run `git worktree remove` to clean them up")
         else:
             ok(f"  no stale worktrees")
 
