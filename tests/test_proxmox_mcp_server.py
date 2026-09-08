@@ -101,6 +101,7 @@ def test_resolves_the_selected_environment(mod):
     assert out["PROXMOX_TOKEN_NAME"] == "mcp-agent"
     assert out["PROXMOX_TOKEN_VALUE"] == "s3cr3t-token-value"
     assert out["PROXMOX_VERIFY_SSL"] == "false"
+    assert out["PROXMOX_DEV_MODE"] == "false"
 
 
 def test_port_defaults_when_absent(mod, monkeypatch):
@@ -119,6 +120,19 @@ def test_verify_ssl_can_be_enabled(mod, monkeypatch, tmp_path):
     f.write_text(json.dumps(t))
     _name, out = mod.resolve(dict(__import__("os").environ))
     assert out["PROXMOX_VERIFY_SSL"] == "true"
+
+
+def test_dev_mode_forwarded_when_set(mod, monkeypatch, tmp_path):
+    """proxmox-mcp-plus refuses verify_ssl=false unless dev_mode=true. The
+    tenant entry carries that acknowledgement, so it must reach the server:
+    a dev_mode that never becomes PROXMOX_DEV_MODE is a silent no-op that
+    kills the launch at upstream config validation."""
+    t = dict(TENANTS)
+    t[ENV] = {**TENANTS[ENV], "dev_mode": True}
+    f = tmp_path / "tenants-proxmox.local.json"
+    f.write_text(json.dumps(t))
+    _name, out = mod.resolve(dict(__import__("os").environ))
+    assert out["PROXMOX_DEV_MODE"] == "true"
 
 
 def test_active_env_read_from_dotenv_when_proxmox_env_unset(mod, monkeypatch, tmp_path):
