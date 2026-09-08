@@ -487,6 +487,23 @@ def test_external_binary_is_found_through_the_npm_global_prefix(tmp_path):
     assert json.loads(launch.stdout) == {"argv": ["serve"], "EXT_PASS": "pw"}
 
 
+def test_a_failing_npm_degrades_to_the_not_found_report(tmp_path):
+    """npm present but broken must fall through to the normal ✗ report — under
+    set -e a bare `$(npm prefix -g)` assignment would abort the launcher with
+    zero output, the silent startup failure this block exists to prevent."""
+    root = _make_root(tmp_path, {"demoext": {"EXT_PASS": {"item": "i1"}}}, external=EXT)
+    bw = _make_bw_stub(tmp_path, {"i1": _login_item(password="pw")})
+    npm_stub_dir = tmp_path / "brokennpm"
+    npm_stub_dir.mkdir()
+    (npm_stub_dir / "npm").write_text("#!/bin/sh\nexit 1\n")
+    (npm_stub_dir / "npm").chmod(0o755)
+
+    result = _run(root, "demoext", "--check", bw=bw, path_prepend=npm_stub_dir)
+
+    assert result.returncode == 1
+    assert "not found on PATH" in result.stderr, result.stdout + result.stderr
+
+
 def test_external_server_receives_vault_resolved_secrets(tmp_path):
     root = _make_root(
         tmp_path,

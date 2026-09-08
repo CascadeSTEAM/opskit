@@ -182,10 +182,14 @@ if [ ! -f "$SERVER_PY" ]; then
         # cron, and harness subprocesses run with a minimal env (#314: crush needed
         # a user-specific PATH pinned for mikromcp). Resolve through npm's own
         # prefix rather than making every caller pin one.
+        # `|| true`: under set -e a failing npm must degrade to the normal
+        # "not found" report below, never abort the launcher silently.
         if ! command -v "${EXTERNAL_ARGV[0]}" >/dev/null 2>&1 \
             && command -v npm >/dev/null 2>&1; then
-            NPM_GLOBAL_BIN="$(npm prefix -g 2>/dev/null)/bin/${EXTERNAL_ARGV[0]}"
-            [ -x "$NPM_GLOBAL_BIN" ] && EXTERNAL_ARGV[0]="$NPM_GLOBAL_BIN"
+            NPM_PREFIX="$(npm prefix -g 2>/dev/null || true)"
+            if [ -n "$NPM_PREFIX" ] && [ -x "$NPM_PREFIX/bin/${EXTERNAL_ARGV[0]}" ]; then
+                EXTERNAL_ARGV[0]="$NPM_PREFIX/bin/${EXTERNAL_ARGV[0]}"
+            fi
         fi
     elif list_external_servers | grep -qxF "$SERVER"; then
         die "external server '$SERVER' declares no 'command' in $(basename "$EXTERNAL_MAP")"
@@ -223,7 +227,7 @@ if [ "$SERVER_KIND" = "external" ]; then
     if command -v "${EXTERNAL_ARGV[0]}" >/dev/null 2>&1; then
         report 1 "command" "$(command -v "${EXTERNAL_ARGV[0]}")"
     else
-        report 0 "command" "${EXTERNAL_ARGV[0]} not found on PATH — install it (see $(basename "$EXTERNAL_MAP"))"
+        report 0 "command" "${EXTERNAL_ARGV[0]} not found on PATH or under \$(npm prefix -g)/bin — install it (see $(basename "$EXTERNAL_MAP"))"
     fi
 else
     report 1 "server" "$SERVER_PY"
