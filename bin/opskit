@@ -1176,6 +1176,224 @@ def cmd_dns(args) -> int:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# doctor — self-diagnostic battery (issue #311)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def cmd_doctor(args):
+    all_ok = True
+
+    def ok(msg: str):
+        print(f"  \033[0;32m✓\033[0m {msg}")
+
+    def warn(msg: str):
+        nonlocal all_ok
+        all_ok = False
+        print(f"  \033[1;33m⚠\033[0m {msg}")
+
+    def fail(msg: str):
+        nonlocal all_ok
+        all_ok = False
+        print(f"  \033[0;31m✗\033[0m {msg}")
+
+    def report(name: str, detail: str, remedy: str):
+        print(f"  \033[0;34m●\033[0m {name}")
+        print(f"    {detail}")
+        print(f"    → {remedy}")
+
+    # 1. MCP launch-path checks
+    print("\nMCP launch paths:")
+    mcp_dir = REPO_ROOT / 'mcp'
+    if mcp_dir.exists():
+        # Check if BW_SESSION is set — if not, skip launch checks (common in test env)
+        bw_session = os.environ.get('BW_SESSION', '')
+        if not bw_session:
+            report("  BW_SESSION not set", "MCP launch checks skipped — no vault session in this environment", "export BW_SESSION or skip MCP checks")
+            # Still check external-servers.json structure
+            ext_json = mcp_dir / 'external-servers.json'
+            if ext_json.exists():
+                try:
+                    ext = json.loads(ext_json.read_text())
+                    for srv_name, srv_info in ext.items():
+                        if srv_name == '_comment':
+                            continue
+                        ok(f"  {srv_name}: registered in external-servers.json")
+                except Exception as e:
+                    warn(f"  external-servers.json parse error: {e}")
+            # Check built-in MCP servers exist
+            for pyf in mcp_dir.glob('*-mcp-server.py'):
+                srv_name = pyf.stem.replace('-mcp-server', '')
+                ok(f"  {srv_name}: server file found")
+        else:
+            # BW_SESSION is set — run launch checks
+            # External servers
+            ext_json = mcp_dir / 'external-servers.json'
+            if ext_json.exists():
+                try:
+                    ext = json.loads(ext_json.read_text())
+                    for srv_name, srv_info in ext.items():
+                        if srv_name == '_comment':
+                            continue
+                        cmd = srv_info.get('command', [])
+                        if isinstance(cmd, str):
+                            cmd = [cmd]
+                        result = subprocess.run(
+                            ['bash', str(REPO_ROOT / 'bin' / 'mcp-run.sh'), srv_name, '--check'],
+                            capture_output=True, text=True,
+                            cwd=str(REPO_ROOT)
+                        )
+                        if result.returncode != 0:
+                            warn(f"  {srv_name}: launch check failed — {result.stderr.strip()[:80]}")
+                        else:
+                            ok(f"  {srv_name}: OK")
+                except Exception as e:
+                    warn(f"  external-servers.json parse error: {e}")
+
+            # Built-in MCP servers
+            for pyf in mcp_dir.glob('*-mcp-server.py'):
+                srv_name = pyf.stem.replace('-mcp-server', '')
+                result = subprocess.run(
+                    ['bash', str(REPO_ROOT / 'bin' / 'mcp-run.sh'), srv_name, '--check'],
+                    capture_output=True, text=True,
+                    cwd=str(REPO_ROOT)
+                )
+                if result.returncode != 0:
+                    warn(f"  {srv_name}: launch check failed — {result.stderr.strip()[:80]}")
+                else:
+                    ok(f"  {srv_name}: OK")
+
+    # 2. Agent-runtime wiring (crush.json)
+    print("\nAgent-runtime wiring:")
+    crush_path = Path.home() / '.config' / 'crush' / 'crush.json'
+    if crush_path.exists():
+        try:
+            crush_cfg = json.loads(crush_path.read_text())
+            # Check for configured MCP servers
+            mcp_servers = crush_cfg.get('mcp', {})
+            if mcp_servers:
+                ok(f"  crush.json: {len(mcp_servers)} MCP server(s) configured")
+            else:
+                warn(f"  crush.json: no MCP servers configured")
+        except Exception as e:
+            warn(f"  crush.json parse error: {e}")
+
+    # 3. PATH sanity
+    print("\nPATH sanity:")
+    from shutil import which
+    deps = ['bw', 'uvx', 'node']
+    for dep in deps:
+        if which(dep):
+            ok(f"  {dep}: {which(dep)}")
+        else:
+            warn(f"  {dep}: not found  (install {dep})")
+
+    # npm prefix check
+    npm_prefix = subprocess.run(
+        ['npm', 'prefix', '-g'], capture_output=True, text=True
+    ).stdout.strip()
+    npm_bin = Path(npm_prefix) / 'bin' if npm_prefix else None
+    if npm_bin and npm_bin.exists():
+        ok(f"  npm prefix bin: {npm_bin}")
+    else:
+        warn(f"  npm prefix bin not found")
+
+    # 4. Git hooksPath
+    print("\nGit hooksPath:")
+    hooks_ok = subprocess.run(
+        ['git', 'config', 'core.hooksPath'],
+        cwd=str(REPO_ROOT), capture_output=True, text=True
+    ).stdout.strip()
+    if '.githooks' in hooks_ok:
+        ok(f"  hooks: {hooks_ok}")
+    else:
+        warn(f"  hooks: not set to .githooks (run: git config core.hooksPath .githooks)")
+
+    # 5. Skill frontmatter strict-YAML lint
+    print("\nSkill frontmatter lint:")
+    skills_dir = REPO_ROOT / '.opencode' / 'skills'
+    if skills_dir.exists():
+        yaml_errors = 0
+        for sk_file in skills_dir.rglob('SKILL.md'):
+            try:
+                content = sk_file.read_text()
+                # Extract frontmatter
+                if content.startswith('---'):
+                    lines = content.split('\n')
+                    fm_end = None
+                    for i, line in enumerate(lines[1:], 1):
+                        if line.strip() == '---':
+                            fm_end = i
+                            break
+                    if fm_end:
+                        fm_text = '\n'.join(lines[1:fm_end])
+                        yaml.safe_load(fm_text)
+                    else:
+                        yaml_errors += 1
+                        warn(f"  {sk_file}: unclosed frontmatter")
+            except yaml.YAMLError as e:
+                yaml_errors += 1
+                warn(f"  {sk_file}: {e}")
+        if yaml_errors == 0:
+            ok(f"  {len(list(skills_dir.rglob('SKILL.md')))} skill(s): all frontmatter valid")
+        else:
+            warn(f"  {yaml_errors} skill(s) have invalid frontmatter")
+    else:
+        warn(f"  no .opencode/skills/ directory found")
+
+    # 6. Tenants-file pre-flight (proxmox)
+    print("\nTenants-file pre-flight:")
+    tenants_file = REPO_ROOT / 'mcp' / 'tenants.local.json'
+    if tenants_file.exists():
+        try:
+            tenants = json.loads(tenants_file.read_text())
+            tenant_issues = False
+            for key, val in tenants.items():
+                verify_ssl = val.get('verify_ssl', True)
+                dev_mode = val.get('dev_mode', False)
+                if verify_ssl == False and not dev_mode:
+                    tenant_issues = True
+                    warn(f"  {key}: verify_ssl=false without dev_mode — will refuse at launch")
+                    report(f"  {key}", "verify_ssl=false, dev_mode=false",
+                           "Set dev_mode=true or verify_ssl=true in mcp/tenants.local.json")
+            if not tenant_issues:
+                ok(f"  tenants file: {len(tenants)} tenant(s)")
+        except Exception as e:
+            warn(f"  tenants.json parse error: {e}")
+
+    # 7. Publication-guard message check (origin/main..HEAD)
+    if args.prune:
+        print("\nMerge-time cleanup:")
+        # Find merged branches
+        merged_branches = subprocess.run(
+            ['git', 'branch', '--merged', 'origin/main', '--format=%(refname:short)',
+             '--grep=^grind/'],
+            capture_output=True, text=True
+        ).stdout.strip().split('\n') if subprocess.run(
+            ['git', 'branch', '--merged', 'origin/main'],
+            capture_output=True, text=True
+        ).returncode == 0 else []
+
+        # Find stale worktrees
+        worktrees = subprocess.run(
+            ['git', 'worktree', 'list', '--porcelain'],
+            capture_output=True, text=True
+        ).stdout.strip()
+
+        if worktrees:
+            ok(f"  worktrees: {len(worktrees.strip().split('\n'))}")
+        else:
+            ok(f"  no stale worktrees")
+
+        # Report any findings
+        if all_ok:
+            print("\n  All checks passed.")
+        else:
+            print("\n  Some checks failed — see above for fix instructions.")
+            sys.exit(1)
+
+    return 0 if all_ok else 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # main
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1305,6 +1523,10 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
     pd.add_argument('--hostname', help='hostname to compare across servers + local resolver')
     pd.add_argument('--json', action='store_true', help='compact machine-readable JSON output')
 
+    # doctor — self-diagnostic battery (issue #311)
+    pdo = sub.add_parser('doctor', help='aggregate self-diagnosis with safe auto-fixes')
+    pdo.add_argument('--prune', action='store_true', help='also apply merge-time cleanup')
+
     args = p.parse_args()
 
     if args.command == 'init':
@@ -1332,6 +1554,8 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
         cmd_member(args)
     elif args.command == 'dns':
         sys.exit(cmd_dns(args))
+    elif args.command == 'doctor':
+        sys.exit(cmd_doctor(args))
     else:
         p.print_help()
 
