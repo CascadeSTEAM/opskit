@@ -242,7 +242,12 @@ _show_summary() {
         echo "$_sep"
         echo "  DIAGNOSTIC SUMMARY"
         echo "$_sep"
-        return
+        # Invoke opskit doctor for comprehensive diagnostics
+        echo ""
+        echo "  Running opskit doctor..."
+        echo ""
+        "$OPSKIT_BIN" doctor || return 1
+        return 0
     fi
 
     echo "$_sep"
