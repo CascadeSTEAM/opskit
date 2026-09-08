@@ -10,8 +10,12 @@ triggers: mikrotik,routeros,capsman,switch,wifi,RouterOS
 permission:
   "relay-shell_*": deny
   "mikromcp_*": allow
+# opencode.json disables `mikromcp_*` tools for every agent (#314: their
+# schemas cost tens of thousands of tokens per request); this agent is the one
+# place they are re-enabled.
 tools:
   skill: true
+  "mikromcp_*": true
 ---
 
 You are the MikroTik RouterOS subagent. You ONLY manage MikroTik devices — switches, routers, and WiFi APs.

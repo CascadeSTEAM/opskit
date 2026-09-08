@@ -254,6 +254,22 @@ class TestCanonicalAgentsAreLoadable:
         )
         assert linux.get("mikromcp_*") == "deny"
 
+    def test_heavy_mcp_tool_schemas_are_withheld_except_where_re_enabled(self):
+        """#314: opencode.json withholds the schema-heavy MCP namespaces from every
+        agent via the `tools` map, and agents/mikrotik.md is the one place
+        mikromcp_* is switched back on. Dropping either half silently either
+        re-inflates every request or leaves @mikrotik with no MikroTik tools."""
+        import json
+
+        tools = json.loads((ROOT / "opencode.json").read_text()).get("tools") or {}
+        for namespace in ("mikromcp_*", "github_*", "dw-vault_*", "dw-upstream_*"):
+            assert tools.get(namespace) is False, f"opencode.json must set tools[{namespace!r}] = false"
+        mikrotik_tools = self._frontmatter(ROOT / "agents" / "mikrotik.md").get("tools") or {}
+        assert mikrotik_tools.get("mikromcp_*") is True, (
+            "agents/mikrotik.md must re-enable mikromcp_* under `tools:` or the "
+            "project-wide disable leaves it with no MikroTik tools"
+        )
+
 
 class TestNewSkillTemplate:
     """The scaffolded template's step 0 must be runnable (#166).
