@@ -50,10 +50,13 @@ def _call_tool(tool: str, **args) -> dict:
         raise RuntimeError(
             f"{tool} failed: {proc.stderr.strip() or proc.stdout.strip()}"
         )
+    # mcp-call.py wraps the result in an MCP response envelope with a 'result' key.
+    # The envelope is JSON; the 'result' field contains the tool's actual JSON output.
+    envelope = json.loads(proc.stdout)
     try:
-        return json.loads(proc.stdout)
+        return json.loads(envelope.get("result", "{}"))
     except json.JSONDecodeError as exc:
-        raise RuntimeError(f"{tool} returned non-JSON output: {exc}") from exc
+        raise RuntimeError(f"{tool} returned non-JSON result: {exc}") from exc
 
 
 def _server_name(env_name: str) -> str:
