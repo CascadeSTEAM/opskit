@@ -33,11 +33,17 @@ CONFIGURATION
         "host": "<hostname-or-address>",
         "port": 8006,
         "verify_ssl": false,
+        "dev_mode": true,
         "env_token_identity": "PROXMOX_<ENV>_TOKEN_IDENTITY",
         "env_token_value":    "PROXMOX_<ENV>_TOKEN_VALUE",
         "description": "..."
       }
     }
+
+  proxmox-mcp-plus refuses to start with verify_ssl=false unless dev_mode is
+  also true — a deliberate acknowledgement that TLS verification is off (the
+  usual self-signed-PVE-cert case). Set verify_ssl=true and drop dev_mode once
+  the host's certificate chain is trusted.
 
   Host and port are topology, not secrets, so they live here rather than in the
   vault map. The environment is selected by PROXMOX_ENV, else ACTIVE_ENV from
@@ -145,6 +151,9 @@ def build_env(env_name: str, cfg: dict, source: dict) -> dict:
         "PROXMOX_TOKEN_NAME": token_name,
         "PROXMOX_TOKEN_VALUE": secret,
         "PROXMOX_VERIFY_SSL": "true" if cfg.get("verify_ssl", False) else "false",
+        # proxmox-mcp-plus refuses verify_ssl=false unless dev_mode is also
+        # set; the tenant entry carries the decision, so forward it.
+        "PROXMOX_DEV_MODE": "true" if cfg.get("dev_mode", False) else "false",
     })
     return out
 
