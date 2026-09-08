@@ -1,4 +1,10 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "instructions": ["AGENTS.md"]
+  "instructions": ["AGENTS.md"],
+  "tools": {
+    "mikromcp_*": false,
+    "github_*": false,
+    "dw-vault_*": false,
+    "dw-upstream_*": false
+  }
 }
