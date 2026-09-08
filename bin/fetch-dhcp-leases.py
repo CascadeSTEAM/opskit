@@ -58,7 +58,14 @@ def _call_tool(tool: str, **args) -> dict:
 
 def _server_name(env_name: str) -> str:
     """Which configured Technitium server serves this environment."""
-    return env_name
+    mapping = {
+        "yc": "yeticraft",
+        "cs": "cs-primary",
+        "bms": "bms",
+        "lfnw": "lfnw",
+        "example": "example",
+    }
+    return mapping.get(env_name, env_name)
 
 
 def fetch(env_name: str, scopes: list[str] | None) -> list[dict]:
