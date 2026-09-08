@@ -1179,21 +1179,26 @@ def cmd_dns(args) -> int:
 # doctor — self-diagnostic battery (issue #311)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _extra_worktrees(porcelain: str) -> list:
+def _extra_worktrees(porcelain: str) -> list[dict]:
     """Parse `git worktree list --porcelain` into the worktrees *other than* the
     main checkout, which git always lists first and which is never stale.
-    Each entry: {"path": str, "branch": str, "prunable": bool}."""
+    Each entry: {"path": str, "branch": str, "prunable": bool, "locked": bool} —
+    `prunable` means git itself considers it gone; `locked` means the owner asked
+    for it to be kept (`git worktree remove` refuses it without --force)."""
     entries = []
     for block in porcelain.strip().split("\n\n"):
-        lines = [l for l in block.splitlines() if l.strip()]
+        lines = [line for line in block.splitlines() if line.strip()]
         if not lines or not lines[0].startswith("worktree "):
             continue
-        entry = {"path": lines[0][len("worktree "):], "branch": "", "prunable": False}
+        entry = {"path": lines[0][len("worktree "):], "branch": "",
+                 "prunable": False, "locked": False}
         for line in lines[1:]:
             if line.startswith("branch "):
                 entry["branch"] = line[len("branch "):]
             elif line.startswith("prunable"):
                 entry["prunable"] = True
+            elif line.startswith("locked"):
+                entry["locked"] = True
         entries.append(entry)
     return entries[1:]
 
@@ -1373,7 +1378,9 @@ def cmd_doctor(args):
 
     # 6. Tenants-file pre-flight (proxmox)
     print("\nTenants-file pre-flight:")
-    tenants_file = REPO_ROOT / 'mcp' / 'tenants.local.json'
+    # Same override the proxmox server and the test suite use (#122), so a
+    # developer's gitignored file never leaks into a test run.
+    tenants_file = Path(os.environ.get('PROXMOX_TENANTS_FILE') or REPO_ROOT / 'mcp' / 'tenants.local.json')
     if tenants_file.exists():
         try:
             tenants = json.loads(tenants_file.read_text())
@@ -1423,22 +1430,27 @@ def cmd_doctor(args):
             ok(f"  no merged grind branches")
 
         if extra:
-            lines = [f"{w['path']} ({w['branch'] or 'detached'}){' — prunable' if w['prunable'] else ''}"
-                     for w in extra]
+            def _flags(w):
+                return "".join(f" — {k}" for k in ("prunable", "locked") if w[k])
+            lines = [f"{w['path']} ({w['branch'] or 'detached'}){_flags(w)}" for w in extra]
             report(f"  {len(extra)} additional worktree(s)",
                    "\n    ".join(lines),
-                   "Run `git worktree remove <path>` for any that are finished")
+                   "Run `git worktree remove <path>` for any that are finished (locked ones need --force)")
         else:
-            ok(f"  no stale worktrees")
+            ok(f"  no additional worktrees")
 
     # Summary — always printed, whatever flags were given.
     print()
     if not all_ok:
-        print("  Some checks failed — see above for fix instructions.")
+        also = f" ({warnings} warning(s) also reported)" if warnings else ""
+        print(f"  Some checks failed — see above for fix instructions.{also}")
         return 1
     if warnings:
+        if args.strict:
+            print(f"  {warnings} warning(s) — treated as failures under --strict.")
+            return 1
         print(f"  {warnings} warning(s) — advisory; re-run with --strict to treat them as failures.")
-        return 1 if args.strict else 0
+        return 0
     print("  All checks passed.")
     return 0
 
@@ -1574,7 +1586,7 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
     pd.add_argument('--json', action='store_true', help='compact machine-readable JSON output')
 
     # doctor — self-diagnostic battery (issue #311)
-    pdo = sub.add_parser('doctor', help='aggregate self-diagnosis with safe auto-fixes')
+    pdo = sub.add_parser('doctor', help='self-diagnostic report: failures exit 1, advisory warnings exit 0 unless --strict')
     pdo.add_argument('--prune', action='store_true', help='also report merge-time cleanup residue')
     pdo.add_argument('--strict', action='store_true',
                      help='treat advisory warnings (missing optional tools, hooksPath unset) as failures')
