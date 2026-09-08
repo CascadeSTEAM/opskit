@@ -113,3 +113,32 @@ def test_the_cache_it_writes_is_what_the_enricher_reads():
 
         assert dns_source.load_leases(ds) == leases
         assert json.loads((ds / dns_source.LEASE_CACHE_NAME).read_text())["leases"]
+
+
+def test_an_empty_listing_surfaces_the_raw_payload(monkeypatch):
+    """#253 regression: an unexpected/empty listing must not collapse to a
+    flat 'no scopes' — the raw payload is what tells the operator why. The
+    live incident hid that detail: the script said 'no scopes' while the
+    server reported a scope moments later."""
+    payload = {"count": 0, "scopes": [], "maybe": "schema drift"}
+    monkeypatch.setattr(fetcher, "_call_tool", lambda tool, **kw: payload)
+
+    with pytest.raises(RuntimeError) as exc:
+        fetcher.fetch("someenv", None)
+
+    assert "no scopes" in str(exc.value)
+    assert "schema drift" in str(exc.value)
+
+
+def test_a_listing_without_a_scopes_key_surfaces_the_envelope(monkeypatch):
+    """An envelope that does not even carry the scopes key (auth/validation
+    error survived into a non-error shape) must surface the envelope, not a
+    silent 'no scopes'."""
+    payload = {"status": "ok", "response": {"zones": ["x"]}}
+    monkeypatch.setattr(fetcher, "_call_tool", lambda tool, **kw: payload)
+
+    with pytest.raises(RuntimeError) as exc:
+        fetcher.fetch("someenv", None)
+
+    assert "no scopes" in str(exc.value)
+    assert "zones" in str(exc.value)

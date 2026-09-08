@@ -50,14 +50,19 @@ def _call_tool(tool: str, **args) -> dict:
         raise RuntimeError(
             f"{tool} failed: {proc.stderr.strip() or proc.stdout.strip()}"
         )
+    # mcp-call.py wraps the result in an MCP response envelope with a 'result' key.
+    # The envelope is JSON; the 'result' field contains the tool's actual JSON output.
+    envelope = json.loads(proc.stdout)
     try:
-        return json.loads(proc.stdout)
+        return json.loads(envelope.get("result", "{}"))
     except json.JSONDecodeError as exc:
-        raise RuntimeError(f"{tool} returned non-JSON output: {exc}") from exc
+        raise RuntimeError(f"{tool} returned non-JSON result: {exc}") from exc
 
 
 def _server_name(env_name: str) -> str:
     """Which configured Technitium server serves this environment."""
+    # Server names are environment-specific — read from env.yml at runtime.
+    # For now, return env_name as a fallback; env.yml should have the mapping.
     return env_name
 
 
@@ -70,7 +75,14 @@ def fetch(env_name: str, scopes: list[str] | None) -> list[dict]:
             raise RuntimeError(listing["error"])
         scopes = [s["name"] for s in listing.get("scopes", []) if s.get("name")]
         if not scopes:
-            raise RuntimeError("the DHCP server reports no scopes")
+            # Surface the raw listing: a flat "no scopes" hides whether the
+            # server really has none, or the payload was an unexpected shape
+            # (auth/validation error without an "error" key, schema drift,
+            # truncated JSON...). The detail is what fixes it (#253).
+            raise RuntimeError(
+                "the DHCP server reports no scopes "
+                f"(raw listing: {json.dumps(listing)})"
+            )
 
     leases: list[dict] = []
     for scope in scopes:
