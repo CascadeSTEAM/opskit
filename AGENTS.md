@@ -14,6 +14,14 @@
 - MikroTik/RouterOS → use `@mikrotik` subagent (relay-shell denied at runtime).
   This says which tool an *agent* reaches for; it does not exempt RouterOS from
   the IaC rule — device state still belongs in a playbook so it can be rebuilt.
+  mikromcp's 122 tool schemas cost 25–35k tokens on every request (#314), so
+  only `@mikrotik` holds them: OpenCode withholds `mikromcp_*` from every other
+  agent via the `tools` map in `opencode.json`, and Crush / Claude Code do not
+  load the server at all. Outside `@mikrotik`, reach the same server through
+  `bin/mcp-call.py mikromcp …` — load the `routeros` skill. Same launcher, same
+  vault-resolved credentials, so the rule keeps a compliant path. The GitHub
+  MCP server is gone from every runtime for the same reason; use `gh`
+  (`github-cli` skill).
 - Linux server ops → use `@linux` subagent (mikromcp tools denied at runtime)
 - Security audit / SOC2 / CVE / hardening on a Linux host → also `@linux` — it
   already denies `mikromcp_*`, so a request in scope for one host with
@@ -132,7 +140,7 @@ python3 bin/automation-ladder.py sync-agents   # then restart the agent session
   hook is the tighter follow-up.
 
 ## Skills (load with: opencode tool skill use <name>)
-`startsession` | `lifecycle` | `git` | `security` | `backup` | `infra` | `check-connectivity` | `templates` | `tools` | `endsession` | `idea-triage` | `idea-cmd` | `baseline` | `gh` | `helpdesk-ticket` | `frappe-access` | `dogfood-cycle` | `release` | `zabbix` | `cleanup` | `handoff` | `ticket-triage` | `gitlab-pages-dns` | `grind` | `knowledge-base`
+`startsession` | `lifecycle` | `git` | `security` | `backup` | `infra` | `check-connectivity` | `templates` | `tools` | `endsession` | `idea-triage` | `idea-cmd` | `baseline` | `gh` | `helpdesk-ticket` | `frappe-access` | `dogfood-cycle` | `release` | `zabbix` | `cleanup` | `handoff` | `ticket-triage` | `gitlab-pages-dns` | `grind` | `knowledge-base` | `routeros` | `github-cli`
 
 Load the relevant skill before working in its domain.
 
