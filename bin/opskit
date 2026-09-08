@@ -706,11 +706,14 @@ _opskit_completion() {{
         scan|status|lint)
             COMPREPLY=( $(compgen -W "--env --dry-run --discover-only --enrich-only --uplinks-only --skip-enrich --skip-uplinks --no-router --fixture --sudo" -- "$cur") )
             ;;
+        dns)
+            COMPREPLY=( $(compgen -W "servers zones records compare flush --server --zone --subdomain --hostname --json" -- "$cur") )
+            ;;
         setup-completion)
             COMPREPLY=( $(compgen -W "bash zsh" -- "$cur") )
             ;;
         *)
-            COMPREPLY=( $(compgen -W "env init member scan status lint setup-completion" -- "$cur") )
+            COMPREPLY=( $(compgen -W "env init member scan status lint setup-completion dns" -- "$cur") )
             ;;
     esac
 }}
@@ -727,6 +730,7 @@ _opskit() {{
               scan:'full network scan'
               status:'inventory summary'
               lint:'inventory vs device record check'
+              dns:'resolve and query DNS via the technitium MCP tools'
               setup-completion:'install tab completion')
     _describe 'command' commands
     _arguments '--env[environment name]:env:'
@@ -1115,6 +1119,63 @@ def cmd_idea_handler(args) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# dns — CLI-parity reference port (#104)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Pattern: a thin vencer adapter over the technitium MCP tool functions. The
+# adapter resolves the capability's module, dispatches to the tool, and does all
+# output shaping — human-pretty by default, compact JSON with --json, error
+# dicts and exceptions map to exit 1. See docs/cli-parity.md for the decision.
+
+def _dns_module():
+    """Import mcp/technitium-mcp-server.py and return the module.
+
+    Resolved from the script location, not REPO_ROOT, so the CLI still finds its
+    capability code when OPSKIT_ROOT points at a different data root (tests).
+    """
+    import importlib.machinery
+    import importlib.util
+    server = SCRIPT_DIR.parent / "mcp" / "technitium-mcp-server.py"
+    loader = importlib.machinery.SourceFileLoader("technitium_mcp_server", str(server))
+    spec = importlib.util.spec_from_loader("technitium_mcp_server", loader)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["technitium_mcp_server"] = mod
+    loader.exec_module(mod)
+    return mod
+
+
+def _emit_dns(result: str, json_out: bool) -> int:
+    """Shape a tool result for the CLI. Returns the exit code."""
+    try:
+        data = json.loads(result)
+    except json.JSONDecodeError:
+        print(result)
+        return 0
+    print(json.dumps(data) if json_out else json.dumps(data, indent=2))
+    return 1 if isinstance(data, dict) and data.get("error") else 0
+
+
+def cmd_dns(args) -> int:
+    toolmap = {
+        "servers": lambda: _dns_module().dns_list_servers(),
+        "zones": lambda: _dns_module().dns_list_zones(server=args.server),
+        "records": lambda: _dns_module().dns_get_records(
+            server=args.server, zone=args.zone, subdomain=args.subdomain),
+        "compare": lambda: _dns_module().dns_compare(hostname=args.hostname),
+        "flush": lambda: _dns_module().dns_flush_local_cache(),
+    }
+    if args.dns_command not in toolmap:
+        return 2
+    try:
+        result = toolmap[args.dns_command]()
+    except KeyboardInterrupt:
+        return 130
+    except Exception as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
+    return _emit_dns(result, args.json)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # main
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1140,6 +1201,12 @@ examples:
   opskit setup                                    install python deps + hooks
   opskit idea "add a dark mode"                   capture an idea to the local ledger
   opskit idea --desire 5 "fix auth bug"           capture with explicit importance
+  opskit dns servers                              list technitium servers + reachability
+  opskit dns zones --server NAME                  list zones on a server
+  opskit dns records --server NAME --zone example.org   get records for a zone
+  opskit dns compare --hostname host.example.org  compare a hostname across servers
+  opskit dns flush                                flush the local resolver cache
+  opskit dns records --server NAME --zone example.org --json   machine-readable output
 
   opskit also works without the install:
     python3 bin/opskit ...
@@ -1228,6 +1295,16 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
                     help='explicit path to ideas.md ledger file (overrides --project)')
     pi.set_defaults(func=cmd_idea_handler)
 
+    # dns — CLI-parity reference port (#104)
+    pd = sub.add_parser('dns', help='resolve and query DNS via the technitium MCP tools')
+    pd.add_argument('dns_command', choices=['servers', 'zones', 'records', 'compare', 'flush'],
+                    help='DNS action (servers/zones/records/compare/flush)')
+    pd.add_argument('--server', help='server name (see: opskit dns servers)')
+    pd.add_argument('--zone', help='zone name, e.g. example.org')
+    pd.add_argument('--subdomain', default=None, help='restrict records to a subdomain')
+    pd.add_argument('--hostname', help='hostname to compare across servers + local resolver')
+    pd.add_argument('--json', action='store_true', help='compact machine-readable JSON output')
+
     args = p.parse_args()
 
     if args.command == 'init':
@@ -1253,6 +1330,8 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
         cmd_idea_handler(args)
     elif args.command == 'member':
         cmd_member(args)
+    elif args.command == 'dns':
+        sys.exit(cmd_dns(args))
     else:
         p.print_help()
 
