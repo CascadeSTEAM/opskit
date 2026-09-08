@@ -1179,15 +1179,41 @@ def cmd_dns(args) -> int:
 # doctor — self-diagnostic battery (issue #311)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _extra_worktrees(porcelain: str) -> list:
+    """Parse `git worktree list --porcelain` into the worktrees *other than* the
+    main checkout, which git always lists first and which is never stale.
+    Each entry: {"path": str, "branch": str, "prunable": bool}."""
+    entries = []
+    for block in porcelain.strip().split("\n\n"):
+        lines = [l for l in block.splitlines() if l.strip()]
+        if not lines or not lines[0].startswith("worktree "):
+            continue
+        entry = {"path": lines[0][len("worktree "):], "branch": "", "prunable": False}
+        for line in lines[1:]:
+            if line.startswith("branch "):
+                entry["branch"] = line[len("branch "):]
+            elif line.startswith("prunable"):
+                entry["prunable"] = True
+        entries.append(entry)
+    return entries[1:]
+
+
 def cmd_doctor(args):
+    # Two severities, deliberately (#317): `fail` is something the toolkit
+    # cannot run past (broken config, invalid skill frontmatter, a launch check
+    # that fails with a vault session present) and drives a non-zero exit.
+    # `warn` is environment advice — a missing optional tool, hooksPath unset,
+    # no crush.json — and only fails the run under --strict. Conflating the two
+    # made a bare CI checkout exit 1 on every run.
     all_ok = True
+    warnings = 0
 
     def ok(msg: str):
         print(f"  \033[0;32m✓\033[0m {msg}")
 
     def warn(msg: str):
-        nonlocal all_ok
-        all_ok = False
+        nonlocal warnings
+        warnings += 1
         print(f"  \033[1;33m⚠\033[0m {msg}")
 
     def fail(msg: str):
@@ -1218,7 +1244,7 @@ def cmd_doctor(args):
                             continue
                         ok(f"  {srv_name}: registered in external-servers.json")
                 except Exception as e:
-                    warn(f"  external-servers.json parse error: {e}")
+                    fail(f"  external-servers.json parse error: {e}")
             # Check built-in MCP servers exist
             for pyf in mcp_dir.glob('*-mcp-server.py'):
                 srv_name = pyf.stem.replace('-mcp-server', '')
@@ -1242,11 +1268,11 @@ def cmd_doctor(args):
                             cwd=str(REPO_ROOT)
                         )
                         if result.returncode != 0:
-                            warn(f"  {srv_name}: launch check failed — {result.stderr.strip()[:80]}")
+                            fail(f"  {srv_name}: launch check failed — {result.stderr.strip()[:80]}")
                         else:
                             ok(f"  {srv_name}: OK")
                 except Exception as e:
-                    warn(f"  external-servers.json parse error: {e}")
+                    fail(f"  external-servers.json parse error: {e}")
 
             # Built-in MCP servers
             for pyf in mcp_dir.glob('*-mcp-server.py'):
@@ -1257,7 +1283,7 @@ def cmd_doctor(args):
                     cwd=str(REPO_ROOT)
                 )
                 if result.returncode != 0:
-                    warn(f"  {srv_name}: launch check failed — {result.stderr.strip()[:80]}")
+                    fail(f"  {srv_name}: launch check failed — {result.stderr.strip()[:80]}")
                 else:
                     ok(f"  {srv_name}: OK")
 
@@ -1274,7 +1300,7 @@ def cmd_doctor(args):
             else:
                 warn(f"  crush.json: no MCP servers configured")
         except Exception as e:
-            warn(f"  crush.json parse error: {e}")
+            fail(f"  crush.json parse error: {e}")
 
     # 3. PATH sanity
     print("\nPATH sanity:")
@@ -1334,14 +1360,14 @@ def cmd_doctor(args):
                         yaml.safe_load(fm_text)
                     else:
                         yaml_errors += 1
-                        warn(f"  {sk_file}: unclosed frontmatter")
+                        fail(f"  {sk_file}: unclosed frontmatter")
             except yaml.YAMLError as e:
                 yaml_errors += 1
-                warn(f"  {sk_file}: {e}")
+                fail(f"  {sk_file}: {e}")
         if yaml_errors == 0:
             ok(f"  {len(list(skills_dir.rglob('SKILL.md')))} skill(s): all frontmatter valid")
         else:
-            warn(f"  {yaml_errors} skill(s) have invalid frontmatter")
+            fail(f"  {yaml_errors} skill(s) have invalid frontmatter")
     else:
         warn(f"  no .opencode/skills/ directory found")
 
@@ -1357,30 +1383,37 @@ def cmd_doctor(args):
                 dev_mode = val.get('dev_mode', False)
                 if verify_ssl == False and not dev_mode:
                     tenant_issues = True
-                    warn(f"  {key}: verify_ssl=false without dev_mode — will refuse at launch")
+                    fail(f"  {key}: verify_ssl=false without dev_mode — will refuse at launch")
                     report(f"  {key}", "verify_ssl=false, dev_mode=false",
                            "Set dev_mode=true or verify_ssl=true in mcp/tenants.local.json")
             if not tenant_issues:
                 ok(f"  tenants file: {len(tenants)} tenant(s)")
         except Exception as e:
-            warn(f"  tenants.json parse error: {e}")
+            fail(f"  tenants.json parse error: {e}")
 
-    # 7. Publication-guard message check (origin/main..HEAD)
+    # 7. Merge-time cleanup residue (opt-in via --prune; reports, never deletes)
     if args.prune:
         print("\nMerge-time cleanup:")
-        # Find merged branches
+        # `git branch` has no --grep; list merged branches and filter here. A
+        # missing origin/main (plain clone, no fetch) is "nothing to report".
         merged_result = subprocess.run(
-            ['git', 'branch', '--merged', 'origin/main', '--format=%(refname:short)',
-             '--grep=^grind/'],
-            capture_output=True, text=True
+            ['git', 'branch', '--merged', 'origin/main', '--format=%(refname:short)'],
+            capture_output=True, text=True, cwd=str(REPO_ROOT)
         )
-        merged_branches = merged_result.stdout.strip().split('\n') if merged_result.returncode == 0 else []
+        merged_branches = []
+        if merged_result.returncode == 0:
+            merged_branches = [
+                b.strip() for b in merged_result.stdout.splitlines()
+                if b.strip().startswith('grind/')
+            ]
 
-        # Find stale worktrees
+        # git always lists the main checkout first; only additional worktrees
+        # can be residue, and only prunable ones are certainly stale.
         worktrees_result = subprocess.run(
             ['git', 'worktree', 'list', '--porcelain'],
-            capture_output=True, text=True
-        ).stdout.strip()
+            capture_output=True, text=True, cwd=str(REPO_ROOT)
+        )
+        extra = _extra_worktrees(worktrees_result.stdout) if worktrees_result.returncode == 0 else []
 
         if merged_branches:
             report("  Merged grind branches",
@@ -1389,21 +1422,25 @@ def cmd_doctor(args):
         else:
             ok(f"  no merged grind branches")
 
-        if worktrees_result:
-            report("  Stale worktrees found",
-                   worktrees_result,
-                   "Run `git worktree remove` to clean them up")
+        if extra:
+            lines = [f"{w['path']} ({w['branch'] or 'detached'}){' — prunable' if w['prunable'] else ''}"
+                     for w in extra]
+            report(f"  {len(extra)} additional worktree(s)",
+                   "\n    ".join(lines),
+                   "Run `git worktree remove <path>` for any that are finished")
         else:
             ok(f"  no stale worktrees")
 
-        # Report any findings
-        if all_ok:
-            print("\n  All checks passed.")
-        else:
-            print("\n  Some checks failed — see above for fix instructions.")
-            sys.exit(1)
-
-    return 0 if all_ok else 1
+    # Summary — always printed, whatever flags were given.
+    print()
+    if not all_ok:
+        print("  Some checks failed — see above for fix instructions.")
+        return 1
+    if warnings:
+        print(f"  {warnings} warning(s) — advisory; re-run with --strict to treat them as failures.")
+        return 1 if args.strict else 0
+    print("  All checks passed.")
+    return 0
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1538,7 +1575,9 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
 
     # doctor — self-diagnostic battery (issue #311)
     pdo = sub.add_parser('doctor', help='aggregate self-diagnosis with safe auto-fixes')
-    pdo.add_argument('--prune', action='store_true', help='also apply merge-time cleanup')
+    pdo.add_argument('--prune', action='store_true', help='also report merge-time cleanup residue')
+    pdo.add_argument('--strict', action='store_true',
+                     help='treat advisory warnings (missing optional tools, hooksPath unset) as failures')
 
     args = p.parse_args()
 
