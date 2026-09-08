@@ -292,6 +292,25 @@ class TestNewSkillTemplate:
         body = self._scaffold(repo)
         assert "mute --skill demo-skill" in body
 
+    def test_description_with_colon_scaffolds_strict_yaml(self, repo):
+        """A description containing ': ' is invalid as a plain YAML scalar.
+
+        Lenient frontmatter parsers (OpenCode, Claude Code) mask the defect,
+        but strict ones (crush) reject the file and silently drop the skill —
+        three shipped skills had exactly this bug (PR #307). The scaffolder
+        must emit frontmatter every parser accepts.
+        """
+        import yaml
+
+        desc = 'Do the thing. Use for: /demo, "quoted", here\'s a colon'
+        result = run(repo, "new-skill", "--name", "colon-skill",
+                     "--description", desc, "--triggers", "t")
+        assert result.returncode == 0, result.stdout + result.stderr
+        body = (repo / ".opencode" / "skills" / "colon-skill" / "SKILL.md").read_text()
+        frontmatter = body.split("---")[1]
+        parsed = yaml.safe_load(frontmatter)
+        assert parsed["description"] == desc
+
 
 @pytest.fixture
 def skills_repo(tmp_path: Path) -> Path:

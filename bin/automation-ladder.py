@@ -307,7 +307,10 @@ def cmd_new_skill(args: argparse.Namespace) -> dict:
     skill_dir.mkdir(parents=True)
     body = SKILL_TEMPLATE.format(
         name=args.name,
-        description=args.description,
+        # json.dumps: a description containing ": " is invalid as a plain
+        # YAML scalar — strict parsers (crush) reject the frontmatter and
+        # silently drop the skill; a JSON string is always valid YAML.
+        description=json.dumps(args.description),
         triggers=args.triggers,
         title=title,
     )
