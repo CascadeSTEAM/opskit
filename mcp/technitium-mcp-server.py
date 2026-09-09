@@ -668,7 +668,7 @@ def dhcp_add_reservation(
     """
     try:
         client = get_client(server)
-        client.post("dhcp/scopes/addReservation", {
+        client.post("dhcp/reservations/add", {
             "name": scope_name,
             "ipAddress": ip_address,
             "hardwareAddress": hardware_address,
@@ -699,7 +699,7 @@ def dhcp_remove_reservation(server: str, scope_name: str, ip_address: str) -> st
     """
     try:
         client = get_client(server)
-        client.post("dhcp/scopes/removeReservation", {
+        client.post("dhcp/reservations/remove", {
             "name": scope_name,
             "ipAddress": ip_address,
         })
