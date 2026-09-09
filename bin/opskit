@@ -605,23 +605,31 @@ def cmd_init(args):
     member_name = init_data.get('name', target.name)
 
     # Step 2: Add to .project-remotes if not already present
-    remotes_file = REPO_ROOT / '.project-remotes'
-    entry = f'{member_name} {target}'
-    already_present = False
-    remotes_content = remotes_file.read_text() if remotes_file.is_file() else ''
-    for line in remotes_content.splitlines():
-        stripped = line.strip()
-        if stripped and not stripped.startswith('#'):
-            parts = stripped.split()
-            if len(parts) >= 2 and parts[0] == member_name:
-                already_present = True
-                break
-    if not already_present:
-        with open(remotes_file, 'a') as f:
-            if remotes_content.strip():
-                f.write('\n')
-            f.write(entry + '\n')
-        print(f'Added {member_name} to .project-remotes', file=sys.stderr)
+    # Skip if target is inside OpsKit repo — members live under projects/
+    # or are the repo root itself; writing to .project-remotes is wrong.
+    _projects = REPO_ROOT / "projects"
+    _inside_opskit = (
+        target == REPO_ROOT
+        or str(target.resolve()).startswith(str(_projects.resolve()))
+    )
+    if not _inside_opskit:
+        remotes_file = REPO_ROOT / '.project-remotes'
+        entry = f'{member_name} {target}'
+        already_present = False
+        remotes_content = remotes_file.read_text() if remotes_file.is_file() else ''
+        for line in remotes_content.splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith('#'):
+                parts = stripped.split()
+                if len(parts) >= 2 and parts[0] == member_name:
+                    already_present = True
+                    break
+        if not already_present:
+            with open(remotes_file, 'a') as f:
+                if remotes_content.strip():
+                    f.write('\n')
+                f.write(entry + '\n')
+            print(f'Added {member_name} to .project-remotes', file=sys.stderr)
 
     # Step 3: Run sync-mount to create symlinks and render agents/skills
     # Skip if:
