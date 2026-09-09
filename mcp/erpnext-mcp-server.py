@@ -92,7 +92,6 @@ Environment (or .env):
   # ERPNEXT_API_SECRET=<secret> # fallback used for any tenant without its own var
 """
 
-import asyncio
 import json
 import os
 import sys

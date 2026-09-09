@@ -132,7 +132,7 @@ class TechnitiumClient:
             )
         self.token = data["token"]
 
-    def _call(self, method: str, endpoint: str, params: dict = None) -> dict:
+    def _call(self, method: str, endpoint: str, params: dict = None, retry: int = 0) -> dict:
         """POST every request with token + params as a form body.
 
         Technitium reads parameters from either the query string or the POST
@@ -148,9 +148,9 @@ class TechnitiumClient:
         data = resp.json()
         if data.get("status") == "error":
             err = data.get("errorMessage", "")
-            if "token" in err.lower() or "session" in err.lower():
+            if ("token" in err.lower() or "session" in err.lower()) and retry < 1:
                 self._login()
-                return self._call(method, endpoint, params)
+                return self._call(method, endpoint, params, retry + 1)
             raise RuntimeError(f"Technitium API error on {self.server_name}: {err}")
         return data
 
@@ -386,17 +386,34 @@ def dns_update_record(
 
         # Delete existing record of same type if present
         deleted = False
+        if len(current_records) > 1:
+            raise RuntimeError(
+                f"Multiple {record_type} records for {domain} in zone {zone}: "
+                + ", ".join(
+                    r.get("rData", {}).get("ipAddress", "")
+                    or r.get("rData", {}).get("cname", "")
+                    or r.get("rData", {}).get("nameServer", "")
+                    or str(r.get("rData", {}))
+                    for r in current_records
+                )
+                + ". Delete explicitly via dns_delete_record before updating."
+            )
         if current_records:
             rdata = current_records[0].get("rData", {})
-            old_value = (
-                rdata.get("ipAddress") or rdata.get("cname") or
-                rdata.get("nameServer") or str(rdata)
-            )
+            if record_type == "A":
+                old_value = rdata.get("ipAddress", "")
+            elif record_type == "CNAME":
+                old_value = rdata.get("cname", "")
+            elif record_type == "MX":
+                old_value = rdata.get("nameServer", "")
+            else:
+                old_value = str(rdata)
             if old_value != value:
-                client.post("zones/records/delete", {
+                del_params = {
                     "zone": zone, "domain": domain,
                     "type": record_type, "value": old_value,
-                })
+                }
+                client.post("zones/records/delete", del_params)
                 deleted = True
             else:
                 return json.dumps({

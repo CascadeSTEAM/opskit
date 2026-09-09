@@ -1464,6 +1464,164 @@ def cmd_doctor(args):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# MCP config bootstrap (issue #285)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def cmd_mcp(args) -> int:
+    """MCP config bootstrap and verification."""
+    cmd = getattr(args, 'mcp_command', None) or 'status'
+
+    if cmd == 'status':
+        return _mcp_status(args)
+    elif cmd == 'setup':
+        return _mcp_setup(args)
+    elif cmd == 'check':
+        return _mcp_check(args)
+    elif cmd == 'verify':
+        return _mcp_verify(args)
+    return 1
+
+
+def _mcp_status(args) -> int:
+    """Show MCP config status."""
+    from gen_mcp_config import (
+        env_yml_files, collect_tenants, collect_vault_map,
+        render_tenants, render_vault_map,
+    )
+
+    envs = env_yml_files(REPO_ROOT)
+    if not envs:
+        print("No env.yml files found.", file=sys.stderr)
+        return 1
+
+    tenants = collect_tenants(envs)
+    vault_map = collect_vault_map(envs)
+
+    if getattr(args, 'json', False):
+        import json
+        print(json.dumps({"tenants": tenants, "vault_map": vault_map}, indent=2))
+    else:
+        print("Tenants:")
+        for name, info in tenants.items():
+            print(f"  {name}: {info['site']}")
+        print()
+        print("Vault map entries:")
+        for srv, entries in vault_map.items():
+            print(f"  [{srv}]")
+            for var, spec in entries.items():
+                print(f"    {var}: {spec.get('item', '')}")
+
+    return 0
+
+
+def _mcp_setup(args) -> int:
+    """Generate MCP config files from env.yml."""
+    from gen_mcp_config import (
+        env_yml_files, collect_tenants, collect_vault_map,
+        render_tenants, render_vault_map,
+    )
+
+    envs = env_yml_files(REPO_ROOT)
+    if not envs:
+        print("No env.yml files found.", file=sys.stderr)
+        return 1
+
+    tenants = collect_tenants(envs)
+    vault_map = collect_vault_map(envs)
+
+    # Write tenants.local.json
+    tenants_path = os.environ.get("OPSKIT_TENANTS_FILE", "mcp/tenants.local.json")
+    Path(tenants_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(tenants_path).write_text(render_tenants(tenants))
+    print(f"Generated {tenants_path}", file=sys.stderr)
+
+    # Write vault-map.local.json
+    vault_map_path = os.environ.get("OPSKIT_VAULT_MAP", "mcp/vault-map.local.json")
+    Path(vault_map_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(vault_map_path).write_text(render_vault_map(vault_map))
+    print(f"Generated {vault_map_path}", file=sys.stderr)
+
+    return 0
+
+
+def _mcp_check(args) -> int:
+    """Check MCP config structure without vault contact."""
+    tenants_path = os.environ.get("OPSKIT_TENANTS_FILE", "mcp/tenants.local.json")
+    vault_map_path = os.environ.get("OPSKIT_VAULT_MAP", "mcp/vault-map.local.json")
+
+    tenants_ok = True
+    vault_ok = True
+
+    if Path(tenants_path).exists():
+        tenants_ok = True
+    else:
+        print(f"✗ {tenants_path} not found — run: opskit mcp setup", file=sys.stderr)
+        tenants_ok = False
+
+    if Path(vault_map_path).exists():
+        vault_ok = True
+    else:
+        print(f"✗ {vault_map_path} not found — run: opskit mcp setup", file=sys.stderr)
+        vault_ok = False
+
+    if tenants_ok and vault_ok:
+        print("MCP config files present.", file=sys.stderr)
+        return 0
+    return 1
+
+
+def _mcp_verify(args) -> int:
+    """Verify MCP config + vault session state."""
+    import subprocess
+    server = getattr(args, 'server', None)
+
+    # Check vault session state
+    bw_session_path = os.environ.get("BW_SESSION_FILE", "~/.cache/opskit/bw-session")
+    bw_session_path = os.path.expanduser(bw_session_path)
+
+    bw_status = "unknown"
+    if Path(bw_session_path).exists():
+        result = subprocess.run(
+            ["bw", "status", "--builtin"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            bw_status = result.stdout.strip()
+
+    print(f"BW_SESSION: {bw_status}", file=sys.stderr)
+
+    # Check MCP server status
+    if server:
+        result = subprocess.run(
+            ["bash", "bin/mcp-run.sh", server, "--check"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            print(f"✓ {server}: OK", file=sys.stderr)
+        else:
+            print(f"✗ {server}: {result.stderr}", file=sys.stderr)
+            return 1
+    else:
+        # Check all servers
+        result = subprocess.run(
+            ["bash", "bin/mcp-run.sh", "--list"],
+            capture_output=True, text=True,
+        )
+        servers = result.stdout.strip().split()
+        for srv in servers:
+            result = subprocess.run(
+                ["bash", "bin/mcp-run.sh", srv, "--check"],
+                capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                print(f"✓ {srv}: OK", file=sys.stderr)
+            else:
+                print(f"✗ {srv}: {result.stderr}", file=sys.stderr)
+
+    return 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # main
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1599,6 +1757,16 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
     pdo.add_argument('--strict', action='store_true',
                      help='treat advisory warnings (missing optional tools, hooksPath unset) as failures')
 
+    # mcp — MCP config bootstrap and verification (issue #285)
+    pm = sub.add_parser('mcp', help='MCP config bootstrap and verification')
+    pm_sub = pm.add_subparsers(dest='mcp_command')
+    pm_s = pm_sub.add_parser('status', help='show MCP config status')
+    pm_s.add_argument('--json', action='store_true', help='compact machine-readable JSON output')
+    pm_setup = pm_sub.add_parser('setup', help='generate MCP config files from env.yml')
+    pm_check = pm_sub.add_parser('check', help='check MCP config structure without vault contact')
+    pm_verify = pm_sub.add_parser('verify', help='verify MCP config + vault session state')
+    pm_verify.add_argument('--server', default=None, help='server to verify (default: all)')
+
     args = p.parse_args()
 
     if args.command == 'init':
@@ -1628,6 +1796,8 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
         sys.exit(cmd_dns(args))
     elif args.command == 'doctor':
         sys.exit(cmd_doctor(args))
+    elif args.command == 'mcp':
+        sys.exit(cmd_mcp(args))
     else:
         p.print_help()
 

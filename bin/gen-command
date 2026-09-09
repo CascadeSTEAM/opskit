@@ -45,11 +45,6 @@ TEMPLATES = {
         "## Do NOT\n\n"
         "- <anti-pattern>\n"
     ),
-    "hybrid": (
-        'Call the skill tool to load the "{name}" skill, '
-        "then follow its instructions exactly.\n\n"
-        "$ARGUMENTS",
-    ),
 }
 
 
