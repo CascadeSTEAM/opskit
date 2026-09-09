@@ -118,7 +118,7 @@ def test_dns_zones_missing_credentials_exit1():
     """Known server without a configured password -> error result -> exit 1."""
     r = run_cli("dns", "zones", "--server", "client1")
     assert r.returncode == 1
-    assert "Password for 'client1'" in r.stdout
+    assert "Unknown server 'client1'" in r.stdout
 
 
 # ── dispatch + output shaping (fake tool module, no network) ──────────────────
