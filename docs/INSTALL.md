@@ -418,6 +418,23 @@ remote MCP server that authenticates as you.
 
 ---
 
+## 7. Templates (optional)
+
+Templates for `opencode.json` and `global-memory.md` are in `templates/`.
+Copy them to configure the operator's environment:
+
+```bash
+cp templates/opencode.json ~/.config/opencode/opencode.json
+cp templates/global-memory.md ~/.config/opencode/global-memory.md
+```
+
+The templates are redacted — no real paths or credentials. Fill in the
+parameterized fields before use. `templates/global-memory.md` is a single
+canonical source for OpsKit-routing memory text that generates both
+`~/.claude/CLAUDE.md` and `~/.config/opencode/global-memory.md`.
+
+---
+
 ## 8. Verification
 
 Run these in order. Each one gates the next.
