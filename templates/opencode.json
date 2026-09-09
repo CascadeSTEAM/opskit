@@ -1,0 +1,71 @@
+{
+  "name": "<REDACTED>",
+  "version": "1.0.0",
+  "servers": {
+    "mikromcp": {
+      "command": "bin/mcp-run.sh mikromcp",
+      "args": [],
+      "env": {},
+      "icon": "",
+      "categories": ["routeros"]
+    },
+    "erpnext": {
+      "command": "bin/mcp-run.sh erpnext",
+      "args": [],
+      "env": {},
+      "icon": "",
+      "categories": ["erp"]
+    },
+    "technitium": {
+      "command": "bin/mcp-run.sh technitium",
+      "args": [],
+      "env": {},
+      "icon": "",
+      "categories": ["dns"]
+    },
+    "proxmox": {
+      "command": "bin/mcp-run.sh proxmox",
+      "args": [],
+      "env": {},
+      "icon": "",
+      "categories": ["virtualization"]
+    },
+    "bitwarden": {
+      "command": "bin/mcp-run.sh bitwarden",
+      "args": [],
+      "env": {},
+      "icon": "",
+      "categories": ["secrets"]
+    }
+  },
+  "agents": {
+    "ops": {
+      "name": "ops",
+      "prompt": "You are an ops agent. Use opskit tools for infrastructure work.",
+      "tools": ["mikromcp", "erpnext", "technitium", "proxmox", "bitwarden"],
+      "skills": ["ops.md"]
+    },
+    "docs": {
+      "name": "docs",
+      "prompt": "You are a docs agent. Use opskit documentation for reference.",
+      "tools": [],
+      "skills": ["docs.md"]
+    }
+  },
+  "skills": {
+    "ops.md": {
+      "name": "ops",
+      "description": "Opskin infrastructure operations skill.",
+      "location": "agents/ops.md"
+    },
+    "docs.md": {
+      "name": "docs",
+      "description": "Opskin documentation skill.",
+      "location": "agents/docs.md"
+    }
+  },
+  "globalMemory": {
+    "location": "~/.config/opencode/global-memory.md",
+    "description": "Global memory for opskit routing instructions."
+  }
+}

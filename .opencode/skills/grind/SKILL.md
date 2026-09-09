@@ -185,12 +185,15 @@ every time:
    re-read of the issue prose — the same evidence standard the
    `ticket-triage` skill applies to HD Tickets.
 
-8. **Assignment filter (issues only).** `gh issue view <n> --json assignees`
-   per issue. Unassigned or assigned to the operator: fair game, proceed.
-   Assigned to anyone else: that is someone else's in-flight work, not
-   backlog — skip it untouched (no comment, no reassignment) and report it
-   as skipped. Never add yourself as a second assignee alongside someone
-   already on it.
+8. **Assignment filter + self-assignment (issues only).** `gh issue view <n> --json assignees` per issue.
+   - Unassigned or assigned to the operator: fair game, proceed.
+   - Assigned to anyone else: that is someone else's in-flight work, not
+     backlog — skip it untouched (no comment, no reassignment) and report it
+     as skipped. Never add yourself as a second assignee alongside someone
+     already on it.
+   - **Self-assignment:** if the issue is unassigned, run `gh issue edit <n> --assignee @me` before proceeding.
+     This marks it as in-progress in GitHub's Project fields and prevents
+     another grind session from picking it up.
 
 9. **Dedupe and connect issues.** Read the collected issues as one set:
    - **Unambiguous duplicates** (one issue clearly describes all the same
@@ -344,22 +347,27 @@ a feature branch.
    - If `git push` is rejected for divergence, rebase and force-push once, then
      abort with an error if that fails too.
 
-32. **Create or use a worktree branch:** `grind/<type>-<item-key>`.
-    Create the worktree from `origin/main` (or the main checkout's `main`
-    branch) — never from a feature branch checked out in the shared checkout:
-    `git worktree add -b grind/<type>-<item-key> worktree/grind/<type>-<item-key> main`.
-    The main checkout stays on `main` at all times.
+32. **Ensure the branch has at least one commit before PR.**
+   If the worktree branch is empty (no commits ahead of main), create a
+   placeholder commit (e.g. `README.md` with the issue title) so the PR can
+   be created. This prevents PR creation failures from empty branches.
 
 33. **Commit and push** from the worktree:
-    `git -C worktree/grind/<type>-<item-key> commit -m "..."` then
-    `git -C worktree/grind/<type>-<item-key> push -u origin grind/<type>-<item-key>`.
+   `git -C worktree/grind/<type>-<item-key> commit -m "..."` then
+   `git -C worktree/grind/<type>-<item-key> push -u origin grind/<type>-<item-key>`.
 
-34. **Create a PR.**
+34. **Create or use a worktree branch:** `grind/<type>-<item-key>`.
+   Create the worktree from `origin/main` (or the main checkout's `main`
+   branch) — never from a feature branch checked out in the shared checkout:
+   `git worktree add -b grind/<type>-<item-key> worktree/grind/<type>-<item-key> main`.
+   The main checkout stays on `main` at all times.
+
+35. **Create a PR.**
    - If `gh` CLI available: `gh pr create` with a description
    - If `gh` CLI is unavailable or the PR creation fails: output the branch
      name, URL, and a draft PR description, then stop and report to the user.
 
-35. **Set Phase: Awaiting Merge** with the PR URL. Set item `status: awaiting-merge`
+36. **Set Phase: Awaiting Merge** with the PR URL. Set item `status: awaiting-merge`
    in the queue (do NOT move to `## Completed` — it has not been merged yet).
    **Repeat from step 1**. Step 0 sees `Awaiting Merge` and stops for user review.
    After human review and merge, grind restarts and loads the next item.
@@ -368,7 +376,7 @@ a feature branch.
 
 ## Phase 3 — Cleanup (runs after the queue empties)
 
-36. **Survey leftovers.** A grind run creates a worktree per PR review and a
+37. **Survey leftovers.** A grind run creates a worktree per PR review and a
    branch per issue. None of the leftovers break anything — which is why they
    accumulate. Survey with:
    ```
@@ -377,12 +385,12 @@ a feature branch.
    ```
    or `bin/repo-cleanup.py` if available.
 
-37. **Cleanup is NOT pre-authorized.** Load the `cleanup` skill to handle the
+38. **Cleanup is NOT pre-authorized.** Load the `cleanup` skill to handle the
    actual pruning. Show the operator the list of stale worktrees and grind
    branches and remove on one go-ahead. **Cleanup deletes published refs — it
    asks before doing anything.**
 
-38. **Produce the end-of-run report.** Summarize:
+39. **Produce the end-of-run report.** Summarize:
    - PRs merged (links)
    - Issues completed (links)
    - Duplicates closed (with cross-references)
@@ -391,7 +399,7 @@ a feature branch.
    - Cleanup performed or declined
    - Remaining queue (human-blocked items, awaiting-merge items)
 
-39. **Append to RESUME.md Session Summary.** One summary line:
+40. **Append to RESUME.md Session Summary.** One summary line:
    `- **[date]** Grind run: <N> merged, <M> closed, <K> shipped, <R> remaining`.
    Clear the "Active" section (no active item when run ends). Remove any
    "Awaiting Review" entries (they either merged or were skipped). Keep
