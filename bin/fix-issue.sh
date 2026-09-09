@@ -9,8 +9,9 @@
 #   fix-issue.sh cleanup <issue-number>
 #   fix-issue.sh list    <mine|unassigned>
 #   fix-issue.sh search  <terms...>
-#   fix-issue.sh new     --type <Task|Bug|Feature> --title <t> [--body <b>] [--label <l>]...
-#   fix-issue.sh bump    <issue-number> --priority <high|medium|low> [--note <n>]
+#   fix-issue.sh new     --type <Task|Bug|Feature> --title <t> [--body <b>] [--label <l>]... [--priority <level>]
+#   fix-issue.sh bump    <issue-number> --priority <urgent|high|medium|low> [--note <n>]
+#   fix-issue.sh labels  [--force]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,10 +47,13 @@ cmd_setup() {
     gh issue develop "$n" --base main --name "$branch" >/dev/null
     git -C "$REPO_ROOT" fetch -q origin
 
-    # 4) worktree beside the repo
+    # 4) worktree beside the repo — create local branch explicitly to handle
+    #    two-remote ambiguity; origin/branch is tried first, fallback to bare.
     local wt; wt="$(worktree_path "$n")"
     [ -e "$wt" ] && die "worktree path already exists: $wt"
-    git -C "$REPO_ROOT" worktree add "$wt" "$branch" >/dev/null
+    git -C "$REPO_ROOT" worktree add "$wt" -b "$branch" "origin/$branch" >/dev/null 2>&1 || \
+        git -C "$REPO_ROOT" worktree add "$wt" "$branch" >/dev/null 2>&1 || \
+        die "worktree creation failed for #$n"
 
     echo "branch=$branch"
     echo "worktree=$wt"
@@ -106,21 +110,26 @@ cmd_search() {
     gh issue list --state all --search "$*" --limit 20
 }
 
-ensure_priority_labels() {
+ensure_labels() {
+    gh label create "priority:urgent" --color 8B0000 --description "Urgent priority" --force >/dev/null 2>&1 || true
     gh label create "priority:high"   --color b60205 --description "High priority"   --force >/dev/null 2>&1 || true
     gh label create "priority:medium" --color fbca04 --description "Medium priority" --force >/dev/null 2>&1 || true
     gh label create "priority:low"    --color 0e8a16 --description "Low priority"    --force >/dev/null 2>&1 || true
+    gh label create "status:blocked-infra" --color d73a4a --description "Blocked by infrastructure" --force >/dev/null 2>&1 || true
+    gh label create "status:needs-decision" --color c57244 --description "Needs owner decision" --force >/dev/null 2>&1 || true
 }
 
 cmd_new() {
     local type="" title="" body=""
     local -a labels=()
+    local priority=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --type)  type="${2:-}"; shift 2;;
             --title) title="${2:-}"; shift 2;;
             --body)  body="${2:-}"; shift 2;;
             --label) labels+=("${2:-}"); shift 2;;
+            --priority) priority="${2:-}"; shift 2;;
             *) die "unknown new arg: $1";;
         esac
     done
@@ -133,6 +142,10 @@ cmd_new() {
         for l in "${labels[@]}"; do
             if [ -n "$l" ]; then create_args+=(--label "$l"); fi
         done
+    fi
+    if [ -n "$priority" ]; then
+        case "$priority" in urgent|high|medium|low) ;; *) die "new --priority must be urgent|high|medium|low, got '${priority}'";; esac
+        create_args+=(--label "priority:$priority")
     fi
 
     local url num repo
@@ -148,6 +161,11 @@ cmd_new() {
     echo "url=$url"
 }
 
+cmd_labels() {
+    ensure_labels >/dev/null 2>&1
+    echo "labels ensured: priority:urgent/high/medium/low, status:blocked-infra, status:needs-decision"
+}
+
 cmd_bump() {
     local n="$1"; shift; require_num "$n"
     local prio="" note=""
@@ -158,26 +176,34 @@ cmd_bump() {
             *) die "unknown bump arg: $1";;
         esac
     done
-    case "$prio" in high|medium|low) ;; *) die "bump --priority must be high|medium|low, got '${prio}'";; esac
+    case "$prio" in urgent|high|medium|low) ;; *) die "bump --priority must be urgent|high|medium|low, got '${prio}'";; esac
 
-    ensure_priority_labels
+    ensure_labels
     # Drop any other priority:* label already on the issue, then set the target.
     local existing lbl
     existing="$(gh issue view "$n" --json labels -q '.labels[].name' 2>/dev/null || true)"
+    local target="priority:$prio"
+    local changed=false
     for lbl in $existing; do
         case "$lbl" in
-            priority:*) if [ "$lbl" != "priority:$prio" ]; then
+            priority:*) if [ "$lbl" != "$target" ]; then
                 gh issue edit "$n" --remove-label "$lbl" >/dev/null
             fi;;
         esac
     done
-    gh issue edit "$n" --add-label "priority:$prio" >/dev/null
+    if [ "$existing" = "$target" ] || printf '%s' "$existing" | grep -q "$target"; then
+        if [ -z "$note" ]; then
+            echo "unchanged"
+            return 0
+        fi
+    fi
+    gh issue edit "$n" --add-label "$target" >/dev/null
     gh issue comment "$n" --body "Priority set to \`priority:$prio\`.${note:+ $note}"
     echo "bumped #$n to priority:$prio"
 }
 
 main() {
-    [ $# -ge 1 ] || die "usage: fix-issue.sh {setup|pr|cleanup|list|new|bump|search} <arg> [...]"
+    [ $# -ge 1 ] || die "usage: fix-issue.sh {setup|pr|cleanup|list|new|bump|search|labels} <arg> [...]"
     local sub="$1"; shift
     case "$sub" in
         setup)   [ $# -ge 1 ] || die "setup needs <issue-number>";   cmd_setup "$@";;
@@ -187,7 +213,8 @@ main() {
         new)     cmd_new "$@";;
         bump)    [ $# -ge 1 ] || die "bump needs <issue-number>";    cmd_bump "$@";;
         search)  cmd_search "$@";;
-        *) die "unknown subcommand: '$sub' (expected setup|pr|cleanup|list|new|bump|search)";;
+        labels)  cmd_labels "$@";;
+        *) die "unknown subcommand: '$sub' (expected setup|pr|cleanup|list|new|bump|search|labels)";;
     esac
 }
 
