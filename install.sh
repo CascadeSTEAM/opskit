@@ -228,7 +228,25 @@ step_mcp() {
         return 0
     fi
     if [[ $check_only == true ]]; then
-        _msg "MCP servers — (requires vault, skipped in check mode)."
+        local ok=true
+        if [[ -f "$OPSKIT_DIR/bin/gen-mcp-config.py" ]]; then
+            _msg "gen-mcp-config.py — present."
+        else
+            _err "gen-mcp-config.py — missing." && ok=false
+        fi
+        if [[ -f "$OPSKIT_DIR/bin/bw_session.py" ]]; then
+            _msg "bw_session.py — present."
+        else
+            _err "bw_session.py — missing." && ok=false
+        fi
+        if [[ -f "$OPSKIT_DIR/bin/check-mcp-wiring.py" ]]; then
+            _msg "check-mcp-wiring.py — present."
+        else
+            _err "check-mcp-wiring.py — missing." && ok=false
+        fi
+        if [[ $ok == true ]]; then
+            _info "MCP config generators are present. Run \"opskit mcp setup\" to generate config files."
+        fi
         return 0
     fi
     _info "MCP servers need vault credentials. Run \"opskit mcp setup\" after setup."
@@ -271,6 +289,43 @@ _show_summary() {
 
     if command -v opskit &>/dev/null; then _msg "opskit CLI — ok"; ok=$((ok + 1));
     else _warn "opskit CLI — not in PATH"; fi
+
+    # ── MCP config ───────────────────────────────────────────────────────────
+    echo ""
+    echo "$_sep"
+    echo "  MCP CONFIG"
+    echo "$_sep"
+    echo ""
+
+    local tenants_path="$HOME/mcp/tenants.local.json"
+    local vault_map_path="$HOME/mcp/vault-map.local.json"
+
+    if [[ -f "$tenants_path" ]]; then
+        _msg "tenants.local.json — present."
+    else
+        _warn "tenants.local.json — missing; run: opskit mcp setup"
+    fi
+
+    if [[ -f "$vault_map_path" ]]; then
+        _msg "vault-map.local.json — present."
+    else
+        _warn "vault-map.local.json — missing; run: opskit mcp setup"
+    fi
+
+    # Check MCP wiring for drift
+    if [[ -f "$OPSKIT_DIR/bin/check-mcp-wiring.py" ]]; then
+        local wiring_result
+        wiring_result=$(python3 "$OPSKIT_DIR/bin/check-mcp-wiring.py" 2>&1)
+        local wiring_rc=$?
+        if [[ $wiring_rc -eq 0 ]]; then
+            _msg "MCP wiring — no drift detected."
+        else
+            _warn "MCP wiring — drift detected:"
+            echo "$wiring_result" | while IFS= read -r line; do
+                [[ -n "$line" ]] && echo "    $line"
+            done
+        fi
+    fi
 
     echo ""
     if (( fail > 0 )); then
