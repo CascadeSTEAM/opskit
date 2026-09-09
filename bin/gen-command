@@ -43,7 +43,8 @@ TEMPLATES = {
         "## Failure handling\n\n"
         "- <failure mode -> what to do>\n\n"
         "## Do NOT\n\n"
-        "- <anti-pattern>\n"
+        "- <anti-pattern>\n\n"
+        "$ARGUMENTS"
     ),
 }
 
