@@ -34,13 +34,17 @@ TEMPLATES = {
     ),
     "inline": (
         "# {name}\n\n"
-        "{description}\n\n"
-        "## Steps\n\n"
-        "1. <procedure steps>\n\n"
+        "Parse `$ARGUMENTS` for a subcommand (first word). If no subcommand, default to `run`.\n\n"
+        "## Subcommands\n\n"
+        "### `run` (default)\n\n"
+        "<procedure steps>\n\n"
+        "### `status`\n\n"
+        "<status/lookup steps>\n\n"
         "## Failure handling\n\n"
         "- <failure mode -> what to do>\n\n"
         "## Do NOT\n\n"
-        "- <anti-pattern>\n"
+        "- <anti-pattern>\n\n"
+        "$ARGUMENTS"
     ),
     "hybrid": (
         'Call the skill tool to load the "{name}" skill, '
