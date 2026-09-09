@@ -586,8 +586,53 @@ class TestPrune:
         # The stale skill should be pruned
         assert not stale_skill.exists()
 
+    def test_prune_preserves_native_skill(self, tmp_path: Path, tmp_member: Path):
+        """Native skill dirs must not be pruned even though they have no member prefix."""
+        remotes = tmp_path / ".project-remotes"
+        remotes.write_text(f"test-member {tmp_member}\n")
+        projects = tmp_path / "projects"
+        projects.mkdir()
+        link = projects / "test-member"
+        link.symlink_to(tmp_member)
 
-# ── Sync + Mount ──────────────────────────────────────────────────────────────
+        skills_dir = tmp_path / ".opencode" / "skills"
+        skills_dir.mkdir(parents=True)
+
+        # Create a native skill dir (no member prefix)
+        native_skill = skills_dir / "backup"
+        native_skill.mkdir()
+        native_skill.joinpath("SKILL.md").write_text("# backup\n")
+
+        ps._REMOTES = remotes
+        ps._PROJECTS = projects
+
+        result = ps.cmd_mount()
+        # Native skill must survive
+        assert native_skill.exists()
+        assert not any("backup" in p for p in result.get("pruned", []))
+
+    def test_prune_stale_skill_render(self, tmp_path: Path, tmp_member: Path):
+        """Stale skill render from removed member should be pruned."""
+        remotes = tmp_path / ".project-remotes"
+        remotes.write_text(f"test-member {tmp_member}\n")
+        projects = tmp_path / "projects"
+        projects.mkdir()
+        link = projects / "test-member"
+        link.symlink_to(tmp_member)
+
+        # Stale skill render under tmp_path/.claude/skills/
+        skills_dir = tmp_path / ".claude" / "skills"
+        skills_dir.mkdir(parents=True)
+
+        stale_skill = skills_dir / "removed-member-stale-skill"
+        stale_skill.mkdir()
+
+        ps._REMOTES = remotes
+        ps._PROJECTS = projects
+
+        result = ps.cmd_mount()
+        # The stale skill should be pruned
+        assert not stale_skill.exists()
 
 
 class TestSyncMount:

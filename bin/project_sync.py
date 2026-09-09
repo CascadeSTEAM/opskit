@@ -638,6 +638,17 @@ def cmd_mount(args: argparse.Namespace | None = None) -> dict:
     # ── Prune stale renders ──
     # Build set of all currently-rendered member names
     active_members = {r["name"] for r in remotes if r["name"] not in ("example",)}
+
+    # Native skill names (from AGENTS.md Skills list) — these must not be pruned
+    NATIVE_SKILLS = {
+        "startsession", "lifecycle", "git", "security", "backup", "infra",
+        "check-connectivity", "templates", "tools", "endsession", "idea-triage",
+        "idea-cmd", "baseline", "gh", "helpdesk-ticket", "frappe-access",
+        "dogfood-cycle", "release", "zabbix", "cleanup", "handoff",
+        "ticket-triage", "gitlab-pages-dns", "grind", "knowledge-base",
+        "routeros", "github-cli", "triage",
+    }
+
     pruned: list[dict] = []
 
     for rendered_dir, kind in [
@@ -653,13 +664,17 @@ def cmd_mount(args: argparse.Namespace | None = None) -> dict:
             # Check if this render has no member source
             # Format: <member-name>-<rest> — try to match member name
             found = False
-            for m in active_members:
-                if kind == "agent" and stem.startswith(f"{m}-"):
-                    found = True
-                    break
-                if kind == "skill" and stem.startswith(f"{m}-"):
-                    found = True
-                    break
+            # Native skills are always preserved
+            if stem in NATIVE_SKILLS:
+                found = True
+            else:
+                for m in active_members:
+                    if kind == "agent" and stem.startswith(f"{m}-"):
+                        found = True
+                        break
+                    if kind == "skill" and stem.startswith(f"{m}-"):
+                        found = True
+                        break
             if not found:
                 if existing.is_dir():
                     shutil.rmtree(existing)
