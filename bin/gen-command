@@ -204,12 +204,12 @@ def wizard(name: str) -> dict:
             sys.exit(1)
     name = validate_name(name)
 
-    type_choices = "inline, skill-loader, hybrid"
+    type_choices = "inline, skill-loader"
     type_default = "inline"
     type_val = _prompt(
         f"Template type ({type_choices}): ",
         default=type_default,
-        choices=["skill-loader", "inline", "hybrid"],
+        choices=["skill-loader", "inline"],
     )
 
     desc = _prompt(
@@ -525,7 +525,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--type", default="inline",
-        choices=["skill-loader", "inline", "hybrid"],
+        choices=["skill-loader", "inline"],
         help="Command template type (default: inline — use skill-loader only for simple 1:1 dispatches)",
     )
     parser.add_argument(
