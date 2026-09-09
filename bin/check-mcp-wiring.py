@@ -102,7 +102,15 @@ def main() -> int:
         print(f"NOTE: no opencode config at {cfg_path} — nothing to check.")
         return 0
     try:
-        config = json.loads(cfg_path.read_text())
+        # JSONC is legal (opencode configs carry "//" comments); strip
+        # line-leading comments before json.load so the parser doesn't choke.
+        text = cfg_path.read_text()
+        lines = text.splitlines()
+        clean = '\n'.join(
+            line for line in lines
+            if not line.lstrip().startswith('//')
+        )
+        config = json.loads(clean)
     except json.JSONDecodeError as e:
         print(f"ERROR: {cfg_path} is not valid JSON: {e}")
         return 1

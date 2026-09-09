@@ -104,3 +104,21 @@ def test_cli_exit_codes(tmp_path):
     invalid = tmp_path / "invalid.json"
     invalid.write_text("{not json")
     assert _run(["--config", str(invalid)]).returncode == 1
+
+
+def test_jsonc_with_comments_passes(tmp_path):
+    """A JSONC config with "//" comments is accepted (issue #288)."""
+    cfg = tmp_path / "jsonc.json"
+    cfg.write_text(json.dumps(_cfg({"erpnext": {
+        "command": f"{ROOT}/bin/mcp-run.sh erpnext"}})) + '\n// comment here\n')
+    assert _run(["--config", str(cfg)]).returncode == 0
+
+
+def test_jsonc_with_comment_in_string_passes(tmp_path):
+    """A "//" inside a string (e.g. a URL) must not be stripped (issue #288)."""
+    cfg = tmp_path / "jsonc_string.json"
+    cfg.write_text(json.dumps({
+        "$schema": "https://example.com//path/schema.json",
+        "mcp": {}
+    }) + '\n// comment\n')
+    assert _run(["--config", str(cfg)]).returncode == 0

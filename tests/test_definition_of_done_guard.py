@@ -76,6 +76,16 @@ def test_unregistered_skill_fails(tmp_path):
     assert "newthing" in r.stderr
 
 
+def test_substring_false_positive_passes(tmp_path):
+    """'triage' should not match inside 'idea-triage' — check for backtick-quoted name."""
+    repo = _repo(tmp_path)
+    (repo / "AGENTS.md").write_text("# Agents\n\nSkills: `git` | `idea-triage`\n")
+    _git(repo, "add", "AGENTS.md")
+    _stage(repo, ".opencode/skills/triage/SKILL.md", "---\nname: triage\n---\n")
+    r = _run(repo)
+    assert r.returncode == 0, r.stderr
+
+
 def test_registered_skill_passes(tmp_path):
     repo = _repo(tmp_path)
     (repo / "AGENTS.md").write_text("# Agents\n\nSkills: `git` | `newthing`\n")

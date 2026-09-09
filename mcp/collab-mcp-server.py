@@ -436,12 +436,9 @@ if __name__ == "__main__":
         print(collab_skill_drift())
         print(collab_tool_drift())
         print(collab_propose_improvements())
+        print()
+        print(collab_skill_command_drift())
+        print()
+        print(collab_propose_improvements())
     else:
         mcp.run(transport="stdio")
-
-
-if __name__ == "__main__" and "--test" in sys.argv:
-    # Standalone test mode (not an MCP tool invocation)
-    print(collab_skill_command_drift())
-    print()
-    print(collab_propose_improvements())

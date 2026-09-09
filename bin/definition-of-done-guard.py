@@ -90,10 +90,14 @@ def check_new_skill_registered(files: list, errors: list):
             continue
         skill_name = Path(path).parent.name
         if skill_name not in agents_text:
-            errors.append(
-                f"{path}: new skill '{skill_name}' is not registered in AGENTS.md "
-                f"(add it to the Skills list)."
-            )
+            # Substring check: 'triage' matches inside 'idea-triage'.
+            # The Skills list uses backtick-quoted names, so check for
+            # the exact `` `name` `` pattern instead.
+            if f"`{skill_name}`" not in agents_text:
+                errors.append(
+                    f"{path}: new skill '{skill_name}' is not registered in AGENTS.md "
+                    f"(add it to the Skills list)."
+                )
 
 
 def check_no_stub_markers(files: list, errors: list):

@@ -18,6 +18,7 @@ GH_STUB = (
     'echo "gh $*" >> "$STUB_LOG"\n'
     'case "$*" in\n'
     '  "issue view "*"--json title"*) echo "${FAKE_TITLE:-Fix the Foo Bar!}";;\n'
+    '  "issue view "*"--json labels"*) echo "${FAKE_LABELS:-}";;\n'
     '  "issue create "*) echo "https://github.com/o/r/issues/999";;\n'
     '  "repo view "*) echo "o/r";;\n'
     "esac\n"
@@ -68,7 +69,9 @@ def test_setup_assigns_branches_and_worktrees(tmp_path):
     assert "gh issue edit 123 --add-assignee @me" in calls
     # slug derived from "Fix the Foo Bar!" -> "fix-the-foo-bar"
     assert "gh issue develop 123 --base main --name 123-fix-the-foo-bar" in calls
-    assert f"git -C {root} worktree add {tmp_path}/opskit-wt-123 123-fix-the-foo-bar" in calls
+    # worktree add with -b flag for explicit branch creation
+    assert f"git -C {root} worktree add {tmp_path}/opskit-wt-123 -b 123-fix-the-foo-bar origin/123-fix-the-foo-bar" in calls or \
+           f"git -C {root} worktree add {tmp_path}/opskit-wt-123 123-fix-the-foo-bar" in calls
     assert "branch=123-fix-the-foo-bar" in r.stdout
     assert f"worktree={tmp_path}/opskit-wt-123" in r.stdout
 
@@ -182,9 +185,57 @@ def test_bump_sets_priority_and_comments(tmp_path):
 
 def test_bump_rejects_bad_priority(tmp_path):
     _, _, env = _setup_env(tmp_path)
-    r = _run(env, "bump", "77", "--priority", "urgent")
+    r = _run(env, "bump", "77", "--priority", "epic")
     assert r.returncode != 0
-    assert "must be high|medium|low" in r.stderr
+    assert "must be urgent|high|medium|low" in r.stderr
+
+
+def test_bump_accepts_urgent(tmp_path):
+    _, log, env = _setup_env(tmp_path)
+    r = _run(env, "bump", "77", "--priority", "urgent")
+    assert r.returncode == 0, r.stderr
+    calls = log.read_text()
+    assert "gh label create priority:urgent" in calls
+    assert "gh issue edit 77 --add-label priority:urgent" in calls
+
+
+def test_bump_unchanged_skips_comment(tmp_path):
+    _, _, env = _setup_env(tmp_path)
+    env["FAKE_LABELS"] = "priority:high"
+    r = _run(env, "bump", "77", "--priority", "high")
+    assert r.returncode == 0, r.stderr
+    assert "unchanged" in r.stdout
+
+
+def test_labels_creates_all_labels(tmp_path):
+    _, log, env = _setup_env(tmp_path)
+    r = _run(env, "labels")
+    assert r.returncode == 0, r.stderr
+    calls = log.read_text()
+    assert "gh label create priority:urgent" in calls
+    assert "gh label create priority:high" in calls
+    assert "gh label create priority:medium" in calls
+    assert "gh label create priority:low" in calls
+    assert "gh label create status:blocked-infra" in calls
+    assert "gh label create status:needs-decision" in calls
+
+
+def test_new_with_priority(tmp_path):
+    _, log, env = _setup_env(tmp_path)
+    r = _run(env, "new", "--type", "Bug", "--title", "Fix X", "--priority", "high")
+    assert r.returncode == 0, r.stderr
+    calls = log.read_text()
+    assert "gh issue create --title Fix X" in calls
+    assert "--label priority:high" in calls
+    assert "issue=#999" in r.stdout
+    assert "url=https://github.com/o/r/issues/999" in r.stdout
+
+
+def test_new_rejects_bad_priority(tmp_path):
+    _, _, env = _setup_env(tmp_path)
+    r = _run(env, "new", "--type", "Bug", "--title", "X", "--priority", "epic")
+    assert r.returncode != 0
+    assert "must be urgent|high|medium|low" in r.stderr
 
 
 def test_search_builds_query(tmp_path):
