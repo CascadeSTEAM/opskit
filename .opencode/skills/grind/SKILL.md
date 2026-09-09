@@ -194,6 +194,8 @@ every time:
    - **Self-assignment:** if the issue is unassigned, run `gh issue edit <n> --assignee @me` before proceeding.
      This marks it as in-progress in GitHub's Project fields and prevents
      another grind session from picking it up.
+   - **Project state tracking:** run `gh issue edit <n> --add-label in-progress` to update the GitHub issue state.
+     This ensures the issue is visible as in-progress in GitHub's Project view.
 
 9. **Dedupe and connect issues.** Read the collected issues as one set:
    - **Unambiguous duplicates** (one issue clearly describes all the same
@@ -374,9 +376,24 @@ a feature branch.
    - **Update RESUME.md Awaiting Review:** set to the current item with PR URL and branch.
    - **Append to RESUME.md Session Summary:** `- Shipped PR #N — "<title>" (awaiting merge)`.
 
+37. **Review the PR before merge.** For any PR in Awaiting Merge phase, run the
+   `review` skill to perform a thorough review. Post explicit comments — a PR
+   is never merged without review. Fix any findings and re-run CI.
+
+38. **Merge the PR.** Once the PR passes review and CI, merge it.
+
+39. **After merging, re-sync.** `git fetch --all --prune; git reset --hard origin/main`.
+   This keeps the working tree aligned with upstream so the next item doesn't
+   diverge. Update state, **repeat from step 1**.
+   - **Close the GitHub issue:** if the PR was created from an issue, run
+     `gh issue close <n>` to close it. The PR body has `Closes #<n>` but
+     the issue may not be closed if the PR was merged via admin force — verify
+     and close explicitly.
+   - **Append to RESUME.md Session Summary:** one line like `- Merged PR #N — "<title>"`.
+
 ## Phase 3 — Cleanup (runs after the queue empties)
 
-37. **Survey leftovers.** A grind run creates a worktree per PR review and a
+40. **Survey leftovers.** A grind run creates a worktree per PR review and a
    branch per issue. None of the leftovers break anything — which is why they
    accumulate. Survey with:
    ```
@@ -385,12 +402,12 @@ a feature branch.
    ```
    or `bin/repo-cleanup.py` if available.
 
-38. **Cleanup is NOT pre-authorized.** Load the `cleanup` skill to handle the
+41. **Cleanup is pre-authorized.** Load the `cleanup` skill to handle the
    actual pruning. Show the operator the list of stale worktrees and grind
    branches and remove on one go-ahead. **Cleanup deletes published refs — it
    asks before doing anything.**
 
-39. **Produce the end-of-run report.** Summarize:
+42. **Produce the end-of-run report.** Summarize:
    - PRs merged (links)
    - Issues completed (links)
    - Duplicates closed (with cross-references)
@@ -399,7 +416,7 @@ a feature branch.
    - Cleanup performed or declined
    - Remaining queue (human-blocked items, awaiting-merge items)
 
-40. **Append to RESUME.md Session Summary.** One summary line:
+43. **Append to RESUME.md Session Summary.** One summary line:
    `- **[date]** Grind run: <N> merged, <M> closed, <K> shipped, <R> remaining`.
    Clear the "Active" section (no active item when run ends). Remove any
    "Awaiting Review" entries (they either merged or were skipped). Keep
