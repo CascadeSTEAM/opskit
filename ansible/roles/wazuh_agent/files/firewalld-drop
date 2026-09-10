@@ -1,0 +1,25 @@
+#!/bin/bash
+# Wazuh active response (v4 JSON protocol): block/unblock a source IP with firewalld
+# rich rules (runtime only, so a reboot clears them). Registered on the manager as
+# <command><name>firewalld-drop</name>...; used instead of the iptables-based
+# firewall-drop because Phoenix enforces with firewalld.
+LOG=/var/ossec/logs/active-responses.log
+read -r INPUT
+CMD=$(printf '%s' "$INPUT" | jq -r '.command // empty')
+IP=$(printf '%s' "$INPUT" | jq -r '.parameters.alert.data.srcip // .parameters.alert.data.src_ip // empty')
+RULE=$(printf '%s' "$INPUT" | jq -r '.parameters.alert.rule.id // empty')
+[[ -n "$IP" ]] || { echo "$(date -Is) firewalld-drop: no source ip in alert" >>"$LOG"; exit 1; }
+# never block loopback / private infrastructure the manager whitelists anyway
+case "$IP" in 127.*|::1) exit 0;; esac
+if [[ "$CMD" == "add" ]]; then
+  # stateful protocol: ask the manager whether this key is already active
+  printf '{"version":1,"origin":{"name":"firewalld-drop","module":"active-response"},"command":"check_keys","parameters":{"keys":["%s"]}}\n' "$IP"
+  read -r RESP
+  [[ "$(printf '%s' "$RESP" | jq -r '.command // empty')" == "continue" ]] || exit 0
+  firewall-cmd --add-rich-rule="rule family=ipv4 source address=${IP} drop" >/dev/null 2>&1 \
+    && echo "$(date -Is) firewalld-drop: BLOCKED $IP (rule $RULE)" >>"$LOG"
+elif [[ "$CMD" == "delete" ]]; then
+  firewall-cmd --remove-rich-rule="rule family=ipv4 source address=${IP} drop" >/dev/null 2>&1 \
+    && echo "$(date -Is) firewalld-drop: unblocked $IP" >>"$LOG"
+fi
+exit 0
