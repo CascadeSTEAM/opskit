@@ -60,10 +60,19 @@ def _call_tool(tool: str, **args) -> dict:
 
 
 def _server_name(env_name: str) -> str:
-    """Which configured Technitium server serves this environment."""
-    # Server names are environment-specific — read from env.yml at runtime.
-    # For now, return env_name as a fallback; env.yml should have the mapping.
-    return env_name
+    """Which configured Technitium server serves this environment.
+
+    env.yml may name it (``dns.technitium_server``); otherwise fall back to the
+    environment name, which only works when the two happen to coincide.
+    """
+    import yaml  # local import: keeps --help fast and the module importable without PyYAML
+    env_yml = REPO_ROOT / "environments" / env_name / "env.yml"
+    try:
+        cfg = yaml.safe_load(env_yml.read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        cfg = {}
+    dns = cfg.get("dns") or {}
+    return str(dns.get("technitium_server") or env_name)
 
 
 def fetch(env_name: str, scopes: list[str] | None) -> list[dict]:

@@ -1,0 +1,53 @@
+---
+# wazuh_agent — defaults. Every value here is a placeholder; real environments set
+# them in environments/<env>/ansible/group_vars/ (gitignored). Documentation-range
+# addresses only in this file (pre-commit RFC1918 guard).
+
+# Manager the agent enrolls with and reports to (1515 enrollment, 1514 events).
+wazuh_manager: "198.18.42.10"
+wazuh_manager_port: 1514
+wazuh_enrollment_port: 1515
+
+# Agent identity. inventory_hostname keeps the manager's agent list equal to the
+# Ansible inventory, which is what makes "is every host enrolled?" checkable.
+wazuh_agent_name: "{{ inventory_hostname }}"
+# Manager-side agent group (environments/<env> sets its own, e.g. the env name);
+# the shared agent.conf for that group is deployed by deploy-wazuh-agent-groups.yml.
+wazuh_agent_group: "default"
+
+# Package source (Wazuh's apt repo is distro-agnostic: "stable main").
+wazuh_apt_key_url: "https://packages.wazuh.com/key/GPG-KEY-WAZUH"
+wazuh_apt_keyring: "/usr/share/keyrings/wazuh.gpg"
+wazuh_apt_repo: "deb [signed-by={{ wazuh_apt_keyring }}] https://packages.wazuh.com/4.x/apt/ stable main"
+wazuh_agent_package: "wazuh-agent"
+# Pin the major so an unattended upgrade never jumps the agent past the manager.
+wazuh_agent_version_pin: "4.*"
+
+# Ship Suricata's EVE stream when the host runs Suricata. Auto-detected from the
+# presence of the log file unless overridden per host (wazuh_agent_suricata: true|false).
+wazuh_agent_suricata_log: "/var/log/suricata/eve-wazuh.json"
+wazuh_agent_suricata_fallback_log: "/var/log/suricata/eve.json"
+
+# Extra <localfile> entries (list of {location, log_format}) — e.g. app logs.
+wazuh_agent_extra_localfiles: []
+
+# Docker events wodle when docker is present (needs python3-docker on the host).
+wazuh_agent_docker_listener: auto   # auto | true | false
+
+# File integrity: extra directory sets beyond the stock system dirs. Each item:
+# {paths: [..], realtime: true, report_changes: false}. Keep report_changes off for
+# secret material (diffs are stored on the manager).
+wazuh_agent_fim_directories: []
+# sregex patterns to ignore within the extra sets (e.g. node_modules trees).
+wazuh_agent_fim_ignores: []
+
+# Custom SCA policies: list of {name, src} where src is a YAML file path on the
+# controller (env layer). Installed under /var/ossec/etc/sca/ — NOT etc/shared, which the
+# manager overwrites on every group sync.
+wazuh_agent_sca_policies: []
+# Policies with `c:` (command) checks need this internal option.
+wazuh_agent_sca_remote_commands: false
+
+# Deploy the firewalld-based active-response script (Wazuh's stock firewall-drop uses
+# iptables). The manager's <command> for it lives in wazuh_manager_docker.
+wazuh_agent_firewalld_drop: false

@@ -1,0 +1,185 @@
+---
+# wazuh_agent — install, enroll and configure the Wazuh agent (Debian/Ubuntu).
+# Rebuild path for every enrolled host (iac-required). Idempotent: re-running
+# only changes what drifted; the agent restarts only when ossec.conf changes.
+
+- name: Fail on unsupported OS
+  ansible.builtin.fail:
+    msg: "wazuh_agent supports Debian/Ubuntu only (got {{ ansible_facts['os_family'] }})"
+  when: ansible_facts['os_family'] != 'Debian'
+
+- name: Require a manager address that is not the placeholder
+  ansible.builtin.assert:
+    that:
+      - wazuh_manager is defined
+      - wazuh_manager | length > 0
+      - not wazuh_manager.startswith('198.18.')
+    fail_msg: >-
+      wazuh_manager is still the documentation placeholder. Set it in
+      environments/<env>/ansible/group_vars/ (the real manager address never goes in the role).
+
+- name: Ensure apt helpers are present
+  ansible.builtin.apt:
+    name: [gnupg, ca-certificates, curl]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Import the Wazuh apt signing key (dearmored keyring)
+  ansible.builtin.shell:
+    cmd: "set -o pipefail && curl -fsSL {{ wazuh_apt_key_url }} | gpg --dearmor --yes -o {{ wazuh_apt_keyring }}"
+    executable: /bin/bash
+    creates: "{{ wazuh_apt_keyring }}"
+
+- name: Add the Wazuh apt repository
+  ansible.builtin.deb822_repository:
+    name: wazuh
+    uris: "https://packages.wazuh.com/4.x/apt/"
+    suites: stable
+    components: main
+    signed_by: "{{ wazuh_apt_keyring }}"
+    types: deb
+    state: present
+
+- name: Install wazuh-agent
+  # check-mode: the repo is not really added yet, so this cannot succeed in a dry run
+  ignore_errors: "{{ ansible_check_mode }}"
+  ansible.builtin.apt:
+    name: "{{ wazuh_agent_package }}"
+    state: present
+  environment:
+    # Honoured by the package postinst: pre-seeds ossec.conf so the first start already enrolls.
+    WAZUH_MANAGER: "{{ wazuh_manager }}"
+    WAZUH_AGENT_NAME: "{{ wazuh_agent_name }}"
+    WAZUH_AGENT_GROUP: "{{ wazuh_agent_group }}"
+    DEBIAN_FRONTEND: noninteractive
+
+- name: Hold the agent to the manager's major version
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/wazuh-agent
+    mode: "0644"
+    content: |
+      # Managed by opskit (wazuh_agent role). Agents must not outrun the manager.
+      Package: {{ wazuh_agent_package }}
+      Pin: version {{ wazuh_agent_version_pin }}
+      Pin-Priority: 1001
+
+- name: Detect Suricata EVE log
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ wazuh_agent_suricata_log }}"
+    - "{{ wazuh_agent_suricata_fallback_log }}"
+  register: suricata_logs
+
+- name: Decide whether to ship Suricata
+  ansible.builtin.set_fact:
+    # Always a string: '' (don't ship), the configured path (forced on), or the first
+    # detected EVE file (auto). The previous one-liner mixed `and` with `| ternary` and
+    # evaluated to a bare boolean, which broke `| length` in the template.
+    _wazuh_suricata_path: >-
+      {{ '' if (wazuh_agent_suricata is defined and not (wazuh_agent_suricata | bool))
+         else (wazuh_agent_suricata_log if (wazuh_agent_suricata is defined and (wazuh_agent_suricata | bool))
+         else (suricata_logs.results | selectattr('stat.exists') | map(attribute='stat.path') | list | first | default(''))) }}
+
+- name: Detect Docker
+  ansible.builtin.stat:
+    path: /var/run/docker.sock
+  register: docker_sock
+
+- name: Decide whether to enable the docker-listener wodle
+  ansible.builtin.set_fact:
+    _wazuh_docker: >-
+      {{ (wazuh_agent_docker_listener | bool) if wazuh_agent_docker_listener != 'auto' else docker_sock.stat.exists }}
+
+- name: Install python3-docker (needed by the docker-listener wodle)
+  # check-mode: the repo is not really added yet, so this cannot succeed in a dry run
+  ignore_errors: "{{ ansible_check_mode }}"
+  ansible.builtin.apt:
+    name: python3-docker
+    state: present
+  when: _wazuh_docker | bool
+
+- name: SCA policy directory
+  ansible.builtin.file:
+    path: /var/ossec/etc/sca
+    state: directory
+    owner: root
+    group: wazuh
+    mode: "0750"
+  when: wazuh_agent_sca_policies | length > 0
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Custom SCA policies
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/var/ossec/etc/sca/{{ item.name }}"
+    owner: root
+    group: wazuh
+    mode: "0640"
+  loop: "{{ wazuh_agent_sca_policies }}"
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Restart wazuh-agent
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Allow command checks in custom SCA policies
+  ansible.builtin.lineinfile:
+    path: /var/ossec/etc/local_internal_options.conf
+    regexp: '^sca\.remote_commands='
+    line: "sca.remote_commands={{ 1 if wazuh_agent_sca_remote_commands else 0 }}"
+    create: true
+    owner: root
+    group: wazuh
+    mode: "0640"
+  when: wazuh_agent_sca_policies | length > 0
+  notify: Restart wazuh-agent
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: firewalld-based active-response script
+  ansible.builtin.copy:
+    src: firewalld-drop
+    dest: /var/ossec/active-response/bin/firewalld-drop
+    owner: root
+    group: wazuh
+    mode: "0750"
+  when: wazuh_agent_firewalld_drop | bool
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Deploy ossec.conf
+  # check-mode: the repo is not really added yet, so this cannot succeed in a dry run
+  ignore_errors: "{{ ansible_check_mode }}"
+  ansible.builtin.template:
+    src: ossec.conf.j2
+    dest: /var/ossec/etc/ossec.conf
+    owner: root
+    group: wazuh
+    mode: "0640"
+    backup: true
+  notify: Restart wazuh-agent
+
+- name: Enable and start wazuh-agent
+  # check-mode: the repo is not really added yet, so this cannot succeed in a dry run
+  ignore_errors: "{{ ansible_check_mode }}"
+  ansible.builtin.systemd:
+    name: wazuh-agent
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Flush handlers so a config change restarts before verification
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the agent to report a manager connection
+  ansible.builtin.wait_for:
+    path: /var/ossec/logs/ossec.log
+    search_regex: "Connected to the server"
+    timeout: 90
+  ignore_errors: true
+  register: wazuh_connected
+
+- name: Report enrollment state
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ 'connected to ' ~ wazuh_manager if wazuh_connected is succeeded
+         else 'NOT connected yet — check 1514/1515 reachability to ' ~ wazuh_manager ~ ' and the manager firewall' }}

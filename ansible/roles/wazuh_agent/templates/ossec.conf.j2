@@ -1,0 +1,154 @@
+{# Managed by opskit wazuh_agent role — edits on the host are overwritten. #}
+<ossec_config>
+  <client>
+    <server>
+      <address>{{ wazuh_manager }}</address>
+      <port>{{ wazuh_manager_port }}</port>
+      <protocol>tcp</protocol>
+    </server>
+    <config-profile>{{ ansible_facts['distribution'] | lower }}, {{ ansible_facts['distribution'] | lower }}{{ ansible_facts['distribution_major_version'] }}</config-profile>
+    <notify_time>10</notify_time>
+    <time-reconnect>60</time-reconnect>
+    <auto_restart>yes</auto_restart>
+    <crypto_method>aes</crypto_method>
+    <enrollment>
+      <enabled>yes</enabled>
+      <manager_address>{{ wazuh_manager }}</manager_address>
+      <port>{{ wazuh_enrollment_port }}</port>
+      <agent_name>{{ wazuh_agent_name }}</agent_name>
+      <groups>{{ wazuh_agent_group }}</groups>
+    </enrollment>
+  </client>
+
+  <client_buffer>
+    <disabled>no</disabled>
+    <queue_size>5000</queue_size>
+    <events_per_second>500</events_per_second>
+  </client_buffer>
+
+  <!-- Log analysis: standard Debian/Ubuntu sources -->
+  <localfile><log_format>syslog</log_format><location>/var/log/auth.log</location></localfile>
+  <localfile><log_format>syslog</log_format><location>/var/log/syslog</location></localfile>
+  <localfile><log_format>syslog</log_format><location>/var/log/dpkg.log</location></localfile>
+  <localfile><log_format>syslog</log_format><location>/var/log/kern.log</location></localfile>
+  <localfile><log_format>command</log_format><command>df -P</command><frequency>360</frequency></localfile>
+  <localfile><log_format>full_command</log_format><command>netstat -tulpn | sed 's/\([[:alnum:]]\+\)\ \+[[:digit:]]\+\ \+[[:digit:]]\+\ \+\(.*\):\([[:digit:]]*\)\ \+\([0-9\.\:\*]\+\).\+\ \([[:digit:]]*\/[[:alnum:]\-]*\).*/\1 \2 == \3 == \4 \5/' | sort -k 4 -g | sed 's/ == \(.*\) ==/:\1/' | sed 1,2d</command><alias>netstat listening ports</alias><frequency>360</frequency></localfile>
+  <localfile><log_format>full_command</log_format><command>last -n 20</command><frequency>360</frequency></localfile>
+{% if _wazuh_suricata_path | default('') | length > 0 %}
+
+  <!-- Suricata EVE stream (JSON). Prefer the slim eve-wazuh.json output: full
+       flow/stats records overflow the manager's JSON decoder field limit. -->
+  <localfile>
+    <log_format>json</log_format>
+    <location>{{ _wazuh_suricata_path }}</location>
+  </localfile>
+{% endif %}
+{% for lf in wazuh_agent_extra_localfiles %}
+  <localfile>
+    <log_format>{{ lf.log_format | default('syslog') }}</log_format>
+    <location>{{ lf.location }}</location>
+  </localfile>
+{% endfor %}
+
+  <rootcheck>
+    <disabled>no</disabled>
+    <check_files>yes</check_files>
+    <check_trojans>yes</check_trojans>
+    <check_dev>yes</check_dev>
+    <check_sys>yes</check_sys>
+    <check_pids>yes</check_pids>
+    <check_ports>yes</check_ports>
+    <check_if>yes</check_if>
+    <frequency>43200</frequency>
+    <rootkit_files>etc/shared/rootkit_files.txt</rootkit_files>
+    <rootkit_trojans>etc/shared/rootkit_trojans.txt</rootkit_trojans>
+    <skip_nfs>yes</skip_nfs>
+  </rootcheck>
+
+  <wodle name="cis-cat"><disabled>yes</disabled></wodle>
+  <wodle name="osquery"><disabled>yes</disabled></wodle>
+
+  <wodle name="syscollector">
+    <disabled>no</disabled>
+    <interval>1h</interval>
+    <scan_on_start>yes</scan_on_start>
+    <hardware>yes</hardware>
+    <os>yes</os>
+    <network>yes</network>
+    <packages>yes</packages>
+    <ports all="no">yes</ports>
+    <processes>yes</processes>
+  </wodle>
+
+  <sca>
+    <enabled>yes</enabled>
+    <scan_on_start>yes</scan_on_start>
+    <interval>12h</interval>
+    <skip_nfs>yes</skip_nfs>
+{% if wazuh_agent_sca_policies | length > 0 %}
+    <policies>
+{% for p in wazuh_agent_sca_policies %}
+      <policy>/var/ossec/etc/sca/{{ p.name }}</policy>
+{% endfor %}
+    </policies>
+{% endif %}
+  </sca>
+{% if _wazuh_docker | default(false) | bool %}
+
+  <wodle name="docker-listener">
+    <interval>10m</interval>
+    <attempts>5</attempts>
+    <run_on_start>yes</run_on_start>
+    <disabled>no</disabled>
+  </wodle>
+{% endif %}
+
+  <syscheck>
+    <disabled>no</disabled>
+    <frequency>43200</frequency>
+    <scan_on_start>yes</scan_on_start>
+    <directories>/etc,/usr/bin,/usr/sbin</directories>
+    <directories>/bin,/sbin,/boot</directories>
+    <ignore>/etc/mtab</ignore>
+    <ignore>/etc/hosts.deny</ignore>
+    <ignore>/etc/mail/statistics</ignore>
+    <ignore>/etc/random-seed</ignore>
+    <ignore>/etc/random.seed</ignore>
+    <ignore>/etc/adjtime</ignore>
+    <ignore>/etc/httpd/logs</ignore>
+    <ignore>/etc/utmpx</ignore>
+    <ignore>/etc/wtmpx</ignore>
+    <ignore>/etc/cups/certs</ignore>
+    <ignore>/etc/dumpdates</ignore>
+    <ignore>/etc/svc/volatile</ignore>
+    <ignore type="sregex">.log$|.swp$</ignore>
+{% for set in wazuh_agent_fim_directories %}
+    <directories realtime="{{ 'yes' if set.realtime | default(true) else 'no' }}" check_all="yes"{% if set.report_changes | default(false) %} report_changes="yes"{% endif %}>{{ set.paths | join(',') }}</directories>
+{% endfor %}
+{% for ig in wazuh_agent_fim_ignores %}
+    <ignore type="sregex">{{ ig }}</ignore>
+{% endfor %}
+    <nodiff>/etc/ssl/private.key</nodiff>
+    <skip_nfs>yes</skip_nfs>
+    <skip_dev>yes</skip_dev>
+    <skip_proc>yes</skip_proc>
+    <skip_sys>yes</skip_sys>
+    <process_priority>10</process_priority>
+    <max_eps>50</max_eps>
+    <synchronization>
+      <enabled>yes</enabled>
+      <interval>5m</interval>
+      <max_eps>10</max_eps>
+    </synchronization>
+  </syscheck>
+
+  <active-response>
+    <disabled>no</disabled>
+    <ca_store>etc/wpk_root.pem</ca_store>
+    <ca_verification>yes</ca_verification>
+  </active-response>
+
+  <logging>
+    <log_format>plain</log_format>
+  </logging>
+</ossec_config>

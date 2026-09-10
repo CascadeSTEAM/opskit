@@ -1,0 +1,44 @@
+{# Manager-side shared configuration for agent group "{{ item.name }}" (E4).
+   Deployed to /var/ossec/etc/shared/{{ item.name }}/agent.conf by deploy-wazuh-agent-groups.yml.
+   Everything here merges with each agent's local ossec.conf; agents in this group
+   pick it up automatically. Keep group-wide policy here, host specifics in ossec.conf. #}
+<agent_config>
+  <!-- {{ item.description | default('environment group ' ~ item.name) }} -->
+
+  <!-- Group-wide FIM: the config surfaces that matter on every host in this environment -->
+  <syscheck>
+    <directories realtime="yes" check_all="yes" report_changes="yes">/etc/ssh/sshd_config,/etc/ssh/sshd_config.d</directories>
+    <directories realtime="yes" check_all="yes">/root/.ssh</directories>
+{% for d in item.fim_directories | default([]) %}
+    <directories realtime="yes" check_all="yes" report_changes="yes">{{ d }}</directories>
+{% endfor %}
+  </syscheck>
+
+{% if item.suricata_hosts is defined %}
+  <!-- Suricata sensors in this group: the slim EVE stream (see wazuh_agent role) -->
+{% for h in item.suricata_hosts %}
+  <agent_config name="{{ h }}">
+    <localfile>
+      <log_format>json</log_format>
+      <location>/var/log/suricata/eve-wazuh.json</location>
+    </localfile>
+  </agent_config>
+{% endfor %}
+{% endif %}
+
+  <!-- Log collection every host in the group should have regardless of local ossec.conf -->
+  <localfile><log_format>syslog</log_format><location>/var/log/auth.log</location></localfile>
+  <localfile><log_format>syslog</log_format><location>/var/log/syslog</location></localfile>
+{% for lf in item.localfiles | default([]) %}
+  <localfile><log_format>{{ lf.log_format | default('syslog') }}</log_format><location>{{ lf.location }}</location></localfile>
+{% endfor %}
+
+  <!-- SCA: benchmark policies ship with the agent; add environment policies here -->
+  <sca>
+    <enabled>yes</enabled>
+    <interval>12h</interval>
+{% for p in item.sca_policies | default([]) %}
+    <policies><policy>{{ p }}</policy></policies>
+{% endfor %}
+  </sca>
+</agent_config>
