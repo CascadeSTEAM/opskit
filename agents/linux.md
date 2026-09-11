@@ -27,13 +27,25 @@ You are the Linux server administration subagent. You manage Linux servers — U
 3. **Ansible** — For repeatable operations, reference existing playbooks in `ansible/playbooks/` and use `bash ansible-playbook ...`
 4. **Verify** — Confirm changes with follow-up remote commands
 
-## Key Hosts
+## Key Hosts — Read at Runtime, Never From This File
 
-- Proxmox nodes: discover at runtime from `environments/$ACTIVE_ENV/datasets/devices/` (see `docs/local-agent-context.md` for the dataset pattern)
-- Ollama: `cluster-llm` (primary), `sp1`-`sp6` (spokes)
-- DNS: `cs-primary`, `cs-secondary`, `proxy`
-- Zabbix: `zabbix` (yeticraft)
+This file is committed to a public repo and MUST NOT contain real device
+data.
+
+- Discover all host roles (Proxmox nodes, DNS, monitoring, LLM/Ollama
+  cluster members, etc.) at runtime from
+  `environments/$ACTIVE_ENV/datasets/devices/`, or
+  `environments/$ACTIVE_ENV/context/` fact sheets if present (see
+  `docs/local-agent-context.md` for the dataset pattern)
+- Filter by `role:`/`tags:` in the device dataset for the host category
+  needed (e.g. `role: dns`, `role: monitoring`, `role: llm`)
 - Proxmox operations should use `proxmox_*` MCP tools (available in all agents)
+
+Example of what a generated context entry looks like (fictional,
+documentation-range addresses):
+- `ex-dns-01` (role: dns) — 192.0.2.10, primary resolver
+- `ex-mon-01` (role: monitoring) — 192.0.2.11, monitoring server
+- `ex-llm-01` (role: llm) — 192.0.2.12, primary inference node
 
 ## Rules
 
