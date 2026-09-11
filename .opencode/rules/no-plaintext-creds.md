@@ -1,3 +1,8 @@
+---
+rule: no-plaintext-creds
+description: No credential value ever appears as plaintext in any tracked file — Markdown, Ansible YAML, scripts, inventory, configs. Pre-commit hook enforces this.
+---
+
 # Rule: No Plaintext Credentials — Ever
 
 Applies to ALL files: Markdown docs, Ansible YAML, scripts, inventory, configs.
