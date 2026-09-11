@@ -39,7 +39,7 @@ The guard cannot see these, so the agent must confirm them before wrapping up:
    left `new`.
 5. **Issue + linked branch.** Non-trivial work has a GitHub issue and rides a
    linked branch (`gh issue develop`), never an unrelated branch or `main`.
-6. **Docs match reality.** Per [[document-as-you-go]]: device YAMLs, docs, and
+6. **Docs match reality.** Per `.opencode/rules/document-as-you-go.md`: device YAMLs, docs, and
    AGENTS.md/skill registries reflect what changed, in the same session.
 7. **Full test gate is green.** `make test` passes before the PR opens.
 8. **Session artifacts written.** Session note + SESSION-LOG entry, routed by

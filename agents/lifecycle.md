@@ -46,7 +46,11 @@ proposal → approved_proposal → plan → completed → docs
 
 ## Logging
 
-After each state transition, log to docs/recycle/subagent-log.md with:
+After each state transition, log to `.local/lifecycle-log.md` (gitignored —
+proposal/plan titles and details can be specific enough to be
+client-identifying, and `proposals/`/`plans/` are gitignored for exactly
+that reason; a transition log must not become a tracked side-channel for
+the same content) with:
 - Timestamp
 - Event type
 - File(s) affected

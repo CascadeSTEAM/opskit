@@ -101,6 +101,8 @@ session.log
 
 # Lifecycle watch dirs — documents are client-laden, private-layer only
 # (docs/client-data-policy.md); only the directory skeleton is tracked.
+issues/*
+!issues/.gitkeep
 proposals/*
 !proposals/.gitkeep
 plans/*

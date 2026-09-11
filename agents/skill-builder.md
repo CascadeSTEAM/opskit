@@ -109,7 +109,7 @@ Avoid these patterns seen in the current skills:
 3. Apply the size constraint — if over 60 lines, identify what to cut or extract.
 4. Show the draft and explain any content you excluded and where it should go instead.
 5. On approval: write to `.opencode/skills/<name>/SKILL.md` (create the directory).
-6. Update AGENTS.md "Available Skills" table with the new entry.
+6. Update AGENTS.md's "## Skills" list with the new entry.
 
 ### Auditing an existing skill
 

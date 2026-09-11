@@ -144,6 +144,13 @@ python3 bin/automation-ladder.py sync-agents   # then restart the agent session
 
 Load the relevant skill before working in its domain.
 
+**Skills are not slash commands.** A skill (`.opencode/skills/<name>/SKILL.md`) is
+auto-discovered and triggered by keyword match; a slash command
+(`.opencode/command/<name>.md`) is a separate, explicit file — a skill with
+`/command` in its triggers does NOT automatically get a `/command`. This has
+caused repeated session waste; see `@skill-builder`'s own definition for the
+full mechanics and the drift-check tooling before creating one by hand.
+
 ## Peer Projects
 
 - **Tinker** — self-improving three-node application lineage (Crone/Mother/Maid)
@@ -236,7 +243,16 @@ Set by the project owner (2026-08-28). These apply to every session, no exceptio
 Before editing any file in this repo (outside `environments/<env>/`), obey the cycle below.
 
 1. **Sync.** `git fetch --all --prune && git pull` on current branch.
-2. **Worktree.** Never edit the shared primary checkout. Use `bin/fix-issue.sh setup <n>` to create an issue-linked branch + worktree. The primary checkout stays on `main`. **Exception:** `environments/<env>/` layers are separate single-branch repos — direct commit-and-push there is correct.
+2. **Worktree.** Never edit the shared primary checkout. `~/Projects/opskit` may be open
+   in several concurrent sessions at once; editing or switching its branch directly
+   disrupts every other session sharing that directory — not hypothetical, it happened
+   live (opskit #209): a concurrent session clobbered `.current-ticket` mid-session, and
+   separately held the shared checkout on a feature branch for hours. Use
+   `bin/fix-issue.sh setup <n>` to create an issue-linked branch + worktree, and switch
+   into the printed `worktree=` path before any edit. The primary checkout stays on
+   `main` throughout, untouched, so every session sharing it has a stable reference
+   point. **Exception:** `environments/<env>/` layers are separate single-branch repos —
+   direct commit-and-push there is correct.
 3. **Planning discussion.** Questions, research, clarified purpose and goal.
 4. **Write plan** as `##PLAN` in the worktree-reserved `RESUME.md` (gitignored). Critique it for security, appropriateness, stability, maintainability, effectiveness, value. Write critiques into the plan section.
 5. **Resolve flaws.** Cycle through each flaw: propose solution(s) for human to choose or edit, update the section, remove the flaw content. Repeat until clean.
@@ -251,7 +267,7 @@ Before editing any file in this repo (outside `environments/<env>/`), obey the c
 9. **Validate** new code with targeted tests. If failing: update issue and plan, return to #5.
 10. **Full test suite** — `make test`, `bash -n` on touched scripts, functional check. If anything fails: record bug in plan and issue, return to #5.
 11. **Create PR** that closes the issue (`Closes #<n>`). Ask if review desired or auto-merge.
-12. **If auto-merge:** full review of the PR (reproduce changes, check against issue), write review in the **user's voice** (concise, direct, no hedging), fix non-trivial issues, merge.
+12. **If auto-merge:** full review of the PR (reproduce changes, check against issue), write the review in the **user's voice**: concise, direct, no hedging, tone modeled from prior commit messages, PR descriptions, and issue comments. Fix non-trivial issues, merge.
 13. **Refresh** local main branch.
 
 **Trivial changes exemption:** Typo/whitespace/formatting-only changes skip the full cycle. Everything else goes through it.
@@ -262,62 +278,30 @@ Before editing any file in this repo (outside `environments/<env>/`), obey the c
 - Request a reviewer **other than the author** (default: `CascadeSTEAM/technology-support`).
 - Assign the author as PR manager (`--assignee @me`).
 
-### Voice-Matched Review
-
-When performing an auto-merge review, write the review in the user's characteristic style: concise, direct, no hedging. Model tone from prior commit messages, PR descriptions, and issue comments. Future: dynamic writing-sample gathering for tone modeling.
-
-### Old Workflow (kept as backup — superseded by primary cycle above)
-
-Set by the project owner (2026-07-20). These apply to every session, no exceptions, unless superseded by the primary workflow.
-
-1. **Sync before anything.** Every session starts with `git fetch --all --prune && git pull`
-   on the current branch before any other work — avoid conflicts and stale state.
-2. **Worktree required — never the shared primary checkout.** `~/Projects/opskit`
-   may be open in several concurrent sessions at once; switching its branch, or
-   editing/committing files there directly, disrupts every other session sharing
-   that directory. This is not hypothetical — it happened live (opskit #209): a
-   concurrent session clobbered `.current-ticket` mid-session, and separately that
-   same session held the shared checkout on a feature branch for hours. Any change
-   to opskit's own files — anything outside `environments/<env>/` — happens in a
-   dedicated worktree: `bin/fix-issue.sh setup <n>` creates the issue-linked branch
-   and its worktree together in one step; switch into the printed `worktree=` path
-   before any edit. The primary checkout stays on `main` throughout, untouched, so
-   every session sharing it has a stable reference point. **Exception**:
-   `environments/<env>/` layers are separate, single-branch repos of their own
-   (`bin/env-sync.sh`) — direct commit-and-push in place there is the established,
-   correct pattern, and worktree isolation does not apply.
-3. **Full test gate before completing an issue.** Before an issue is marked ready, run
-   full testing of the entire application — `make test` (the same command CI
-   runs), `bash -n`/shellcheck on touched scripts, and a functional check of the
-   changed behavior — to ensure no regression or new errors were introduced. A failing
-   test is fixed, not skipped or deferred; pre-existing unrelated failures get their own
-   issue and are named in the PR.
-4. **PR conventions.** Once the test cycle is green, open a PR that:
-   - references the issue with `Closes #<n>` so merging closes it
-   - requests a reviewer **other than the author** (default: `CascadeSTEAM/technology-support`)
-   - assigns the author as PR manager (`--assignee @me`)
+*(A 2026-07-20 predecessor of this workflow — 4 steps, same sync/worktree/test-gate/PR
+substance as above — was fully superseded 2026-08-28 and is not reproduced here; see git
+history if the original wording is ever needed.)*
 
 ## Lifecycle Rules
-`issues/` → `proposals/` → `proposals/approved/` → `plans/` → `plans/completed/` (→ `docs/`)
 
-- `proposals/`: `approved: false`. Duplicate check required before creation.
-- `proposals/approved/`: only humans set `approved: true`. Requires non-empty `assigned_to`.
-- `plans/`: created from approved proposals. `status: in_progress` for active execution.
-- `plans/completed/`: completed → generate docs; canceled → no docs.
-- NEVER set `lifecycle_status: decommissioned` without explicit human instruction.
+`issues/` → `proposals/` → `proposals/approved/` → `plans/` → `plans/completed/` (→ `docs/`).
+Full stages, plan modes, and key rules: load the `lifecycle` skill. One exception worth
+stating here since it's easy to violate by accident: **never set `lifecycle_status:
+decommissioned` without explicit human instruction.**
 
 ## Model Tiers
-- **T1** (`claude-*`, `big-pickle`): full capabilities
-- **T2** (`mistral-small3.2:24b`, `qwen2.5:14b`, `qwen3.5:27b`): full lifecycle + mandatory dry-run gate before transitions
-- **T3** (`llama3.1:8b`, `qwen2.5:7b`, `deepseek-r1:14b`, `gemma3:12b`): draft and query only — no writes, no bash
-- **T4** (`qwen2.5:1.5b`, `nomic-embed-text`): utility/embeddings only
 
-For sessions requiring tool use, select a T1 or T2 model explicitly.
+Four tiers (T1 frontier cloud, full capabilities; T2 capable local, full lifecycle with
+extra gates; T3 small local, draft/query only; T4 utility) route what a given model may
+do. This is self-reported guidance a model follows, not hook-enforced — full definitions,
+current model lists, and the routing reference: `.opencode/rules/model-tiers.md`. For
+sessions requiring tool use, select a T1 or T2 model explicitly; if you don't know your
+own tier, assume T3 and say so before any write action.
 
 ## Security
 - OpenCode server bound to `127.0.0.1`, password via `OPENCODE_SERVER_PASSWORD`
 - systemd units run with `NoNewPrivileges=true`
-- One-off tasks bypassing `plans/` are rejected
+- One-off tasks bypassing `plans/` are rejected — see Core Rules above
 - Credentials referenced by vault name only — never plaintext. See `.opencode/rules/no-plaintext-creds.md`.
 
 ## Incident Recovery

@@ -56,4 +56,4 @@ documentation-range addresses):
 - Always back up before upgrades: `mikromcp_create_backup name=<descriptive-name>`
 - Always plan (dry-run) before writes: `mikromcp_plan_changes`
 - Never touch a device the dataset marks do-not-touch unless explicitly told to
-- Never connect by raw IP — use the SSH alias (MikroMCP resolves via config)
+- mikromcp resolves each device from its own router registry config, never a raw IP typed inline
