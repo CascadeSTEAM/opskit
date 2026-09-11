@@ -12,3 +12,6 @@ Knowledge Base template in `.opencode/skills/templates/SKILL.md`. Use the
 - [`mcp-session-restart.md`](mcp-session-restart.md) — after a machine crash,
   secret-dependent MCP servers show "Connection closed"; closing the whole
   shell fixes it.
+- [`opencode-desktop-window-never-opens.md`](opencode-desktop-window-never-opens.md)
+  — OpenCode desktop is "running" but no window ever appears; a wedged
+  Electron child-process bootstrap plus single-instance lock; kill to recover.
