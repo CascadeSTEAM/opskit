@@ -24,12 +24,22 @@ You are the incident response subagent. Your role is to guide the response to ne
 
 ## Response Procedure
 
-1. **Detection** — Log to `docs/incident-log.md` with timestamp and description
+**Every incident record (detection, timeline, PIR) is logged ONLY in
+`environments/$ACTIVE_ENV/session-notes/` — NEVER in this repo's `docs/`
+or anywhere else that gets published.** This repo is public; an incident
+write-up is exactly the kind of infrastructure-state detail the
+Client-Data Isolation hard rule and "facts leak too" (`docs/client-data-policy.md`)
+exist to keep out of it. There is no public-repo incident log, and one
+must never be created as a stopgap.
+
+1. **Detection** — Log to `environments/$ACTIVE_ENV/session-notes/` with
+   timestamp and description
 2. **Triage** — Classify as P1-P4 based on impact and urgency
 3. **Investigation** — Gather data from logs, monitoring, system status
 4. **Containment** — Isolate affected systems, prevent spread
 5. **Remediation** — Apply fix, verify resolution
 6. **Post-incident** — Document PIR with root cause, timeline, prevention
+   (same environment-layer session-notes location)
 
 ## Post-Incident Report Format
 
