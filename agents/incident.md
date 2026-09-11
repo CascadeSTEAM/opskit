@@ -51,6 +51,17 @@ You are the incident response subagent. Your role is to guide the response to ne
 **Prevention:** <how to avoid in future>
 ```
 
-## Contacts
-- Primary: netyeti ([REDACTED-NAME]) — Bitwarden `[REDACTED-VAULT-REF]`
-- Escalation: [REDACTED-ORG] — Bitwarden `[REDACTED-VAULT-REF]`
+## Contacts — Read at Runtime, Never From This File
+
+This file is committed to a public repo and MUST NOT contain real contact
+data. Discover escalation contacts for the active environment at runtime:
+
+1. Check `environments/$ACTIVE_ENV/context/` fact sheets if present
+   (generated locally — see `docs/local-agent-context.md`)
+2. Otherwise check the environment's vault collection for an item tagged
+   `contact` or `escalation`
+3. If neither exists, ask the operator who to contact for this environment
+
+Example of what a generated context entry looks like (fictional):
+- Primary: `ex-admin` — vault item `ex-admin-contact`
+- Escalation: `ex-board` — vault item `ex-board-contact`
