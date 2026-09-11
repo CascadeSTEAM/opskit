@@ -50,7 +50,7 @@ If you are NOT in a domain-specific subagent and the task matches one, switch. E
 - **Hooks auto-setup** — at session start, verify `core.hooksPath` is `.githooks`. If not, run `bash bin/setup-hooks.sh` to ensure consistent commit enforcement across all clones.
 - **Document as you go** — every change to infrastructure MUST be recorded in device YAMLs, docs, or vault in the same session. See `.opencode/rules/document-as-you-go.md`.
 - **Definition of done** — work isn't done until it's triaged, tested, documented, and stub-free. Machine-enforced (new tool→test, new skill→registered, no stubs) by `bin/definition-of-done-guard.py` in pre-commit + CI; the rest is verified at `endsession`. See `.opencode/rules/definition-of-done.md`.
-- **SSH aliases REQUIRED** — never connect by raw IP. Always read `~/.ssh/config` first and use the defined host alias or offer to create a new entry if needed.
+- **SSH aliases REQUIRED** — never connect by raw IP. Always check first whether the target is already configured in `~/.ssh/config` and use that host alias. If you need raw SSH to a host with no entry yet, create one in `~/.ssh/config` and use that alias instead of connecting by raw IP/hostname.
 
 ## Environment Model
 
@@ -118,7 +118,7 @@ All scripts are data-driven — they read from `environments/$ACTIVE_ENV/env.yml
 
 Always use `@skill-builder` for new skills — enforces 4-field frontmatter and 60-line limit.
 
-**Domain enforcement:** These agents have runtime-enforced tool permissions. Note the limit: a definition binds only when an agent is spawned BY NAME, and Claude Code treats the deny-globs as advisory — the built-in review workflow spawns default-tool agents and never reads these files. The layer that binds every agent is the PreToolUse hook `bin/guard-sensitive-reads.py`; see `docs/agent-tool-restrictions.md` (#160). `@mikrotik` has `relay-shell_*` denied and `mikromcp_*` explicitly allowed at the OpenCode runtime level; `@linux` has `mikromcp_*` denied. Mounted-member subagents (`agents/*.md` reading `projects/<name>/`) are the orchestrator pattern — see `projects/example/README.md`.
+**Domain enforcement:** These agents declare tool permissions, but that only binds when an agent is spawned BY NAME, and only under OpenCode — Claude Code treats the deny-globs as advisory text the agent is asked to honour, not a technical block (the built-in review workflow also spawns default-tool agents and never reads these files at all). `@mikrotik` has `relay-shell_*` denied and `mikromcp_*` explicitly allowed, and `@linux` has `mikromcp_*` denied — both real restrictions only at the OpenCode runtime level; under Claude Code they are documented policy the agent follows voluntarily, not enforcement. The one thing that binds regardless of agent or harness is the separate PreToolUse hook `bin/guard-sensitive-reads.py`, which blocks reads of credential-store files specifically (`/etc/shadow`, private keys, `.aws/credentials`, etc.) — see `docs/agent-tool-restrictions.md` (#160). It does not cover the relay-shell/mikromcp domain restrictions above; do not cite it as the reason those hold. Mounted-member subagents (`agents/*.md` reading `projects/<name>/`) are the orchestrator pattern — see `projects/example/README.md`.
 
 Enforcement only exists once the agents are rendered into each harness — the
 canonical files live in `agents/`, and both discovery locations
