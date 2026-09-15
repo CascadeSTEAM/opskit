@@ -121,9 +121,15 @@ def test_check_runs_the_config_drift_checks_and_the_real_probe(tmp_path):
     assert "opskit mcp setup" not in calls
     assert "--write" not in calls
 
-    # The summary reports on the files mcp-run.sh actually reads.
-    assert "tenants.local.json — present." in out
-    assert "vault-map.local.json — present." in out
+
+def test_check_names_a_missing_generator(tmp_path):
+    """A stack that breaks the MCP bootstrap must be loud in the preflight."""
+    repo, home = _make_fake_repo(tmp_path)
+    (repo / "bin" / "mcp-call.py").unlink()
+
+    result = _run_check(repo, home)
+
+    assert "mcp-call.py — missing." in result.stdout + result.stderr
 
 
 def test_check_with_a_broken_probe_is_informational_not_fatal(tmp_path):
