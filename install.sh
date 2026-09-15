@@ -222,34 +222,77 @@ step_opskit_cli() {
     _step_done step_opskit
 }
 
+# Start every MCP server for real and confirm it can serve tools. This is the
+# check `mcp-run.sh --check` structurally cannot do: a server that parses and
+# then rejects its config looks healthy from the launch path alone (opskit
+# #112). A locked/absent vault is a state, not an install defect, so a failed
+# probe is reported, never fatal — the strict gate is `opskit doctor --strict`.
+_run_mcp_probe() {
+    local probe_out probe_rc
+    if probe_out="$(python3 "$OPSKIT_DIR/bin/mcp-call.py" --probe 2>&1)"; then
+        probe_rc=0
+    else
+        probe_rc=$?
+    fi
+    printf '%s\n' "$probe_out"
+    if [[ $probe_rc -ne 0 ]]; then
+        _warn "MCP probe — some servers cannot serve tools (named above)."
+        _warn "  Unlock the vault (bw unlock) and fill in the vault item IDs in mcp/vault-map.local.json, then re-run."
+    fi
+}
+
 step_mcp() {
-    if step_skipped step_mcp && [[ ! "$MODE" == "refresh" ]]; then
+    if step_skipped step_mcp && [[ ! "$MODE" == "refresh" ]] && [[ "$check_only" != true ]]; then
         _msg "MCP servers — already configured."
         return 0
     fi
     if [[ $check_only == true ]]; then
         local ok=true
-        if [[ -f "$OPSKIT_DIR/bin/gen-mcp-config.py" ]]; then
-            _msg "gen-mcp-config.py — present."
+        for f in gen-mcp-config.py gen-mikromcp-config.py bw_session.py check-mcp-wiring.py mcp-call.py; do
+            if [[ -f "$OPSKIT_DIR/bin/$f" ]]; then
+                _msg "$f — present."
+            else
+                _err "$f — missing." && ok=false
+            fi
+        done
+
+        _info "MCP config — checking for drift against the environment data..."
+        if python3 "$OPSKIT_DIR/bin/gen-mcp-config.py" --check >/dev/null 2>&1; then
+            _msg "tenants + vault-map — match env.yml."
         else
-            _err "gen-mcp-config.py — missing." && ok=false
+            _warn "tenants + vault-map — differ from env.yml or could not be verified; run: opskit mcp setup"
         fi
-        if [[ -f "$OPSKIT_DIR/bin/bw_session.py" ]]; then
-            _msg "bw_session.py — present."
+        if python3 "$OPSKIT_DIR/bin/gen-mikromcp-config.py" --check >/dev/null 2>&1; then
+            _msg "mikromcp routers.yaml — matches device datasets."
         else
-            _err "bw_session.py — missing." && ok=false
+            _warn "mikromcp routers.yaml — differs from the datasets or could not be verified; run: bin/gen-mikromcp-config.py --write"
         fi
-        if [[ -f "$OPSKIT_DIR/bin/check-mcp-wiring.py" ]]; then
-            _msg "check-mcp-wiring.py — present."
-        else
-            _err "check-mcp-wiring.py — missing." && ok=false
-        fi
-        if [[ $ok == true ]]; then
-            _info "MCP config generators are present. Run \"opskit mcp setup\" to generate config files."
-        fi
+
+        _info "MCP servers — starting each one to verify it can serve tools (needs an unlocked vault)..."
+        _run_mcp_probe
         return 0
     fi
-    _info "MCP servers need vault credentials. Run \"opskit mcp setup\" after setup."
+
+    # Install/auto/quick: generate what the servers need to launch.
+    _info "MCP config — generating tenants.local.json + vault-map.local.json from environment data..."
+    if OPSKIT_TENANTS_FILE="$OPSKIT_DIR/mcp/tenants.local.json" \
+       OPSKIT_VAULT_MAP="$OPSKIT_DIR/mcp/vault-map.local.json" \
+       "$OPSKIT_BIN" mcp setup >/dev/null 2>&1; then
+        _msg "MCP config — generated (mcp/tenants.local.json + mcp/vault-map.local.json)."
+    else
+        _warn "MCP config — nothing generated. 'opskit mcp setup' needs an environments/<env>/env.yml with a helpdesk tenant; add one and re-run."
+    fi
+
+    _info "MikroTik — generating routers.yaml from the device datasets..."
+    if python3 "$OPSKIT_DIR/bin/gen-mikromcp-config.py" --write >/dev/null 2>&1; then
+        _msg "MikroTik — routers.yaml generated."
+    else
+        _warn "MikroTik — no routers.yaml generated (needs a RouterOS device with ip_address + os_version in the datasets)."
+    fi
+
+    _info "MCP servers — starting each one to verify it can serve tools (needs an unlocked vault)..."
+    _run_mcp_probe
+
     _step_done step_mcp
 }
 
@@ -297,8 +340,9 @@ _show_summary() {
     echo "$_sep"
     echo ""
 
-    local tenants_path="$HOME/mcp/tenants.local.json"
-    local vault_map_path="$HOME/mcp/vault-map.local.json"
+    local tenants_path="$OPSKIT_DIR/mcp/tenants.local.json"
+    local vault_map_path="$OPSKIT_DIR/mcp/vault-map.local.json"
+    local routers_path="$HOME/.mikromcp/routers.yaml"
 
     if [[ -f "$tenants_path" ]]; then
         _msg "tenants.local.json — present."
@@ -310,6 +354,12 @@ _show_summary() {
         _msg "vault-map.local.json — present."
     else
         _warn "vault-map.local.json — missing; run: opskit mcp setup"
+    fi
+
+    if [[ -f "$routers_path" ]]; then
+        _msg "mikromcp routers.yaml — present."
+    else
+        _warn "mikromcp routers.yaml — missing; run: bin/gen-mikromcp-config.py --write"
     fi
 
     # Check MCP wiring for drift
