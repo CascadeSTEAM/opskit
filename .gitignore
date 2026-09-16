@@ -108,3 +108,7 @@ proposals/*
 plans/*
 !plans/.gitkeep
 grind-state.md
+
+# transient sqlite sidecars
+/proxmox-jobs.sqlite3-shm
+/proxmox-jobs.sqlite3-wal
