@@ -20,6 +20,10 @@ data/
 # those, so losing shared-repo tracking costs nothing.
 /RESUME.md
 
+# Operator-local incident writeup (infra identifiers: hostnames/IPs/model paths
+# must never reach the public repo). Mirrors RESUME.md handling above.
+/URGENT_FRANK_FIX.md
+
 # Semaphore state (generated from catalogue, not canonical)
 semaphore-state/
 
