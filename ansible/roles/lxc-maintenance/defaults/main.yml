@@ -1,0 +1,13 @@
+---
+# lxc-maintenance defaults
+# unattended-upgrades
+auto_upgrades_enable: true
+auto_upgrades_reboot: false
+auto_upgrades_email: ""
+
+# disk-space watchdog (systemd timer + check script)
+disk_watch_threshold_warn: 80
+disk_watch_threshold_crit: 90
+# filesystem to watch (root); use findmnt path
+disk_watch_target: "/"
+disk_watch_schedule: "*-*-* 07:00:00"
