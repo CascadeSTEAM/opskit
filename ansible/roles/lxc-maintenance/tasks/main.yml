@@ -1,0 +1,57 @@
+---
+# lxc-maintenance — install + configure unattended-upgrades and a disk watchdog
+# on Debian LXC guests.
+
+- name: Fail on non-Debian
+  fail:
+    msg: "lxc-maintenance supports Debian only (got {{ ansible_facts['os_family'] }})"
+  when: ansible_facts['os_family'] != 'Debian'
+
+- name: Install unattended-upgrades
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+    update_cache: true
+
+- name: Enable unattended-upgrades via auto-upgrades override
+  ansible.builtin.template:
+    src: 20auto-upgrades.j2
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    mode: "0644"
+  notify: restart unattended-upgrades
+
+- name: Configure unattended-upgrades policy
+  ansible.builtin.template:
+    src: 50unattended-upgrades.j2
+    dest: /etc/apt/apt.conf.d/50unattended-upgrades
+    mode: "0644"
+  notify: restart unattended-upgrades
+
+- name: Install watchdog script
+  ansible.builtin.copy:
+    src: disk-watch.sh
+    dest: /usr/local/sbin/disk-watch.sh
+    mode: "0755"
+    owner: root
+    group: root
+
+- name: Install watchdog systemd service
+  ansible.builtin.template:
+    src: disk-watch.service.j2
+    dest: /etc/systemd/system/disk-watch.service
+    mode: "0644"
+  notify: daemon-reload
+
+- name: Install watchdog systemd timer
+  ansible.builtin.template:
+    src: disk-watch.timer.j2
+    dest: /etc/systemd/system/disk-watch.timer
+    mode: "0644"
+  notify: daemon-reload
+
+- name: Start and enable disk-watch timer
+  ansible.builtin.systemd:
+    name: disk-watch.timer
+    state: started
+    enabled: true
+    daemon_reload: true

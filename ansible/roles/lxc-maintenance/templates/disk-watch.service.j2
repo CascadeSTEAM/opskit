@@ -1,0 +1,9 @@
+[Unit]
+Description=Disk-space watchdog ({{ ansible_managed | default('managed by ansible lxc-maintenance') }})
+
+[Service]
+Type=oneshot
+# Overridden via env in the unit — keep in sync with thresholds in defaults
+Environment=DISK_WATCH_WARN={{ disk_watch_threshold_warn }}
+Environment=DISK_WATCH_CRIT={{ disk_watch_threshold_crit }}
+ExecStart=/usr/local/sbin/disk-watch.sh {{ disk_watch_target }}
