@@ -5,6 +5,10 @@
     "mikromcp_*": false,
     "github_*": false,
     "dw-vault_*": false,
-    "dw-upstream_*": false
+    "dw-upstream_*": false,
+    "erpnext_*": false,
+    "technitium_*": false,
+    "proxmox_*": false,
+    "bitwarden_*": false
   }
 }
