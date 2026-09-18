@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily disk-space watchdog
+
+[Timer]
+OnCalendar={{ disk_watch_schedule }}
+Persistent=true
+Unit=disk-watch.service
+
+[Install]
+WantedBy=timers.target
