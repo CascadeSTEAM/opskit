@@ -64,10 +64,27 @@ bin/check-mcp-wiring.py                  # check all shipped servers
 
 ## Installation Flow
 
-1. `bash install.sh --auto` — installs dependencies, links opskit CLI
-2. `opskit env <env>` — switch to environment
-3. `opskit mcp setup` — generate config files from env.yml
-4. `opskit mcp verify` — verify config + vault session state
+`install.sh` drives the whole bootstrap: it generates both config files from
+your environment data and then starts every server for real to confirm it can
+serve tools — not just that its launch path looks valid.
+
+1. `bash install.sh --auto` — installs dependencies, links opskit CLI, generates
+   `mcp/tenants.local.json` + `mcp/vault-map.local.json` (`opskit mcp setup`)
+   and `~/.mikromcp/routers.yaml`, then probes every MCP server
+   (`bin/mcp-call.py --probe`). Servers that cannot serve tools are named in
+   the probe output; a locked/absent vault or placeholder vault item IDs only
+   warn — they do not fail the install.
+2. `opskit env <env>` — switch to environment (adds its helpdesk tenant to the
+   generated config on the next run).
+3. Re-generate when `env.yml` changes: `opskit mcp setup` (and
+   `bin/gen-mikromcp-config.py --write` when device datasets change).
+4. Fill in real vault item IDs in `mcp/vault-map.local.json` (the generator
+   emits placeholders), then `bw unlock` and verify with
+   `bin/mcp-call.py --probe` or `opskit mcp verify`.
+
+`bash install.sh --check` is the read-only preflight: it reports config drift
+against `env.yml` and the datasets, and runs the same live probe — all without
+changing anything.
 
 ## `opskit mcp` Commands
 
