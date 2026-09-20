@@ -183,7 +183,6 @@ cmd_bump() {
     local existing lbl
     existing="$(gh issue view "$n" --json labels -q '.labels[].name' 2>/dev/null || true)"
     local target="priority:$prio"
-    local changed=false
     for lbl in $existing; do
         case "$lbl" in
             priority:*) if [ "$lbl" != "$target" ]; then
