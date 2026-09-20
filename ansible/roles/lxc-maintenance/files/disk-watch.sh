@@ -11,7 +11,7 @@ WARN="${DISK_WATCH_WARN:-80}"
 CRIT="${DISK_WATCH_CRIT:-90}"
 
 # Get used% for the target mount: parse "Use%" column from df -P output line.
-read -r used_pct avail avail_k <<<"$(df -P "$TARGET" | awk 'NR==2 {gsub("%","",$5); print $5, $4, $4}')"
+read -r used_pct avail_k <<<"$(df -P "$TARGET" | awk 'NR==2 {gsub("%","",$5); print $5, $4}')"
 
 logger -t disk-watch "filesystem $TARGET used ${used_pct}% (warn=${WARN} crit=${CRIT}) avail=${avail_k}k"
 
