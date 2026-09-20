@@ -1,5 +1,5 @@
 #!/bin/bash
-# Disk-space watchdog for LXC guests (ansible lxc-maintenance role).
+# Disk-space watchdog for LXC guests (ansible lxc_maintenance role).
 # Checks the root filesystem and logs state; exits 2 on critical (%), 1 on
 # warning threshold. Failures surface in journald/journalctl + e-mail if the
 # deployment configures Unattended-Upgrade mail.

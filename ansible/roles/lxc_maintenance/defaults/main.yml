@@ -1,5 +1,5 @@
 ---
-# lxc-maintenance defaults
+# lxc_maintenance defaults
 # unattended-upgrades
 auto_upgrades_enable: true
 auto_upgrades_reboot: false
