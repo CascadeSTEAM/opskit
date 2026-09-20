@@ -1,0 +1,11 @@
+galaxy_info:
+  author: opskit
+  description: Automatic OS updates + disk-space watchdog for Debian LXC guests
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Debian
+      versions:
+        - trixie
+        - bookworm
+dependencies: []
