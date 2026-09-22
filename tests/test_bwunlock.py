@@ -99,6 +99,12 @@ def _run(
         env["BW_SESSION_FILE"] = str(Path("/nonexistent/x"))
     if zen_bin is not None:
         env["PATH"] = f"{zen_bin}:{env['PATH']}"
+        # A zenity stub means this test is exercising the POPUP refresh path —
+        # that requires a display. Assert one explicitly instead of inheriting
+        # the host shell's DISPLAY (present in a dev shell, absent in CI), so
+        # the tests behave identically everywhere.
+        env["DISPLAY"] = ":0"
+        env.pop("WAYLAND_DISPLAY", None)
     # Remove BW_SESSION entirely when the test does not want one, rather than
     # leaving a stale real one from the developer shell.
     if env_token is None:
