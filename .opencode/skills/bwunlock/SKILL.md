@@ -1,6 +1,6 @@
 ---
 name: bwunlock
-description: Refresh the vault session cache when it is stale or locked — run bin/bwunlock.sh (default opens a zenity password popup; --check never writes), or fall back to the manual one-liner. Use for: bwunlock, bw unlock, vault locked, vault session, bitwarden session, lockout, password popup, session cache
+description: "Refresh the vault session cache when it is stale or locked — run bin/bwunlock.sh (default opens a zenity password popup; --check never writes), or fall back to the manual one-liner. Use for: bwunlock, bw unlock, vault locked, vault session, bitwarden session, lockout, password popup, session cache"
 mode: skill
 triggers: bwunlock,bw unlock,vault locked,vault session,bitwarden session,password popup,session cache,stale token
 ---
