@@ -151,6 +151,18 @@ def test_check_with_no_session_fails_cleanly(tmp_path):
     assert "bw" in (r.stdout + r.stderr).lower()
 
 
+def test_check_on_a_non_owner_only_file_reports_permission(tmp_path):
+    bw = _make_bw_stub(tmp_path, state="unlocked")
+    sf = _session_file(tmp_path, mode=0o644)  # group/world readable
+
+    r = _run("--check", bw=bw, session_file=sf)
+
+    assert r.returncode == 1
+    assert "owner-only" in r.stderr
+    assert "chmod 600" in r.stderr
+    assert sf.read_text() == "sess"  # never writes in --check mode
+
+
 # ── default mode: refresh only when needed, atomically, 0600 ─────────────
 
 def test_refresh_writes_a_fresh_token_when_locked(tmp_path):
@@ -174,9 +186,11 @@ def test_refresh_does_not_prompt_when_env_token_is_valid(tmp_path):
 
     assert r.returncode == 0, r.stderr
     assert sf.read_text() == "keep-me"   # untouched
-    assert not (zen_bin / "zenity").exists() or True  # see calls below
-    # zenity must not have run at all: its stub directory may not even record.
+    # The vault was probed but unlock was NEVER invoked — a valid env token
+    # must not trigger a refresh (and hence never a zenity popup).
     calls = (bw.parent / "calls.log").read_text()
+    assert '"status"' in calls
+    assert '"unlock"' not in calls
 
 
 def test_refresh_does_not_run_when_token_is_already_valid(tmp_path):
@@ -217,6 +231,34 @@ def test_refresh_without_a_display_degrades_to_the_manual_hint(tmp_path):
     assert r.returncode == 1
     assert "bw unlock --raw" in r.stderr
     assert sf.read_text() == "sess"
+
+
+def test_refresh_never_writes_when_no_session_path_is_discoverable(tmp_path):
+    """HOME unset + no BW_SESSION_FILE override → NO path exists to write,
+    even when a display and zenity are present: resolve_status reports
+    `missing unknown`, and refresh must refuse (print the manual hint) rather
+    than fabricate a file named `unknown` in the caller's CWD."""
+    bw = _make_bw_stub(tmp_path, state="locked")
+    zen_dir = _make_zenity_stub(tmp_path, value="hunter2-master")
+    env = {
+        **os.environ,
+        "OPSKIT_BW": str(bw),
+        "DISPLAY": ":0",
+        "WAYLAND_DISPLAY": "",
+        "PATH": f"{zen_dir}:{os.environ['PATH']}",
+    }
+    env.pop("BW_SESSION", None)
+    env.pop("BW_SESSION_FILE", None)
+    env.pop("HOME", None)
+
+    r = subprocess.run(
+        ["/bin/bash", str(BWUNLOCK)],
+        env=env, capture_output=True, text=True
+    )
+
+    assert r.returncode == 1
+    assert "discoverable" in r.stderr
+    assert not (ROOT / "unknown").exists()
 
 
 # ── password / token hygiene ─────────────────────────────────────────────
