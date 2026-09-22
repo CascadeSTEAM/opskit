@@ -111,6 +111,14 @@ have_display() {
 
 refresh() {
     local file_path="$1"
+    if [ -z "$file_path" ] || [ "$file_path" = "unknown" ]; then
+        # resolve_status reports "permission unknown" / "missing unknown" when
+        # even --path fails (HOME unset): there is no file to write — do not
+        # fabricate one in the caller's CWD.
+        echo "cannot refresh: no session file path discoverable (HOME unset?)" >&2
+        manual_hint ""
+        return 1
+    fi
     if ! have_display || ! command -v zenity >/dev/null 2>&1; then
         echo "no display/zenity here — refresh the session cache in a terminal:" >&2
         manual_hint "$file_path"
