@@ -197,11 +197,29 @@ def test_cli_requires_a_mode():
     assert _cli().returncode != 0
 
 
+def test_cli_path_prints_the_configured_file_without_validating(tmp_path):
+    """--path is for callers that must WRITE the file (bin/bwunlock.sh #378):
+    resolve() refuses to name an absent/empty file, but the writer needs the
+    target path even then. This keeps the default-path rule in ONE place."""
+    path = tmp_path / "session"
+    r = _cli("--path", BW_SESSION_FILE=str(path))
+
+    assert r.returncode == 0
+    assert r.stdout.strip() == str(path)
+
+
+def test_cli_path_respects_the_env_override(tmp_path):
+    _, file_path = os.environ.get("BW_SESSION_FILE"), None
+    r = _cli("--path", BW_SESSION_FILE=str(tmp_path / "override-file"))
+    assert r.stdout.strip() == str(tmp_path / "override-file")
+
+
 # ── the structural guarantee ─────────────────────────────────────────────
 
 CALLERS = [
     ROOT / "bin" / "mcp-run.sh",
     ROOT / "bin" / "bw-management.py",
+    ROOT / "bin" / "bwunlock.sh",
 ]
 
 
