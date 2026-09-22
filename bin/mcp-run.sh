@@ -305,9 +305,9 @@ except Exception:
         unlocked)
             report 1 "BW_SESSION" "unlocked (from $BW_SESSION_SOURCE)" ;;
         locked)
-            report 0 "BW_SESSION" "set (from $BW_SESSION_SOURCE) but the vault is LOCKED — the token is stale; $(refresh_hint)" ;;
+            report 0 "BW_SESSION" "set (from $BW_SESSION_SOURCE) but the vault is LOCKED — the token is stale; run bin/bwunlock.sh (password popup) or: $(refresh_hint)" ;;
         unauthenticated)
-            report 0 "BW_SESSION" "set (from $BW_SESSION_SOURCE) but the CLI is not logged in — run: bw login, then $(refresh_hint)" ;;
+            report 0 "BW_SESSION" "set (from $BW_SESSION_SOURCE) but the CLI is not logged in — run: bw login, then bin/bwunlock.sh or: $(refresh_hint)" ;;
         *)
             report 0 "BW_SESSION" "set (from $BW_SESSION_SOURCE) but the vault state could not be read ($BW_STATE)" ;;
     esac

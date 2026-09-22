@@ -158,6 +158,16 @@ def test_refresh_hint_names_the_source_in_play():
     assert "/tmp/session" in hint and "umask 077" in hint
 
 
+def test_failure_messages_point_at_the_popup_refresh(monkeypatch, tmp_path):
+    """The popup refresh is the operator-facing offer for a stale/locked vault
+    (#378, step 4). Sink to a secure note, not group-readable: fail closed."""
+    f = _write(tmp_path / "s", "x", mode=0o640)  # readable beyond its owner
+    monkeypatch.setenv("BW_SESSION_FILE", str(f))
+    with pytest.raises(bw_session.SessionError) as exc:
+        bw_session.resolve()
+    assert "bin/bwunlock.sh" in str(exc.value)
+
+
 # ── CLI contract used by the shell callers ───────────────────────────────
 
 
