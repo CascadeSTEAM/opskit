@@ -62,7 +62,7 @@ manual_hint() {
     if [ -n "$source" ]; then
         file_path="$source"
     else
-        file_path="$("$PYTHON" "$RESOLVER" --path 2>/dev/null)" || file_path="~/.cache/opskit/bw-session"
+        file_path="$("$PYTHON" "$RESOLVER" --path 2>/dev/null)" || file_path="${HOME:-~}/.cache/opskit/bw-session"
     fi
     echo "  (umask 077; bw unlock --raw > $file_path)" >&2
 }
