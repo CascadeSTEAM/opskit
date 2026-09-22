@@ -71,14 +71,16 @@ def _read_session_file(path: Path) -> str:
         raise SessionError(
             f"cannot read the file mode of {path} ({exc.strerror}), so its "
             f"permissions cannot be verified and it will not be used.\n"
-            f"  Export the session instead:  export BW_SESSION=$(bw unlock --raw)"
+            f"  Export the session instead:  export BW_SESSION=$(bw unlock --raw)\n"
+            f"  Or refresh via popup:        bin/bwunlock.sh"
         ) from exc
 
     if mode & 0o077:
         raise SessionError(
             f"{path} is mode {mode:o} — readable beyond its owner.\n"
             f"  A vault session token is a live key to every secret. Fix:\n"
-            f"    chmod 600 {path}"
+            f"    chmod 600 {path}\n"
+            f"  Or refresh via popup:  bin/bwunlock.sh"
         )
 
     try:
@@ -115,7 +117,8 @@ def resolve() -> tuple[str, str]:
         # every other failure here produces.
         raise SessionError(
             f"cannot examine {path} ({exc.strerror}).\n"
-            f"  Export the session instead:  export BW_SESSION=$(bw unlock --raw)"
+            f"  Export the session instead:  export BW_SESSION=$(bw unlock --raw)\n"
+            f"  Or refresh via popup:        bin/bwunlock.sh"
         ) from exc
 
     if not present:
@@ -155,6 +158,10 @@ def main(argv: list[str] | None = None) -> int:
                       help="exit 0 if a session is usable, 1 otherwise")
     mode.add_argument("--token", action="store_true",
                       help="print the session token for $(...) capture")
+    mode.add_argument("--path", action="store_true",
+                      help="print the session file path without validating it "
+                           "(callers that must WRITE the file need the target "
+                           "even when resolve() would refuse it — opskit #378)")
     mode.add_argument("--refresh-hint", action="store_true",
                       help="how to refresh the session actually in play")
     # A caller that already resolved and EXPORTED the token cannot ask us to
@@ -166,6 +173,17 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.refresh_hint and args.source_is:
         print(refresh_hint(args.source_is))
+        return 0
+
+    if args.path:
+        # --path must never touch resolve(): it is for callers that WRITE the
+        # file, and resolve() refuses to name an absent/empty file (#378).
+        path = session_file_path()
+        if path is None:
+            print("ERROR: no session file path discoverable (HOME is unset)",
+                  file=sys.stderr)
+            return 1
+        print(path)
         return 0
 
     try:

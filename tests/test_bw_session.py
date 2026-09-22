@@ -158,6 +158,16 @@ def test_refresh_hint_names_the_source_in_play():
     assert "/tmp/session" in hint and "umask 077" in hint
 
 
+def test_failure_messages_point_at_the_popup_refresh(monkeypatch, tmp_path):
+    """The popup refresh is the operator-facing offer for a stale/locked vault
+    (#378, step 4). Sink to a secure note, not group-readable: fail closed."""
+    f = _write(tmp_path / "s", "x", mode=0o640)  # readable beyond its owner
+    monkeypatch.setenv("BW_SESSION_FILE", str(f))
+    with pytest.raises(bw_session.SessionError) as exc:
+        bw_session.resolve()
+    assert "bin/bwunlock.sh" in str(exc.value)
+
+
 # ── CLI contract used by the shell callers ───────────────────────────────
 
 
@@ -197,11 +207,29 @@ def test_cli_requires_a_mode():
     assert _cli().returncode != 0
 
 
+def test_cli_path_prints_the_configured_file_without_validating(tmp_path):
+    """--path is for callers that must WRITE the file (bin/bwunlock.sh #378):
+    resolve() refuses to name an absent/empty file, but the writer needs the
+    target path even then. This keeps the default-path rule in ONE place."""
+    path = tmp_path / "session"
+    r = _cli("--path", BW_SESSION_FILE=str(path))
+
+    assert r.returncode == 0
+    assert r.stdout.strip() == str(path)
+
+
+def test_cli_path_respects_the_env_override(tmp_path):
+    _, file_path = os.environ.get("BW_SESSION_FILE"), None
+    r = _cli("--path", BW_SESSION_FILE=str(tmp_path / "override-file"))
+    assert r.stdout.strip() == str(tmp_path / "override-file")
+
+
 # ── the structural guarantee ─────────────────────────────────────────────
 
 CALLERS = [
     ROOT / "bin" / "mcp-run.sh",
     ROOT / "bin" / "bw-management.py",
+    ROOT / "bin" / "bwunlock.sh",
 ]
 
 
