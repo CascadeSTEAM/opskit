@@ -91,7 +91,21 @@ triggers: startsession,start session,session start,update project folder,update 
      (stale vault session, `gh` unavailable, no active environment set),
      report the one-line failure and move on — a missing vault unlock at
      session start is routine, not a blocker for anything else in this list.
-7. **Report back:** one line each for the branch check, repo sync, hooks
+7. **Offer vault-session refresh if the vault is locked (offer-only, never
+   automatic).** A stale session cache needs the operator's master password
+   behind a popup — an agent must never do that unprompted. Check quietly:
+
+   ```bash
+   bin/bwunlock.sh --check >/dev/null 2>&1
+   ```
+
+   - Exit 0 → nothing to do, say nothing.
+   - Exit 1 → mention that the vault session is stale/locked and offer
+     `bin/bwunlock.sh` (opens a password popup). Wait for a go/no-go; do not
+     run the default (writing) form yourself. `BW_SESSION` popups and
+     `bitwarden_unlock` also work, but `bwunlock.sh` is the documented path for
+     this repo and writes the cache file agents consume.
+8. **Report back:** one line each for the branch check, repo sync, hooks
    path, each subfolder/Env layer, whether a ticket pin was set, and the
    persistent-context surfacing above — state synced, or what is blocked
    and why.
@@ -106,6 +120,9 @@ triggers: startsession,start session,session start,update project folder,update 
 - `env-sync.sh` reports unpushed/uncloned work → report it; do not push
   without the operator's go-ahead (single-branch layers refuse non-default
   pulls/pushes).
+- Vault session stale → OFFER `bin/bwunlock.sh`; never auto-run the writing
+  form. A locked vault at session start is routine, not a blocker for the
+  sync steps above.
 
 ## Do NOT
 
