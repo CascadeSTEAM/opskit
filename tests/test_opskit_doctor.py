@@ -11,6 +11,7 @@ session, `bw`, or `uvx`.
 
 import importlib.machinery
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -133,6 +134,79 @@ class TestDoctorOutput:
         r = run_cli("doctor", env=_env(tmp_path))
         assert r.returncode == 0
         assert "frontmatter" in r.stdout.lower()
+
+
+class TestOpencodeWiring:
+    """opencode.json got no equivalent check at all until #390 — crush.json's
+    was the only agent-runtime wiring check doctor ran. That gap let a stale
+    `hound` MCP entry (pointing at a since-uninstalled pipx binary) and two
+    disabled-but-never-removed dw-vault/dw-upstream entries sit unnoticed in
+    a live config. These pin the fix: parity with the crush.json check, plus
+    a per-entry binary-existence check crush.json's simpler count-only check
+    doesn't do."""
+
+    def test_missing_opencode_json_is_advisory(self, tmp_path):
+        r = run_cli("doctor", env=_env(tmp_path, root=_git_repo(tmp_path)))
+        assert r.returncode == 0, r.stdout
+        assert "opencode.json: not found" in r.stdout
+
+    def test_parse_error_fails(self, tmp_path):
+        (tmp_path / ".config" / "opencode").mkdir(parents=True)
+        (tmp_path / ".config" / "opencode" / "opencode.json").write_text("{not json")
+        r = run_cli("doctor", env=_env(tmp_path, root=_git_repo(tmp_path)))
+        assert r.returncode == 1, r.stdout
+        assert "opencode.json parse error" in r.stdout
+
+    def test_reports_server_count(self, tmp_path):
+        cfg_dir = tmp_path / ".config" / "opencode"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "opencode.json").write_text(
+            '{"mcp": {"bitwarden": {"type": "local", "command": ["npx", "-y", "@bitwarden/mcp-server"]}}}'
+        )
+        r = run_cli("doctor", env=_env(tmp_path, root=_git_repo(tmp_path)))
+        assert r.returncode == 0, r.stdout
+        assert "opencode.json: 1 MCP server(s) configured" in r.stdout
+
+    def test_flags_a_stale_local_binary(self, tmp_path):
+        """The exact regression: a `local` MCP entry whose command no longer
+        resolves — e.g. an uninstalled pipx binary, or a disabled server left
+        registered — is a failure, not silence."""
+        cfg_dir = tmp_path / ".config" / "opencode"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "opencode.json").write_text(json.dumps({
+            "mcp": {
+                "hound": {
+                    "type": "local",
+                    "command": [str(tmp_path / "no-such-binary" / "hound")],
+                }
+            }
+        }))
+        r = run_cli("doctor", env=_env(tmp_path, root=_git_repo(tmp_path)))
+        assert r.returncode == 1, r.stdout
+        assert "opencode.json/hound" in r.stdout
+        assert "not found" in r.stdout
+
+    def test_accepts_a_resolvable_local_binary(self, tmp_path):
+        cfg_dir = tmp_path / ".config" / "opencode"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "opencode.json").write_text(
+            '{"mcp": {"echo-server": {"type": "local", "command": ["sh"]}}}'
+        )
+        r = run_cli("doctor", env=_env(tmp_path, root=_git_repo(tmp_path)))
+        assert r.returncode == 0, r.stdout
+        assert "opencode.json/echo-server: sh resolves" in r.stdout
+
+    def test_remote_entries_are_not_binary_checked(self, tmp_path):
+        """A `type: remote` entry (a URL, not a local process) has no binary to
+        resolve — must not be treated as a missing command."""
+        cfg_dir = tmp_path / ".config" / "opencode"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "opencode.json").write_text(json.dumps({
+            "mcp": {"github": {"type": "remote", "url": "https://api.githubcopilot.com/mcp"}}
+        }))
+        r = run_cli("doctor", env=_env(tmp_path, root=_git_repo(tmp_path)))
+        assert r.returncode == 0, r.stdout
+        assert "opencode.json/github" not in r.stdout
 
 
 class TestMergeTimeCleanup:

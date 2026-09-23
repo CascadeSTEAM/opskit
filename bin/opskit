@@ -1300,7 +1300,7 @@ def cmd_doctor(args):
                 else:
                     ok(f"  {srv_name}: OK")
 
-    # 2. Agent-runtime wiring (crush.json)
+    # 2. Agent-runtime wiring (crush.json, opencode.json)
     print("\nAgent-runtime wiring:")
     crush_path = Path.home() / '.config' / 'crush' / 'crush.json'
     if crush_path.exists():
@@ -1314,6 +1314,39 @@ def cmd_doctor(args):
                 warn(f"  crush.json: no MCP servers configured")
         except Exception as e:
             fail(f"  crush.json parse error: {e}")
+
+    # opencode.json got no equivalent check at all until #390 — the exact class
+    # of drift this session hit (a hound entry pointing at a since-uninstalled
+    # pipx binary, dw-vault/dw-upstream left registered after they were dropped
+    # elsewhere) would never have been caught here. Mirrors the crush.json
+    # check above, plus a per-entry binary-existence check crush.json's simpler
+    # count-only check doesn't do.
+    from shutil import which as _which
+    opencode_path = Path.home() / '.config' / 'opencode' / 'opencode.json'
+    if opencode_path.exists():
+        try:
+            opencode_cfg = json.loads(opencode_path.read_text())
+            oc_servers = opencode_cfg.get('mcp', {})
+            if oc_servers:
+                ok(f"  opencode.json: {len(oc_servers)} MCP server(s) configured")
+                for srv_name, srv_cfg in oc_servers.items():
+                    if not isinstance(srv_cfg, dict) or srv_cfg.get('type') != 'local':
+                        continue
+                    argv = srv_cfg.get('command') or []
+                    if not argv:
+                        continue
+                    binary = argv[0]
+                    resolved = binary if Path(binary).is_absolute() else _which(binary)
+                    if resolved and (not Path(binary).is_absolute() or Path(binary).exists()):
+                        ok(f"    opencode.json/{srv_name}: {binary} resolves")
+                    else:
+                        fail(f"    opencode.json/{srv_name}: {binary} not found on PATH or as an absolute path — stale entry?")
+            else:
+                warn(f"  opencode.json: no MCP servers configured")
+        except Exception as e:
+            fail(f"  opencode.json parse error: {e}")
+    else:
+        warn(f"  opencode.json: not found at {opencode_path}")
 
     # 3. PATH sanity
     print("\nPATH sanity:")
