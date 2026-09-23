@@ -26,16 +26,5 @@
       "but unimplemented, and raises VAULT_NOT_SUPPORTED. So the vault",
       "resolution has to happen here, at launch, one prefix per router."
     ]
-  },
-  "vikunja": {
-    "command": ["vikunja-mcp"],
-    "install": "npm install -g vikunja-mcp",
-    "why": [
-      "Vikunja task management (the primary task system per global memory).",
-      "Third-party MCP: npm package vikunja-mcp (github.com/0xK3vin/vikunja-mcp),",
-      "installed globally. Needs VIKUNJA_API_TOKEN (resolved from vault-map) plus",
-      "VIKUNJA_API_BASE (set in the opencode.json MCP entry's environment block;",
-      "the instance URL is not a secret). See ~/.config/opencode/opencode.json."
-    ]
   }
 }
