@@ -258,11 +258,13 @@ class TestCanonicalAgentsAreLoadable:
         """#314: opencode.json withholds the schema-heavy MCP namespaces from every
         agent via the `tools` map, and agents/mikrotik.md is the one place
         mikromcp_* is switched back on. Dropping either half silently either
-        re-inflates every request or leaves @mikrotik with no MikroTik tools."""
+        re-inflates every request or leaves @mikrotik with no MikroTik tools.
+        dw-vault_*/dw-upstream_* dropped from this check in #384 along with the
+        servers themselves — there is nothing left to withhold."""
         import json
 
         tools = json.loads((ROOT / "opencode.json").read_text()).get("tools") or {}
-        for namespace in ("mikromcp_*", "github_*", "dw-vault_*", "dw-upstream_*"):
+        for namespace in ("mikromcp_*", "github_*"):
             assert tools.get(namespace) is False, f"opencode.json must set tools[{namespace!r}] = false"
         mikrotik_tools = self._frontmatter(ROOT / "agents" / "mikrotik.md").get("tools") or {}
         assert mikrotik_tools.get("mikromcp_*") is True, (
