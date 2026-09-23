@@ -10,7 +10,7 @@ triggers: websearch,web search,research,fetch url,donsetch,search the web
 > No runtime registers a web-search MCP server. `donsetch` (npm-installed,
 > keyless multi-engine search + Markdown fetch, built-in cache) is a plain
 > CLI — shell out to it directly. This replaced `hound-mcp`/`master-fetch`
-> (2026-09-23): same idea, actively maintained Rust rewrite, no MCP schema
+> (2026-09-22): same idea, actively maintained Rust rewrite, no MCP schema
 > cost in any session.
 
 ## Quick Reference

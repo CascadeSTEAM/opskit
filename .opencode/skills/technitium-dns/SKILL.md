@@ -19,18 +19,20 @@ triggers: technitium,dns,dhcp,dns record,dns zone,dhcp lease,dhcp scope,dns serv
 |---|---|
 | Can the server serve right now? | `bin/mcp-call.py technitium --probe` |
 | Every tool with its schema | `bin/mcp-call.py technitium --list` |
-| List DNS zones | `bin/mcp-call.py technitium dns_list_zones` |
-| List/compare DNS servers | `bin/mcp-call.py technitium dns_list_servers` · `dns_compare` |
-| Read records in a zone | `bin/mcp-call.py technitium dns_get_records --arg zone=<zone>` |
-| Add/change a record | `bin/mcp-call.py technitium dns_update_record '{"zone":"<zone>", ...}'` |
-| Delete a record | `bin/mcp-call.py technitium dns_delete_record --arg zone=<zone> --arg name=<name> --arg type=<type>` |
-| Resync a zone | `bin/mcp-call.py technitium dns_resync_zone --arg zone=<zone>` |
+| List DNS zones | `bin/mcp-call.py technitium dns_list_zones --arg server=<server>` |
+| List/compare DNS servers | `bin/mcp-call.py technitium dns_list_servers` · `dns_compare --arg hostname=<host>` |
+| Read records in a zone | `bin/mcp-call.py technitium dns_get_records --arg server=<server> --arg zone=<zone>` |
+| Add/change a record | `bin/mcp-call.py technitium dns_update_record '{"server":"<server>", "zone":"<zone>", "domain":"<fqdn>", "record_type":"<type>", "value":"<value>"}'` |
+| Delete a record | `bin/mcp-call.py technitium dns_delete_record --arg server=<server> --arg zone=<zone> --arg domain=<fqdn> --arg record_type=<type> --arg value=<value>` |
+| Resync a zone | `bin/mcp-call.py technitium dns_resync_zone --arg server=<server> --arg zone=<zone>` |
 | Flush the local cache | `bin/mcp-call.py technitium dns_flush_local_cache` |
-| DHCP scopes/leases | `bin/mcp-call.py technitium dhcp_list_scopes` · `dhcp_get_scope --arg name=<scope>` · `dhcp_list_leases --arg scope=<scope>` |
-| DHCP reservations | `bin/mcp-call.py technitium dhcp_add_reservation '{...}'` · `dhcp_remove_reservation --arg scope=<scope> --arg mac=<mac>` |
+| DHCP scopes/leases | `bin/mcp-call.py technitium dhcp_list_scopes --arg server=<server>` · `dhcp_get_scope --arg server=<server> --arg scope_name=<scope>` · `dhcp_list_leases --arg server=<server> --arg scope_name=<scope>` |
+| DHCP reservations | `bin/mcp-call.py technitium dhcp_add_reservation '{...}'` · `dhcp_remove_reservation --arg server=<server> --arg scope_name=<scope> --arg ip_address=<ip>` |
 | DHCP scope DNS settings | `bin/mcp-call.py technitium dhcp_update_scope_dns '{...}'` |
-| Clear DHCP static routes | `bin/mcp-call.py technitium dhcp_clear_static_routes --arg scope=<scope>` |
+| Clear DHCP static routes | `bin/mcp-call.py technitium dhcp_clear_static_routes --arg server=<server> --arg scope_name=<scope>` |
 
+All tools except `dns_list_servers`, `dns_compare`, and `dns_flush_local_cache`
+require `--arg server=<server>` (see `dns_list_servers` for configured names).
 `--arg` coerces JSON scalars (numbers, `true`/`false`, `null`); bare words
 stay strings. Use `--str k=v` for a value that must stay a string even if it
 looks numeric. Output is the tool's structured JSON result.

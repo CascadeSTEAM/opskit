@@ -27,13 +27,14 @@ triggers: proxmox,pve,lxc,vm,container,virtual machine,proxmox cluster,qemu
 | Every tool with its schema | `bin/mcp-call.py proxmox --list` |
 | Cluster/node health | `bin/mcp-call.py proxmox get_cluster_status` · `get_nodes` · `get_node_status --arg node=<node>` |
 | List VMs / containers | `bin/mcp-call.py proxmox get_vms` · `get_containers` |
-| Guest config / IPs | `bin/mcp-call.py proxmox get_vm_config --arg vmid=<id>` · `get_container_ip --arg vmid=<id>` |
+| Guest config / IPs | `bin/mcp-call.py proxmox get_vm_config --arg node=<node> --arg vmid=<id>` · `get_container_ip --arg node=<node> --arg vmid=<id>` |
 | Storage / ISOs / templates | `bin/mcp-call.py proxmox get_storage` · `list_isos` · `list_templates` |
 | Next free VMID | `bin/mcp-call.py proxmox get_next_vmid` |
-| Power state | `bin/mcp-call.py proxmox start_vm --arg vmid=<id>` · `stop_vm` · `shutdown_vm` · `reset_vm` · `start_container` · `stop_container` · `restart_container` |
-| Snapshots | `bin/mcp-call.py proxmox create_snapshot '{...}'` · `list_snapshots --arg vmid=<id>` · `rollback_snapshot '{...}'` · `delete_snapshot '{...}'` |
+| Power state (VMs) | `bin/mcp-call.py proxmox start_vm --arg node=<node> --arg vmid=<id>` · `stop_vm` · `shutdown_vm` · `reset_vm` (same args) |
+| Power state (containers) | `bin/mcp-call.py proxmox start_container --arg selector=<node>:<id>` · `stop_container` · `restart_container` (same arg) |
+| Snapshots | `bin/mcp-call.py proxmox create_snapshot '{...}'` · `list_snapshots --arg node=<node> --arg vmid=<id>` · `rollback_snapshot '{...}'` · `delete_snapshot '{...}'` |
 | Backups | `bin/mcp-call.py proxmox create_backup '{...}'` · `list_backups` · `restore_backup '{...}'` · `delete_backup '{...}'` |
-| Create/delete guests | `bin/mcp-call.py proxmox create_vm '{...}'` · `create_container '{...}'` · `delete_vm --arg vmid=<id>` · `delete_container --arg vmid=<id>` |
+| Create/delete guests | `bin/mcp-call.py proxmox create_vm '{...}'` · `create_container '{...}'` · `delete_vm --arg node=<node> --arg vmid=<id>` · `delete_container --arg selector=<node>:<id>` |
 | Long-running jobs (clone, restore, etc.) | `bin/mcp-call.py proxmox list_jobs` · `get_job --arg job_id=<id>` · `poll_job --arg job_id=<id>` · `cancel_job --arg job_id=<id>` · `retry_job --arg job_id=<id>` |
 | Logs | `bin/mcp-call.py proxmox get_cluster_log` · `get_node_syslog --arg node=<node>` · `get_task_log --arg upid=<upid>` · `get_guest_firewall_log --arg vmid=<id>` · `get_node_firewall_log --arg node=<node>` |
 | Guest commands (needs QEMU agent) | `bin/mcp-call.py proxmox execute_vm_command '{...}'` |
