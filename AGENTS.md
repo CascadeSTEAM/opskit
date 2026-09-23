@@ -19,9 +19,11 @@
   agent via the `tools` map in `opencode.json`, and Crush / Claude Code do not
   load the server at all. Outside `@mikrotik`, reach the same server through
   `bin/mcp-call.py mikromcp …` — load the `routeros` skill. Same launcher, same
-  vault-resolved credentials, so the rule keeps a compliant path. The GitHub
-  MCP server is gone from every runtime for the same reason; use `gh`
-  (`github-cli` skill).
+  vault-resolved credentials, so the rule keeps a compliant path. The broad
+  remote GitHub MCP is gone from every runtime for the same reason; use `gh`
+  (`github-cli` skill). OpenCode alone also has a scoped, self-hosted `github`
+  MCP (context/issues/pull_requests/repos, #386) for inline PR review-comment
+  threads specifically — Claude Code and Crush still have none.
 - Linux server ops → use `@linux` subagent (mikromcp tools denied at runtime)
 - Security audit / SOC2 / CVE / hardening on a Linux host → also `@linux` — it
   already denies `mikromcp_*`, so a request in scope for one host with
