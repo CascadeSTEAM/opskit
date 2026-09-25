@@ -266,6 +266,20 @@ def test_label_is_resolved_and_attached(mod, wire_client):
     assert result["labeled"] == ["security"]
 
 
+def test_label_with_incidental_whitespace_still_matches(mod, wire_client):
+    # opskit #398: a real label was titled "security " (trailing space, a
+    # data-entry accident) and a caller passing the sensible spelling
+    # 'security' could never match it.
+    wire_client.list_projects.return_value = [{"id": 1, "title": "Tickets"}]
+    wire_client.list_labels.return_value = [{"id": 5, "title": "security "}]
+    wire_client.create_task.return_value = {"id": 13}
+
+    result = json.loads(mod.vikunja_create_task(tenant=TENANT, title="X", labels="security"))
+
+    wire_client.add_label.assert_called_once_with(13, 5)
+    assert result["labeled"] == ["security "]
+
+
 def test_no_matching_label_returns_error_before_creating_task(mod, wire_client):
     wire_client.list_projects.return_value = [{"id": 1, "title": "Tickets"}]
     wire_client.list_labels.return_value = [{"id": 5, "title": "security"}]
