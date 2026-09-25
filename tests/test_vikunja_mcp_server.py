@@ -121,7 +121,8 @@ def test_create_task_success_with_explicit_project(mod, wire_client):
     ))
 
     wire_client.create_task.assert_called_once_with(
-        2, "Fix the thing", "details", priority=None, due_date=None
+        2, "Fix the thing", "details", priority=None, due_date=None,
+        reminders=None, repeat_after=None, repeat_mode=None,
     )
     assert result["url"] == f"{BASE_URL}/tasks/42"
     assert result["task"]["id"] == 42
@@ -134,7 +135,8 @@ def test_create_task_uses_default_project_when_omitted(mod, wire_client):
     result = json.loads(mod.vikunja_create_task(tenant=TENANT, title="No project given"))
 
     wire_client.create_task.assert_called_once_with(
-        1, "No project given", "", priority=None, due_date=None
+        1, "No project given", "", priority=None, due_date=None,
+        reminders=None, repeat_after=None, repeat_mode=None,
     )
     assert result["url"] == f"{BASE_URL}/tasks/7"
 
@@ -206,7 +208,8 @@ def test_priority_and_due_date_are_passed_through(mod, wire_client):
     )
 
     wire_client.create_task.assert_called_once_with(
-        1, "X", "", priority=3, due_date="2026-10-01T00:00:00Z"
+        1, "X", "", priority=3, due_date="2026-10-01T00:00:00Z",
+        reminders=None, repeat_after=None, repeat_mode=None,
     )
 
 
@@ -318,3 +321,68 @@ def test_attach_failure_after_creation_is_a_warning_not_a_bare_error(mod, wire_c
     assert "error" not in result
     assert result["url"] == f"{BASE_URL}/tasks/12"
     assert any("alice" in w and "boom" in w for w in result["warnings"])
+
+
+# ---------------------------------------------------------------------------
+# Reminders and recurrence (opskit #400)
+# ---------------------------------------------------------------------------
+
+def test_single_reminder_is_passed_through(mod, wire_client):
+    wire_client.list_projects.return_value = [{"id": 1, "title": "Tickets"}]
+    wire_client.create_task.return_value = {"id": 20}
+
+    mod.vikunja_create_task(tenant=TENANT, title="X", reminders="2026-10-01T09:00:00Z")
+
+    wire_client.create_task.assert_called_once_with(
+        1, "X", "", priority=None, due_date=None,
+        reminders=[{"reminder": "2026-10-01T09:00:00Z"}],
+        repeat_after=None, repeat_mode=None,
+    )
+
+
+def test_multiple_reminders_are_each_passed_through(mod, wire_client):
+    wire_client.list_projects.return_value = [{"id": 1, "title": "Tickets"}]
+    wire_client.create_task.return_value = {"id": 21}
+
+    mod.vikunja_create_task(
+        tenant=TENANT, title="X",
+        reminders="2026-10-01T09:00:00Z, 2026-10-02T09:00:00Z",
+    )
+
+    wire_client.create_task.assert_called_once_with(
+        1, "X", "", priority=None, due_date=None,
+        reminders=[
+            {"reminder": "2026-10-01T09:00:00Z"},
+            {"reminder": "2026-10-02T09:00:00Z"},
+        ],
+        repeat_after=None, repeat_mode=None,
+    )
+
+
+def test_recurrence_fields_are_passed_through(mod, wire_client):
+    wire_client.list_projects.return_value = [{"id": 1, "title": "Tickets"}]
+    wire_client.create_task.return_value = {"id": 22}
+
+    mod.vikunja_create_task(tenant=TENANT, title="X", repeat_after=604800, repeat_mode=0)
+
+    wire_client.create_task.assert_called_once_with(
+        1, "X", "", priority=None, due_date=None, reminders=None,
+        repeat_after=604800, repeat_mode=0,
+    )
+
+
+@pytest.mark.parametrize("bad_mode", [-1, 3])
+def test_invalid_repeat_mode_returns_error_before_any_call(mod, wire_client, bad_mode):
+    result = json.loads(mod.vikunja_create_task(tenant=TENANT, title="X", repeat_mode=bad_mode))
+
+    assert "error" in result
+    wire_client.list_projects.assert_not_called()
+    wire_client.create_task.assert_not_called()
+
+
+def test_negative_repeat_after_returns_error_before_any_call(mod, wire_client):
+    result = json.loads(mod.vikunja_create_task(tenant=TENANT, title="X", repeat_after=-1))
+
+    assert "error" in result
+    wire_client.list_projects.assert_not_called()
+    wire_client.create_task.assert_not_called()

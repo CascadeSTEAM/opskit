@@ -27,12 +27,14 @@ triggers: vikunja,vikunja task,vikunja ticket,create task,vikunja project
 | Create a task in a specific project | `... --str project="<project name>"` (matched by exact name) |
 | Set priority / due date | `... --arg priority=<0-5> --str due_date="<ISO8601>"` (0=Unset..5=DO NOW) |
 | Assign / label | `... --str assignees="<user1,user2>" --str labels="<label1,label2>"` (comma-separated, each matched exactly) |
+| Reminders | `... --str reminders="<ISO8601>,<ISO8601>"` (absolute timestamps, comma-separated) |
+| Recurrence | `... --arg repeat_after=<seconds> --arg repeat_mode=<0-2>` (0=simple interval, 1=monthly, 2=from completion date) |
 
 `--str` keeps a value a literal string even if it looks numeric or contains
-spaces/punctuation — always use it for every param except `priority` (use
-`--arg`, an integer). The tool returns `{"tenant", "task", "url", ...}` JSON
-on success, or `{"error": "..."}` on failure — it never raises out to the
-caller.
+spaces/punctuation — always use it for every param except `priority`,
+`repeat_after`, and `repeat_mode` (use `--arg`, integers). The tool returns
+`{"tenant", "task", "url", ...}` JSON on success, or `{"error": "..."}` on
+failure — it never raises out to the caller.
 
 ## Steps
 
@@ -53,10 +55,11 @@ caller.
 
 - "vault is LOCKED" / no `BW_SESSION`: ask the operator to refresh it
   (`bwunlock` skill) — never run `bw unlock` yourself.
-- Unknown tenant, missing title, bad priority, no/ambiguous project or
-  assignee/label match, a missing token, or a Vikunja API error all come back
-  as readable `{"error": "..."}` JSON from the tool itself, with nothing
-  created — read it and act on it; never guess an id to work around it.
+- Unknown tenant, missing title, bad priority/repeat_mode/repeat_after,
+  no/ambiguous project or assignee/label match, a missing token, or a
+  Vikunja API error all come back as readable `{"error": "..."}` JSON from
+  the tool itself, with nothing created — read it and act on it; never guess
+  an id to work around it.
 - No automatic retry on a server-side (5xx) failure: the request may have
   already reached Vikunja and created the task, so retrying risks a
   duplicate. Report the failure and let the operator decide.

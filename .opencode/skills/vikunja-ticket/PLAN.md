@@ -189,9 +189,10 @@ the failure and lets the operator decide, rather than guessing.
 ## Deliberately out of scope for v1
 
 No dedup search, no YAML spec, no editing/deleting existing tasks, no
-multi-project routing beyond name-matching. (Priority/due-date/assignees/
-labels were originally on this list too; added in #396 once a real need
-showed up.) Add more only on the same basis.
+multi-project routing beyond name-matching, no relative reminders (only
+absolute ISO8601 timestamps). (Priority/due-date/assignees/labels/
+reminders/recurrence were originally on this list too; added in #396 and
+#400 once a real need showed up.) Add more only on the same basis.
 
 ## Extension: priority, due date, assignees, labels (opskit #396)
 
@@ -215,6 +216,22 @@ a real Vikunja instance, not guessed:
   task is real, and reporting only an error risks a duplicate-creating
   retry, the same failure class the original create call already guards
   against.
+
+## Extension: reminders and recurrence (opskit #400)
+
+Verified live (Vikunja v2.6.0) same as the above:
+
+- `reminders`: a list of `{"reminder": "<ISO8601>"}` objects, plain field on
+  the create body like `priority`/`due_date` — no extra call, no separate
+  resolution step (unlike assignees/labels). Only absolute timestamps are
+  supported; Vikunja's relative-reminder shape (`relative_period`/
+  `relative_to`) is deferred until a real need shows up.
+- `repeat_after` (seconds) and `repeat_mode` (0=simple interval, 1=monthly,
+  2=from completion date) are also plain create-body fields. Each is
+  range/sign-validated independently before any network call, same
+  convention as `priority` — no invented cross-field rule requiring one
+  when the other is set; Vikunja's own "does not repeat" default applies
+  when both are omitted.
 
 ## Resolved decisions (were open before the first live test)
 

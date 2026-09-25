@@ -133,15 +133,25 @@ class VikunjaClient:
         description: str,
         priority: int = None,
         due_date: str = None,
+        reminders: list = None,
+        repeat_after: int = None,
+        repeat_mode: int = None,
     ) -> dict:
-        # PUT, not POST -- POST 404s on this API. priority/due_date are plain
-        # fields on the create body (opskit #396 verified live) -- no
-        # separate call needed, unlike assignees/labels below.
+        # PUT, not POST -- POST 404s on this API. priority/due_date/
+        # reminders/repeat_after/repeat_mode are all plain fields on the
+        # create body (opskit #396, #400 verified live) -- no separate call
+        # needed, unlike assignees/labels below.
         body = {"title": title, "description": description}
         if priority is not None:
             body["priority"] = priority
         if due_date is not None:
             body["due_date"] = due_date
+        if reminders:
+            body["reminders"] = reminders
+        if repeat_after is not None:
+            body["repeat_after"] = repeat_after
+        if repeat_mode is not None:
+            body["repeat_mode"] = repeat_mode
         resp = self.session.put(
             f"{self.base_url}/api/v1/projects/{project_id}/tasks",
             json=body,
@@ -278,6 +288,9 @@ def vikunja_create_task(
     due_date: str = None,
     assignees: str = None,
     labels: str = None,
+    reminders: str = None,
+    repeat_after: int = None,
+    repeat_mode: int = None,
 ) -> str:
     """
     Create a task in a Vikunja project and report its URL.
@@ -298,6 +311,14 @@ def vikunja_create_task(
         labels: Comma-separated label names to attach (optional). Each must
             match an existing label's exact title; zero or multiple matches
             is an error, never a guess.
+        reminders: Comma-separated absolute ISO8601 timestamps (optional),
+            e.g. '2026-10-01T09:00:00Z'. Relative reminders (X before due
+            date, etc.) aren't supported yet.
+        repeat_after: Recurrence interval in seconds (optional), e.g. 604800
+            for weekly. Only meaningful together with repeat_mode.
+        repeat_mode: 0=repeat every repeat_after seconds, 1=repeat monthly
+            (same day each month), 2=repeat repeat_after seconds after the
+            task is marked done rather than from its due date (optional).
     """
     if tenant not in TENANTS:
         return f"Invalid tenant '{tenant}'. Choose: {', '.join(TENANTS.keys())}"
@@ -305,6 +326,10 @@ def vikunja_create_task(
         return json.dumps({"error": "title is required"})
     if priority is not None and not (0 <= priority <= 5):
         return json.dumps({"error": f"priority must be 0-5 (Unset..DO NOW), got {priority}"})
+    if repeat_mode is not None and repeat_mode not in (0, 1, 2):
+        return json.dumps({"error": f"repeat_mode must be 0, 1, or 2, got {repeat_mode}"})
+    if repeat_after is not None and repeat_after < 0:
+        return json.dumps({"error": f"repeat_after must be a non-negative number of seconds, got {repeat_after}"})
 
     try:
         client = get_client(tenant)
@@ -313,9 +338,14 @@ def vikunja_create_task(
         # never leave a task half-configured (opskit #396).
         users = _resolve_users(client, assignees) if assignees else []
         label_objs = _resolve_labels(client, labels) if labels else []
+        reminder_list = (
+            [{"reminder": r.strip()} for r in reminders.split(",") if r.strip()]
+            if reminders else None
+        )
 
         result = client.create_task(
-            proj["id"], title, description, priority=priority, due_date=due_date
+            proj["id"], title, description, priority=priority, due_date=due_date,
+            reminders=reminder_list, repeat_after=repeat_after, repeat_mode=repeat_mode,
         )
         base_url = TENANTS[tenant]["base_url"].rstrip("/")
         task_id = result.get("id")
