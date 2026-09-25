@@ -29,6 +29,7 @@ CONFIG_PATH_VARS = (
     "ERPNEXT_TENANTS_FILE",
     "PROXMOX_TENANTS_FILE",
     "TECHNITIUM_SERVERS_FILE",
+    "VIKUNJA_TENANTS_FILE",
     "WIREGUARD_TENANTS_FILE",
 )
 
@@ -43,7 +44,7 @@ AMBIENT_STATE = ("ACTIVE_ENV", "OPSKIT_ROOT")
 
 # Credentials a server might read. A developer's exported secrets must not be able
 # to make a test pass — or fail — by accident.
-CREDENTIAL_PREFIXES = ("ERPNEXT_", "PROXMOX_", "TECHNITIUM_", "WG_", "MIKROTIK_")
+CREDENTIAL_PREFIXES = ("ERPNEXT_", "PROXMOX_", "TECHNITIUM_", "VIKUNJA_", "WG_", "MIKROTIK_")
 
 
 @pytest.fixture(scope="session", autouse=True)
