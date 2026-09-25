@@ -197,7 +197,7 @@ showed up.) Add more only on the same basis.
 
 Added after v1 shipped, at the operator's request, once live testing showed
 the basic create call working. API shapes below were verified live against
-the BMS instance, not guessed:
+a real Vikunja instance, not guessed:
 
 - `priority` (int, 0=Unset..5=DO NOW) and `due_date` (ISO8601 string) are
   plain fields on the same create body — no extra call.
