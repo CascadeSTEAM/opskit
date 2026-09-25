@@ -16,6 +16,11 @@ Coverage focus:
   - the API's own error body is surfaced on an HTTP error, not swallowed
   - the reported URL is built from the tenant's configured base_url + the
     created task's id
+  - opskit #396: priority range validation; assignee/label resolution by
+    exact match (none/ambiguous is an error, before any task is created);
+    a failure attaching an assignee/label *after* the task already exists
+    is a warning on a success envelope, never a bare error (the task is
+    real, so reporting only an error risks a duplicate-creating retry)
 """
 
 import importlib.util
@@ -115,7 +120,9 @@ def test_create_task_success_with_explicit_project(mod, wire_client):
         tenant=TENANT, title="Fix the thing", description="details", project="Backlog",
     ))
 
-    wire_client.create_task.assert_called_once_with(2, "Fix the thing", "details")
+    wire_client.create_task.assert_called_once_with(
+        2, "Fix the thing", "details", priority=None, due_date=None
+    )
     assert result["url"] == f"{BASE_URL}/tasks/42"
     assert result["task"]["id"] == 42
 
@@ -126,7 +133,9 @@ def test_create_task_uses_default_project_when_omitted(mod, wire_client):
 
     result = json.loads(mod.vikunja_create_task(tenant=TENANT, title="No project given"))
 
-    wire_client.create_task.assert_called_once_with(1, "No project given", "")
+    wire_client.create_task.assert_called_once_with(
+        1, "No project given", "", priority=None, due_date=None
+    )
     assert result["url"] == f"{BASE_URL}/tasks/7"
 
 
@@ -173,3 +182,125 @@ def test_missing_token_env_var_is_actionable(mod):
 
     assert "error" in result
     assert "VIKUNJA_CLIENT1_TOKEN" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# Priority (opskit #396)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("bad_priority", [-1, 6])
+def test_invalid_priority_returns_error_before_any_call(mod, wire_client, bad_priority):
+    result = json.loads(mod.vikunja_create_task(tenant=TENANT, title="X", priority=bad_priority))
+
+    assert "error" in result
+    wire_client.list_projects.assert_not_called()
+    wire_client.create_task.assert_not_called()
+
+
+def test_priority_and_due_date_are_passed_through(mod, wire_client):
+    wire_client.list_projects.return_value = [{"id": 1, "title": "Tickets"}]
+    wire_client.create_task.return_value = {"id": 8}
+
+    mod.vikunja_create_task(
+        tenant=TENANT, title="X", priority=3, due_date="2026-10-01T00:00:00Z",
+    )
+
+    wire_client.create_task.assert_called_once_with(
+        1, "X", "", priority=3, due_date="2026-10-01T00:00:00Z"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Assignees (opskit #396)
+# ---------------------------------------------------------------------------
+
+def test_assignee_is_resolved_and_attached(mod, wire_client):
+    wire_client.list_projects.return_value = [{"id": 1, "title": "Tickets"}]
+    wire_client.list_users.return_value = [{"id": 2, "username": "alice"}]
+    wire_client.create_task.return_value = {"id": 9}
+
+    result = json.loads(mod.vikunja_create_task(tenant=TENANT, title="X", assignees="alice"))
+
+    wire_client.list_users.assert_called_once_with("alice")
+    wire_client.add_assignee.assert_called_once_with(9, 2)
+    assert result["assigned"] == ["alice"]
+    assert "warnings" not in result
+
+
+def test_multiple_assignees_are_each_attached(mod, wire_client):
+    wire_client.list_projects.return_value = [{"id": 1, "title": "Tickets"}]
+    wire_client.list_users.side_effect = lambda q: (
+        [{"id": 2, "username": "alice"}] if q == "alice" else [{"id": 3, "username": "bob"}]
+    )
+    wire_client.create_task.return_value = {"id": 10}
+
+    result = json.loads(mod.vikunja_create_task(tenant=TENANT, title="X", assignees="alice, bob"))
+
+    assert wire_client.add_assignee.call_count == 2
+    assert set(result["assigned"]) == {"alice", "bob"}
+
+
+def test_unknown_assignee_returns_error_before_creating_task(mod, wire_client):
+    wire_client.list_projects.return_value = [{"id": 1, "title": "Tickets"}]
+    wire_client.list_users.return_value = []
+
+    result = json.loads(mod.vikunja_create_task(tenant=TENANT, title="X", assignees="ghost"))
+
+    assert "error" in result
+    assert "ghost" in result["error"]
+    wire_client.create_task.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Labels (opskit #396)
+# ---------------------------------------------------------------------------
+
+def test_label_is_resolved_and_attached(mod, wire_client):
+    wire_client.list_projects.return_value = [{"id": 1, "title": "Tickets"}]
+    wire_client.list_labels.return_value = [{"id": 5, "title": "security"}]
+    wire_client.create_task.return_value = {"id": 11}
+
+    result = json.loads(mod.vikunja_create_task(tenant=TENANT, title="X", labels="security"))
+
+    wire_client.add_label.assert_called_once_with(11, 5)
+    assert result["labeled"] == ["security"]
+
+
+def test_no_matching_label_returns_error_before_creating_task(mod, wire_client):
+    wire_client.list_projects.return_value = [{"id": 1, "title": "Tickets"}]
+    wire_client.list_labels.return_value = [{"id": 5, "title": "security"}]
+
+    result = json.loads(mod.vikunja_create_task(tenant=TENANT, title="X", labels="ghost"))
+
+    assert "error" in result
+    wire_client.create_task.assert_not_called()
+
+
+def test_ambiguous_label_returns_error_before_creating_task(mod, wire_client):
+    wire_client.list_projects.return_value = [{"id": 1, "title": "Tickets"}]
+    wire_client.list_labels.return_value = [
+        {"id": 5, "title": "security"},
+        {"id": 6, "title": "security"},
+    ]
+
+    result = json.loads(mod.vikunja_create_task(tenant=TENANT, title="X", labels="security"))
+
+    assert "error" in result
+    wire_client.create_task.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Partial-attach failure -- task already exists, must not read as a bare error
+# ---------------------------------------------------------------------------
+
+def test_attach_failure_after_creation_is_a_warning_not_a_bare_error(mod, wire_client):
+    wire_client.list_projects.return_value = [{"id": 1, "title": "Tickets"}]
+    wire_client.list_users.return_value = [{"id": 2, "username": "alice"}]
+    wire_client.create_task.return_value = {"id": 12}
+    wire_client.add_assignee.side_effect = http_error(500, {"message": "boom"})
+
+    result = json.loads(mod.vikunja_create_task(tenant=TENANT, title="X", assignees="alice"))
+
+    assert "error" not in result
+    assert result["url"] == f"{BASE_URL}/tasks/12"
+    assert any("alice" in w and "boom" in w for w in result["warnings"])
