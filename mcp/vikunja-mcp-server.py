@@ -231,14 +231,21 @@ def _resolve_users(client: VikunjaClient, assignees: str) -> list:
 def _resolve_labels(client: VikunjaClient, labels: str) -> list:
     """Resolve each comma-separated label name to a label record by exact
     title match. Zero or multiple matches is an error naming the
-    candidates, same convention as _resolve_project -- never a guess."""
+    candidates, same convention as _resolve_project -- never a guess.
+
+    Matches against the label's *stripped* title (opskit #398): a live label
+    was found titled "security " (trailing space, a data-entry accident),
+    which made it unmatchable by the sensible spelling. Incidental
+    leading/trailing whitespace in label data is never what meaningfully
+    distinguishes two real labels, so it's tolerated here -- everything else
+    about the "exact match, never guess" behavior is unchanged."""
     names = [n.strip() for n in labels.split(",") if n.strip()]
     if not names:
         return []
     all_labels = client.list_labels()
     resolved = []
     for name in names:
-        matches = [label for label in all_labels if label.get("title") == name]
+        matches = [label for label in all_labels if label.get("title", "").strip() == name]
         if not matches:
             available = ", ".join(label.get("title", "") for label in all_labels) or "(none)"
             raise LookupError(f"no label named '{name}' found. Available: {available}")
