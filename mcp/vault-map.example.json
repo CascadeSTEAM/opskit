@@ -41,7 +41,11 @@
     "               does not implement it (VAULT_NOT_SUPPORTED), which is why",
     "               resolution happens in the launcher instead. Prefer a scoped",
     "               read-only RouterOS API user over a router admin account \u2014",
-    "               REST is plaintext HTTP until www-ssl is enabled (opskit #94)."
+    "               REST is plaintext HTTP until www-ssl is enabled (opskit #94).",
+    "  vikunja    \u2014 one bearer token per tenant, VIKUNJA_<TENANT>_TOKEN, named",
+    "               by that tenant's key in tenants-vikunja.local.json. Use a",
+    "               Vikunja API token scoped to task-create + project-read",
+    "               only \u2014 never a full personal-account token (opskit #393)."
   ],
   "technitium": {
     "TECHNITIUM_CLIENT1_PASS": {
@@ -85,6 +89,12 @@
       "field": "username"
     },
     "MIKROTIK_SITE1_PASS": {
+      "item": "00000000-0000-0000-0000-000000000000",
+      "field": "password"
+    }
+  },
+  "vikunja": {
+    "VIKUNJA_CLIENT1_TOKEN": {
       "item": "00000000-0000-0000-0000-000000000000",
       "field": "password"
     }
