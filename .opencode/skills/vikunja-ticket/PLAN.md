@@ -26,8 +26,8 @@ curl." Each is a real defect, not a style nit:
    vault at run time, every run, via the same `bin/mcp-run.sh --print-env`
    path every other integration uses (see Credentials below).
 3. **Hardcoded production hostname in a tracked file.**
-   `https://todo.bellinghammakerspace.org` named a real environment's domain
-   directly in a file destined for the committed skill tree — a Core Rule
+   The original draft's core command named a real client environment's Vikunja
+   domain directly in a file destined for the committed skill tree — a Core Rule
    violation ("never hardcode environment names, hostnames, or subnets;
    discover them at runtime") and adjacent to the Client-Data-Isolation hard
    rule. Fixed by moving the base URL into a gitignored tenant config file
