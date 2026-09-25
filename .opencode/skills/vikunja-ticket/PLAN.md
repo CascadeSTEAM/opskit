@@ -188,16 +188,42 @@ the failure and lets the operator decide, rather than guessing.
 
 ## Deliberately out of scope for v1
 
-No assignee/label/due-date resolution, no dedup search, no YAML spec, no
-editing/deleting existing tasks, no multi-project routing beyond
-name-matching. Add only if a real need shows up.
+No dedup search, no YAML spec, no editing/deleting existing tasks, no
+multi-project routing beyond name-matching. (Priority/due-date/assignees/
+labels were originally on this list too; added in #396 once a real need
+showed up.) Add more only on the same basis.
 
-## Remaining open decisions
+## Extension: priority, due date, assignees, labels (opskit #396)
 
-1. Which vault item is the source of truth for the Vikunja token, and its
-   exact scope — create the item (or confirm the existing "Vikunja —
-   netyeti" one is fit for reuse as a scoped service credential rather than a
-   personal token) before writing `vault-map.local.json` and
-   `mcp/tenants-vikunja.local.json`.
-2. Confirm the API shape (PUT create, `id` in the response) with the
-   verification steps above before relying on it in production.
+Added after v1 shipped, at the operator's request, once live testing showed
+the basic create call working. API shapes below were verified live against
+a real Vikunja instance, not guessed:
+
+- `priority` (int, 0=Unset..5=DO NOW) and `due_date` (ISO8601 string) are
+  plain fields on the same create body — no extra call.
+- `assignees` (comma-separated usernames) resolve via
+  `GET /api/v1/users?s=<name>` (substring search — filtered to an exact
+  `username` match), then `PUT /api/v1/tasks/{id}/assignees`
+  (`{"user_id": <id>}`), once per name.
+- `labels` (comma-separated names) resolve via `GET /api/v1/labels`
+  (global list), same exact-match/no-guess convention as project
+  resolution, then `PUT /api/v1/tasks/{id}/labels` (`{"label_id": <id>}`).
+- Resolution happens **before** the task is created (a typo must not create
+  a half-configured task); attaching happens **after** (these endpoints need
+  a real task id). If an attach call itself fails post-creation, the result
+  is a success envelope with a `warnings` list, never a bare error — the
+  task is real, and reporting only an error risks a duplicate-creating
+  retry, the same failure class the original create call already guards
+  against.
+
+## Resolved decisions (were open before the first live test)
+
+1. Vault item: the existing "Vikunja — netyeti" item's bot-scoped field was
+   tried first and 403'd on task creation (valid token, insufficient
+   project permission) even after an attempted fix; the personal-account
+   field (`API Token (self)`) is wired in for now as a working stand-in.
+   **Still open**: get the bot account's write permission actually fixed and
+   swap back — running on a personal token is against this plan's own
+   least-privilege principle (see flaw review, point 8).
+2. API shape confirmed live: PUT creates, response includes `id`, base URL
+   + `/tasks/<id>` is a working link.
