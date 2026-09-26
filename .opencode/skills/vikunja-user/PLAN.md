@@ -47,10 +47,18 @@ through `@linux`, not through a new HTTP client.
   - Builds `["ssh", "-o", "BatchMode=yes", <ssh_host>, "pct exec <ctid> --
     sudo -u <exec_user> <binary> user create --config <config_path> -u
     <username> -e <email>"]` and feeds the password over **stdin**, not a
-    `--password` argv value.
+    `--password` argv value. Every interpolated value (`username`, `email`,
+    `config_path`, `binary`, `exec_user`) is `shlex.quote()`-escaped before
+    joining — ssh hands its remote-command string to the target's own shell,
+    so an unescaped username containing `;`/backticks/`$()` would execute
+    arbitrary commands on the Vikunja host as its own service user (caught
+    in review, opskit #402).
   - After a successful create, runs `vikunja user list` on the same host and
-    checks the username appears in its output — best-effort verification,
-    not a hard gate (the CLI's list output isn't documented as
+    checks the username appears in its output at a word boundary (not a bare
+    substring test — a plain `in` check false-positives when the new
+    username is a substring of an unrelated existing one, e.g. creating
+    `ali` while `alice` already exists; also caught in review) — best-effort
+    verification, not a hard gate (the CLI's list output isn't documented as
     machine-parseable JSON, so this is a substring check, not a strict
     schema match).
   - `--admin` runs `vikunja user set-admin <username> --admin` only after a

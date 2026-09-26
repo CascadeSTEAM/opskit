@@ -58,7 +58,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -104,9 +106,14 @@ def resolve_exec_config(tenants: dict, tenant: str) -> dict:
 
 
 def _remote(exec_cfg: dict, *parts: str) -> list:
+    # ssh hands its whole remote-command argument to the target's shell
+    # (`sh -c "..."`), so every interpolated value -- not just
+    # username/email -- must be shell-quoted here, or a value containing
+    # `;`/backticks/`$()` executes arbitrary commands on the Vikunja host as
+    # its own service user (opskit #402 review finding).
     remote_cmd = " ".join((
-        f"pct exec {exec_cfg['ctid']} --",
-        f"sudo -u {exec_cfg['exec_user']} {exec_cfg['binary']}",
+        f"pct exec {shlex.quote(str(exec_cfg['ctid']))} --",
+        f"sudo -u {shlex.quote(exec_cfg['exec_user'])} {shlex.quote(exec_cfg['binary'])}",
         *parts,
     ))
     return ["ssh", "-o", "BatchMode=yes", exec_cfg["ssh_host"], remote_cmd]
@@ -114,21 +121,30 @@ def _remote(exec_cfg: dict, *parts: str) -> list:
 
 def build_create_argv(exec_cfg: dict, username: str, email: str) -> list:
     return _remote(
-        exec_cfg, "user create", f"--config {exec_cfg['config_path']}",
-        f"-u {username}", f"-e {email}",
+        exec_cfg, "user create", f"--config {shlex.quote(exec_cfg['config_path'])}",
+        f"-u {shlex.quote(username)}", f"-e {shlex.quote(email)}",
     )
 
 
 def build_list_argv(exec_cfg: dict) -> list:
-    return _remote(exec_cfg, "user list", f"--config {exec_cfg['config_path']}")
+    return _remote(exec_cfg, "user list", f"--config {shlex.quote(exec_cfg['config_path'])}")
 
 
 def build_set_admin_argv(exec_cfg: dict, username: str) -> list:
-    return _remote(exec_cfg, "user set-admin", username, "--admin")
+    return _remote(exec_cfg, "user set-admin", shlex.quote(username), "--admin")
 
 
 def _text(b) -> str:
     return (b or b"").decode(errors="replace").strip()
+
+
+def _username_appears_in_listing(username: str, listing_text: str) -> bool:
+    # A plain substring test false-positives when `username` is a substring
+    # of an unrelated existing name (e.g. creating "ali" while "alice"
+    # already exists) -- word-boundary match instead (opskit #402 review
+    # finding). `user list`'s output isn't documented as machine-parseable,
+    # so this stays a best-effort check, not a strict schema match.
+    return re.search(rf"\b{re.escape(username)}\b", listing_text) is not None
 
 
 def create_user(
@@ -160,7 +176,7 @@ def create_user(
     result = {"tenant": tenant, "username": username, "email": email, "created": True}
 
     listed = run(build_list_argv(exec_cfg), capture_output=True)
-    result["verified"] = username in _text(listed.stdout)
+    result["verified"] = _username_appears_in_listing(username, _text(listed.stdout))
 
     if make_admin:
         promoted = run(build_set_admin_argv(exec_cfg, username), capture_output=True)

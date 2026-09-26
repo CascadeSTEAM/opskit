@@ -23,6 +23,7 @@ Coverage focus:
 """
 
 import importlib.util
+import shlex
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -140,6 +141,30 @@ def test_create_command_argv_shape(mod):
     assert "-e alice@example.org" in remote_cmd
 
 
+def test_malicious_username_is_shell_quoted_not_injected(mod):
+    # ssh hands its remote-command string to the target's own shell -- a
+    # username containing shell metacharacters must come out as a single
+    # inert argument, not break out into a second command (opskit #402
+    # review finding).
+    run = fake_run([completed(0), completed(0)])
+    evil = "alice; rm -rf /"
+    mod.create_user(TENANT, evil, "alice@example.org", "pw", False, run=run)
+
+    remote_cmd = run.calls[0]["argv"][-1]
+    tokens = shlex.split(remote_cmd)
+    assert evil in tokens
+    assert "rm" not in tokens  # would appear as its own token if unescaped
+
+
+def test_email_with_shell_metacharacters_is_shell_quoted(mod):
+    run = fake_run([completed(0), completed(0)])
+    evil_email = "a@example.org`whoami`"
+    mod.create_user(TENANT, "alice", evil_email, "pw", False, run=run)
+
+    remote_cmd = run.calls[0]["argv"][-1]
+    assert evil_email in shlex.split(remote_cmd)
+
+
 def test_password_travels_over_stdin_never_argv(mod):
     run = fake_run([completed(0), completed(0)])
     mod.create_user(TENANT, "alice", "alice@example.org", "s3cret-value", False, run=run)
@@ -178,6 +203,16 @@ def test_username_absent_from_list_is_not_verified(mod):
     result = mod.create_user(TENANT, "alice", "alice@example.org", "pw", False, run=run)
 
     assert result["created"] is True
+    assert result["verified"] is False
+
+
+def test_verify_does_not_false_positive_on_substring_match(mod):
+    # "ali" is a substring of "alice" -- a plain `in` check would wrongly
+    # report "ali" as verified off the back of an unrelated existing user
+    # (opskit #402 review finding).
+    run = fake_run([completed(0), completed(0, stdout=b"id  username\n1   alice\n")])
+    result = mod.create_user(TENANT, "ali", "ali@example.org", "pw", False, run=run)
+
     assert result["verified"] is False
 
 
