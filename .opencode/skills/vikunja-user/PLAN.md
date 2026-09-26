@@ -277,3 +277,38 @@ question asked of it. The fix wasn't reading more secondary sources more
 carefully; it was going back to the live schema and asking a broader
 question ("what columns are named like admin, anywhere") instead of
 stopping at the first match.
+
+## Bug: five subcommands never passed --config (opskit #410)
+
+Found immediately after #408 shipped, while actually running `set-admin`
+against a real instance for the first time: it failed with `ERROR:
+service.publicurl is required when cors.enable is true` — not the
+expected Pro-license error, because it never got that far.
+
+`build_create_argv` and `build_list_argv` (the only two subcommands #402
+and #404 actually live-verified) both pass `--config
+{exec_cfg['config_path']}`. `build_update_argv`, `build_change_status_argv`,
+`build_delete_argv`, `build_reset_password_argv`, and
+`build_set_admin_argv` — every one of #404's additions — never did. Under
+`sudo -u <exec_user>`, with no cwd or env pointing at the real config, the
+vikunja binary falls back to its own default config discovery, which
+finds nothing and fails before reaching whatever the command was actually
+supposed to do.
+
+**Root cause of the miss**: #404's tests asserted the *presence* of each
+subcommand's own flags (`-u`, `-e`, `--enable`, `--now`, etc.) but never
+cross-checked against the two working builders' shape, so a systematically
+missing flag across five functions had nothing to catch it — one bad
+example wasn't compared against the other one that got it right.
+
+**Fix**: added `--config {shlex.quote(exec_cfg['config_path'])}` to all
+five, in the same position `build_create_argv`/`build_list_argv` already
+use (immediately after the subcommand name). Every existing test that
+asserts an exact adjacent-substring argv shape for these five now
+includes the `--config` segment explicitly, so this specific gap can't
+silently reopen.
+
+**Net effect this corrects**: 5 of this tool's 8 subcommands had never
+actually worked against a real instance before this fix — only
+`create`/`list` had been live-verified. `set-admin` was the first of the
+five ever actually run live, and it's what surfaced this.

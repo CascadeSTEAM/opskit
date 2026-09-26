@@ -239,7 +239,7 @@ def test_admin_flag_runs_set_admin_after_successful_create(mod):
 
     assert run.call_count == 3
     set_admin_call = run.calls[2]["argv"][-1]
-    assert "user set-admin alice --admin" in set_admin_call
+    assert "user set-admin --config /opt/vikunja/config.yaml alice --admin" in set_admin_call
     assert result["admin"] is True
     assert "warnings" not in result
 
@@ -456,7 +456,8 @@ def test_update_resolves_username_then_updates_by_id(mod):
 
     assert result == {"tenant": TENANT, "user_id": "7", "updated": True}
     remote_cmd = run.calls[1]["argv"][-1]
-    assert remote_cmd.endswith("user update 7 -e new@example.org")  # no -u: username wasn't given
+    # no -u: username wasn't given
+    assert remote_cmd.endswith("user update --config /opt/vikunja/config.yaml 7 -e new@example.org")
 
 
 def test_update_by_numeric_id_skips_resolution(mod):
@@ -465,7 +466,7 @@ def test_update_by_numeric_id_skips_resolution(mod):
 
     assert run.call_count == 1  # no `user list` call needed
     remote_cmd = run.calls[0]["argv"][-1]
-    assert "user update 7" in remote_cmd
+    assert "user update --config /opt/vikunja/config.yaml 7" in remote_cmd
     assert "-u newname" in remote_cmd
 
 
@@ -488,7 +489,7 @@ def test_disable_by_username(mod):
 
     assert result == {"tenant": TENANT, "user_id": "7", "enabled": False}
     remote_cmd = run.calls[1]["argv"][-1]
-    assert "user change-status 7" in remote_cmd
+    assert "user change-status --config /opt/vikunja/config.yaml 7" in remote_cmd
     assert "--disable" in remote_cmd
 
 
@@ -518,7 +519,7 @@ def test_delete_without_now_is_email_confirmation_mode(mod):
 
     assert result["mode"] == "email-confirmation-requested"
     remote_cmd = run.calls[0]["argv"][-1]
-    assert "user delete 7" in remote_cmd
+    assert "user delete --config /opt/vikunja/config.yaml 7" in remote_cmd
     assert "--now" not in remote_cmd
 
 
@@ -560,7 +561,7 @@ def test_reset_password_without_direct_is_email_mode_no_password_sent(mod):
     call = run.calls[0]
     assert call["input"] is None
     remote_cmd = call["argv"][-1]
-    assert "user reset-password 7" in remote_cmd
+    assert "user reset-password --config /opt/vikunja/config.yaml 7" in remote_cmd
     assert "--direct" not in remote_cmd
 
 
@@ -611,7 +612,7 @@ def test_set_admin_accepts_username_directly_no_resolution(mod):
     assert run.call_count == 1  # no `user list` call
     assert result == {"tenant": TENANT, "identifier": "alice", "admin": True}
     remote_cmd = run.calls[0]["argv"][-1]
-    assert "user set-admin alice --admin" in remote_cmd
+    assert "user set-admin --config /opt/vikunja/config.yaml alice --admin" in remote_cmd
 
 
 def test_set_admin_no_admin_demotes(mod):
