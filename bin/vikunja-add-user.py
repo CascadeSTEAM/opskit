@@ -4,7 +4,7 @@
 Not an MCP tool, unlike mcp/vikunja-mcp-server.py's vikunja_create_task --
 verified against upstream docs and the community forum, Vikunja has no REST
 API for admin-initiated user creation. When a tenant runs with
-`enableregistration: false` (BMS Vikunja's actual config), the `/register`
+`enableregistration: false` (how at least one deployed tenant here is actually configured), the `/register`
 endpoint is disabled too, by the maintainers' own design -- there is no API
 path around it. The only way to create an account is the tenant's own
 `vikunja user create -u <username> -e <email>` CLI command, run on the host

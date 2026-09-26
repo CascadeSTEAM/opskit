@@ -10,7 +10,7 @@ triggers: vikunja user,add vikunja user,vikunja account,vikunja invite,vikunja s
 > Unlike `vikunja-ticket`, this is **not** an HTTP/MCP integration. Vikunja
 > has no REST API for admin-initiated user creation — verified against
 > upstream docs and the community forum: disabling registration
-> (`enableregistration: false`, how BMS Vikunja is configured) disables
+> (`enableregistration: false`, how at least one tenant here is configured) disables
 > `/register` too, on purpose, with no API alternative offered. The only way
 > to create an account is the tenant's own `vikunja user create` CLI command,
 > run on the host that runs the binary — Linux-server-ops territory

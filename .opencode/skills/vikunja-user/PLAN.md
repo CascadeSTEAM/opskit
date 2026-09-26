@@ -10,8 +10,8 @@ new credential-handling anti-pattern along the way.
 creation is different: checked against upstream docs
 (`vikunja.io/docs/cli/`) and the community forum thread "How to create user
 accounts?" (maintainer reply, verbatim substance): with registration
-disabled — which is how BMS Vikunja is actually configured
-(`environments/bms/datasets/devices/vikunja.md`: `enableregistration: false`,
+disabled — which is how at least one tenant's instance in this repo is
+actually configured (`enableregistration: false`, its env dataset notes
 "Invite users via the admin UI") — `/register` is disabled too, by design,
 with no API alternative. "I wouldn't consider registration disabled if only
 the buttons in the UI were hidden but the api endpoint still available" is
@@ -89,7 +89,7 @@ reads cleanly from a non-TTY stdin pipe when `--password` is omitted is
 taken from the CLI's documented behavior ("You will be asked to enter it if
 not provided"), not confirmed against a live instance — some Go CLI prompt
 libraries require a real terminal fd and fail on a plain pipe. First live
-call against the real BMS instance is the check (see Verification); if it
+call against a real instance is the check (see Verification); if it
 fails, the fallback is `--password` with the generated value still
 constructed at *this* privilege boundary (never chosen by an agent as a
 guessable string) — an argv-exposure risk to accept explicitly, not to
@@ -99,7 +99,7 @@ silently reintroduce.
 
 1. `python3 -m pytest tests/test_vikunja_add_user.py` — offline, argv-shape
    and stdin-vs-argv assertions, error paths, `--admin` sequencing.
-2. First live call: `bin/vikunja-add-user.py bms --username '<test>' --email
+2. First live call: `bin/vikunja-add-user.py <tenant> --username '<test>' --email
    '<test>@example.org'`, then confirm in the Vikunja admin UI that the
    account exists and that the stdin-fed password actually worked (the CLI's
    TTY assumption above, resolved live rather than guessed) — this is
