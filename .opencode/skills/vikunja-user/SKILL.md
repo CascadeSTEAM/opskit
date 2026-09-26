@@ -24,7 +24,7 @@ triggers: vikunja user,add vikunja user,vikunja account,vikunja invite,vikunja s
 | Create a (non-admin) user, auto-generated password | `bin/vikunja-manage-user.py <tenant> create --username <name> --email <email>` |
 | ...with a password you already chose | `... --password '<value>'` |
 | Create and immediately promote to admin | `... --admin` (requires Vikunja Pro — see below) |
-| List all users (raw CLI output, plus admin status if `db_name` is configured) | `bin/vikunja-manage-user.py <tenant> list` |
+| List all users (raw CLI output, plus both admin concepts if `db_name` is configured — see step 6) | `bin/vikunja-manage-user.py <tenant> list` |
 | Change username/email | `bin/vikunja-manage-user.py <tenant> update <user> --username <new>` / `--email <new>` |
 | Disable / re-enable an account | `bin/vikunja-manage-user.py <tenant> disable <user>` / `enable <user>` |
 | Request account deletion (safe default) | `bin/vikunja-manage-user.py <tenant> delete <user>` |
@@ -74,12 +74,25 @@ Steps). Output is JSON on every subcommand: a result dict on success,
    *management* surface (admin panel, `/api/v1/admin/*`), not the
    underlying data — which is why `list` can still report it (next point)
    even on a Pro-less instance.
-6. **`list`'s admin status comes from a direct, read-only Postgres query**,
-   not the CLI or API — the only path that works without a Pro license.
-   It only runs when the tenant's exec config sets `db_name`; without it,
-   `list` behaves exactly as before (raw CLI output only). When configured
-   but the query itself fails, that's a non-fatal `admin_status_error` on
-   the result — the CLI-based listing still comes back.
+6. **`list` reports two distinct, unrelated "admin" concepts** via direct,
+   read-only Postgres queries — neither the CLI nor the API expose either
+   without a Pro license, so this is the only path. Both only run when
+   the tenant's exec config sets `db_name`; without it, `list` behaves
+   exactly as before (raw CLI output only). **Don't conflate them** —
+   getting this wrong once is exactly why this section exists:
+   - `instance_admins` (username → bool): `users.is_admin`, the
+     instance-wide superadmin flag. Pro-gated and inert without a
+     license, so on a community-edition instance every account will
+     correctly show `false` here — that's accurate, not a bug, and not
+     the interesting question on such an instance.
+   - `team_admin_of` (username → list of team names): `team_members.admin`,
+     a **separate, non-Pro-gated** per-team flag. This is the admin
+     concept that actually controls project/task permissions day to day
+     — check this one, not `instance_admins`, when someone asks "is this
+     person an admin" on a self-hosted instance.
+   A failure on either query is its own non-fatal `instance_admin_status_error`
+   / `team_admin_status_error` field — the CLI-based listing, and the
+   other query's result, still come back.
 7. Report any returned `password` back to the operator **once**, as a
    one-time bootstrap value — relay it to the new/affected user
    out-of-band and have them change it immediately. Never write it into a
@@ -111,9 +124,11 @@ Steps). Output is JSON on every subcommand: a result dict on success,
 - SSH/`pct exec` failures (unreachable host, `sudo` misconfigured, wrong
   `ctid`) show up as a non-JSON or empty stderr from the remote side — read
   it literally; safe to just re-run since nothing here retries automatically.
-- `list`'s admin-status query failing (wrong `db_name`, `psql` not on PATH,
-  Postgres unreachable) is an `admin_status_error` field alongside a
-  perfectly good `raw` listing — not a failure of `list` itself.
+- `list`'s admin-status queries failing (wrong `db_name`, `psql` not on
+  PATH, Postgres unreachable, or a schema difference on that one query
+  specifically) is an `instance_admin_status_error` / `team_admin_status_error`
+  field alongside a perfectly good `raw` listing and the other query's
+  result — not a failure of `list` itself.
 
 ## Related
 

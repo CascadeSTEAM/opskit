@@ -19,8 +19,10 @@ vikunja.io/docs/cli/, fetched directly rather than paraphrased):
 
   create          Create a user. Non-admin unless --admin is given.
   list            List all users (raw CLI output -- best-effort, see below).
-                  Also reports is_admin per user, read directly from
-                  Postgres, when the tenant's exec config sets `db_name`.
+                  Also reports two distinct admin concepts, read directly
+                  from Postgres, when the tenant's exec config sets
+                  `db_name`: instance-wide (Pro-gated, always inert here)
+                  and per-team (not Pro-gated, the one that matters).
   update          Change username/email/avatar-provider.
   enable/disable  Toggle account status (`user change-status`).
   delete          By default only EMAILS the user a deletion-confirmation
@@ -73,13 +75,23 @@ vikunja-ticket integration already reads:
       }
     }
 
-`db_name` is optional (opskit #406): omit it and `list` still returns the
-CLI's raw output exactly as before; set it (the Postgres database name the
-vikunja binary's own config.yaml points at) to also get an `admins` dict
-(username -> bool) merged into `list`'s result, read directly from
-Postgres over the same channel -- the only way to see is_admin status on
-an instance without an active Vikunja Pro license, since both the admin
-panel and `/api/v1/admin/*` are gated behind one.
+`db_name` is optional (opskit #406, #408): omit it and `list` still
+returns the CLI's raw output exactly as before; set it (the Postgres
+database name the vikunja binary's own config.yaml points at) to also get
+two admin-related fields merged into `list`'s result, read directly from
+Postgres over the same channel:
+
+  - `instance_admins` (username -> bool): `users.is_admin`, the
+    instance-wide superadmin flag. The only way to see it without an
+    active Vikunja Pro license (both the admin panel and
+    `/api/v1/admin/*` are gated behind one) -- but also reliably `False`
+    for everyone on such an instance, since nothing can ever set it
+    without that license either.
+  - `team_admin_of` (username -> list of team names): `team_members.admin`,
+    a **separate, non-Pro-gated** per-team flag -- this is the admin
+    concept that actually controls permissions day to day on a
+    self-hosted instance, and is easy to conflate with the instance-wide
+    one above (a real mix-up this tool made once; see PLAN.md #408).
 
 Override the tenants file path with VIKUNJA_TENANTS_FILE (same convention as
 mcp/vikunja-mcp-server.py -- keeps tests independent of a developer's real,
@@ -195,10 +207,23 @@ def build_list_argv(exec_cfg: dict) -> list:
     return _remote(exec_cfg, "user list", f"--config {shlex.quote(exec_cfg['config_path'])}")
 
 
-_ADMIN_QUERY = "SELECT username, is_admin FROM users ORDER BY id"
+_INSTANCE_ADMIN_QUERY = "SELECT username, is_admin FROM users ORDER BY id"
+
+# team_members.admin is a completely separate concept from users.is_admin
+# (opskit #408, caught by the operator against the real instance): the
+# former is per-team, controls actual project/task permissions, and works
+# with no license; the latter is instance-wide, Pro-gated, and inert
+# without one. Conflating the two -- or naming them the same thing --
+# is exactly the mistake this issue exists to fix, so every symbol below
+# says "instance" or "team" explicitly, no bare "admin".
+_TEAM_ADMIN_QUERY = (
+    "SELECT u.username, t.name, tm.admin FROM team_members tm "
+    "JOIN users u ON u.id = tm.user_id JOIN teams t ON t.id = tm.team_id "
+    "ORDER BY u.username, t.name"
+)
 
 
-def build_admin_query_argv(exec_cfg: dict, db_name: str) -> list:
+def build_instance_admin_query_argv(exec_cfg: dict, db_name: str) -> list:
     # Vikunja's admin panel and its /api/v1/admin/* API are both gated
     # behind an active Pro license (verified live -- this repo's own
     # deployed instance runs without one), but `is_admin` is a real column
@@ -210,11 +235,19 @@ def build_admin_query_argv(exec_cfg: dict, db_name: str) -> list:
     return _remote_as(
         exec_cfg, "psql",
         f"-d {shlex.quote(db_name)}", "-t", "-A", f"-F {shlex.quote(chr(9))}",
-        f"-c {shlex.quote(_ADMIN_QUERY)}",
+        f"-c {shlex.quote(_INSTANCE_ADMIN_QUERY)}",
     )
 
 
-def _parse_admin_query(output: str) -> dict:
+def build_team_admin_query_argv(exec_cfg: dict, db_name: str) -> list:
+    return _remote_as(
+        exec_cfg, "psql",
+        f"-d {shlex.quote(db_name)}", "-t", "-A", f"-F {shlex.quote(chr(9))}",
+        f"-c {shlex.quote(_TEAM_ADMIN_QUERY)}",
+    )
+
+
+def _parse_instance_admin_query(output: str) -> dict:
     admins = {}
     for line in output.splitlines():
         line = line.strip()
@@ -226,6 +259,26 @@ def _parse_admin_query(output: str) -> dict:
         username, flag = parts
         admins[username] = flag.strip().lower() in ("t", "true", "1")
     return admins
+
+
+def _parse_team_admin_query(output: str) -> dict:
+    """username -> list of team names they're admin of. Non-admin
+    memberships are read (to distinguish a real 'not admin' row from a
+    parse failure) but dropped from the result -- only admin rows are
+    worth surfacing, same as _parse_instance_admin_query keeps every row
+    since False is itself meaningful there."""
+    team_admin_of: dict = {}
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split("\t")
+        if len(parts) != 3:
+            continue
+        username, team, flag = parts
+        if flag.strip().lower() in ("t", "true", "1"):
+            team_admin_of.setdefault(username, []).append(team)
+    return team_admin_of
 
 
 def build_update_argv(
@@ -376,11 +429,23 @@ def list_users(tenant: str, run=subprocess.run) -> dict:
     """Raw `vikunja user list` output -- no documented format to parse into
     structured rows, so this is intentionally the CLI's own text, not a
     reshaped table. When the tenant's exec config sets an optional
-    `db_name`, this also reads is_admin status straight from Postgres
-    (opskit #406) -- the only way to get it on a Pro-less instance -- and
-    merges it in as `admins`. A failure on that second, best-effort read
-    never fails the whole call: the CLI-based listing that already worked
-    must keep working even if this newer path breaks."""
+    `db_name`, this also reads two distinct, unrelated admin concepts
+    straight from Postgres (opskit #406, #408) -- the only way to get
+    either on a Pro-less instance:
+
+      - `instance_admins`: `users.is_admin`, the Pro-gated instance-wide
+        superadmin flag. Inert (and reliably `False` for every account)
+        without an active license, but reported because it's still real
+        data, not a guess.
+      - `team_admin_of`: `team_members.admin`, a per-team flag that is
+        NOT Pro-gated and is how project/task permissions actually work
+        on this kind of instance -- the practically meaningful "admin"
+        question, easy to conflate with the instance-wide one (that
+        conflation is exactly what #408 fixes).
+
+    A failure on either of these best-effort reads never fails the whole
+    call: the CLI-based listing that already worked must keep working
+    even if a newer path breaks."""
     tenants = load_tenants()
     exec_cfg = resolve_exec_config(tenants, tenant)
     listed = run(build_list_argv(exec_cfg), capture_output=True)
@@ -392,11 +457,17 @@ def list_users(tenant: str, run=subprocess.run) -> dict:
 
     db_name = exec_cfg.get("db_name")
     if db_name:
-        admin_query = run(build_admin_query_argv(exec_cfg, db_name), capture_output=True)
-        if admin_query.returncode != 0:
-            result["admin_status_error"] = _text(admin_query.stderr) or _text(admin_query.stdout)
+        instance_query = run(build_instance_admin_query_argv(exec_cfg, db_name), capture_output=True)
+        if instance_query.returncode != 0:
+            result["instance_admin_status_error"] = _text(instance_query.stderr) or _text(instance_query.stdout)
         else:
-            result["admins"] = _parse_admin_query(_text(admin_query.stdout))
+            result["instance_admins"] = _parse_instance_admin_query(_text(instance_query.stdout))
+
+        team_query = run(build_team_admin_query_argv(exec_cfg, db_name), capture_output=True)
+        if team_query.returncode != 0:
+            result["team_admin_status_error"] = _text(team_query.stderr) or _text(team_query.stdout)
+        else:
+            result["team_admin_of"] = _parse_team_admin_query(_text(team_query.stdout))
 
     return result
 

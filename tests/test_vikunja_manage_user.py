@@ -1,4 +1,4 @@
-"""Tests for bin/vikunja-manage-user.py (opskit issues #402, #404).
+"""Tests for bin/vikunja-manage-user.py (opskit issues #402, #404, #406, #408).
 
 Everything here is offline: subprocess.run is replaced with a fake `run`
 callable that records the argv/stdin it was given and returns a canned
@@ -24,6 +24,11 @@ Coverage focus:
     stdin, never argv
   - set-admin: accepts a username or id directly (the one exception to
     id-only), --admin/--no-admin are mutually exclusive
+  - list's admin-status enrichment (#406, corrected #408): opt-in per
+    tenant via db_name; instance-wide (users.is_admin, Pro-gated) and
+    per-team (team_members.admin, not Pro-gated) are separate fields,
+    each with its own non-fatal failure handling independent of the other
+    and of the base CLI listing
 """
 
 import importlib.util
@@ -282,55 +287,100 @@ def test_list_users_failure_is_surfaced(mod):
 # admin-status enrichment via direct DB read (#406) -- opt-in per tenant
 # ---------------------------------------------------------------------------
 
-def test_list_without_db_name_has_no_admin_query_call(mod):
+def test_list_without_db_name_has_no_admin_query_calls(mod):
     run = fake_run([completed(0, stdout=b"id  username\n1   alice\n")])
     result = mod.list_users(TENANT, run=run)
 
-    assert run.call_count == 1  # no psql call for a tenant without db_name
-    assert "admins" not in result
-    assert "admin_status_error" not in result
+    assert run.call_count == 1  # no psql calls for a tenant without db_name
+    assert "instance_admins" not in result
+    assert "instance_admin_status_error" not in result
+    assert "team_admin_of" not in result
+    assert "team_admin_status_error" not in result
 
 
-def test_list_with_db_name_merges_admin_status(mod):
+def test_list_with_db_name_merges_both_admin_fields(mod):
     run = fake_run([
         completed(0, stdout=b"id  username\n1   alice\n2   bob\n"),
         completed(0, stdout=b"alice\tt\nbob\tf\n"),
+        completed(0, stdout=b"alice\tTeam A\tt\nbob\tTeam A\tf\n"),
     ])
     result = mod.list_users(TENANT_WITH_DB, run=run)
 
-    assert result["admins"] == {"alice": True, "bob": False}
-    assert "admin_status_error" not in result
+    assert result["instance_admins"] == {"alice": True, "bob": False}
+    assert result["team_admin_of"] == {"alice": ["Team A"]}
+    assert "instance_admin_status_error" not in result
+    assert "team_admin_status_error" not in result
 
-    admin_query_cmd = run.calls[1]["argv"][-1]
-    assert "psql" in admin_query_cmd
-    assert "-d vikunja" in admin_query_cmd
-    assert "-t" in admin_query_cmd
-    assert "-A" in admin_query_cmd
-    assert "SELECT username, is_admin FROM users" in admin_query_cmd
+    instance_query_cmd = run.calls[1]["argv"][-1]
+    assert "psql" in instance_query_cmd
+    assert "-d vikunja" in instance_query_cmd
+    assert "-t" in instance_query_cmd
+    assert "-A" in instance_query_cmd
+    assert "SELECT username, is_admin FROM users" in instance_query_cmd
     # not routed through the vikunja binary -- psql is a different executable
-    assert "/opt/vikunja/vikunja" not in admin_query_cmd
+    assert "/opt/vikunja/vikunja" not in instance_query_cmd
+
+    team_query_cmd = run.calls[2]["argv"][-1]
+    assert "psql" in team_query_cmd
+    assert "JOIN teams" in team_query_cmd
+    assert "tm.admin" in team_query_cmd
 
 
-def test_admin_query_failure_is_non_fatal_raw_listing_still_returned(mod):
+def test_instance_admin_query_failure_is_non_fatal(mod):
     run = fake_run([
         completed(0, stdout=b"id  username\n1   alice\n"),
         completed(1, stderr=b"psql: error: connection refused"),
+        completed(0, stdout=b"alice\tTeam A\tt\n"),
     ])
     result = mod.list_users(TENANT_WITH_DB, run=run)
 
     assert result["raw"] == "id  username\n1   alice"
-    assert "admins" not in result
-    assert "connection refused" in result["admin_status_error"]
+    assert "instance_admins" not in result
+    assert "connection refused" in result["instance_admin_status_error"]
+    assert result["team_admin_of"] == {"alice": ["Team A"]}  # unaffected
 
 
-def test_parse_admin_query_handles_tab_separated_rows(mod):
-    parsed = mod._parse_admin_query("alice\tt\nbob\tf\n\n")
+def test_team_admin_query_failure_is_non_fatal(mod):
+    run = fake_run([
+        completed(0, stdout=b"id  username\n1   alice\n"),
+        completed(0, stdout=b"alice\tt\n"),
+        completed(1, stderr=b"psql: error: relation \"team_members\" does not exist"),
+    ])
+    result = mod.list_users(TENANT_WITH_DB, run=run)
+
+    assert result["raw"] == "id  username\n1   alice"
+    assert result["instance_admins"] == {"alice": True}  # unaffected
+    assert "team_admin_of" not in result
+    assert "team_members" in result["team_admin_status_error"]
+
+
+def test_parse_instance_admin_query_handles_tab_separated_rows(mod):
+    parsed = mod._parse_instance_admin_query("alice\tt\nbob\tf\n\n")
     assert parsed == {"alice": True, "bob": False}
 
 
-def test_parse_admin_query_ignores_malformed_lines(mod):
-    parsed = mod._parse_admin_query("alice\tt\nnot-a-valid-row\nbob\tf\n")
+def test_parse_instance_admin_query_ignores_malformed_lines(mod):
+    parsed = mod._parse_instance_admin_query("alice\tt\nnot-a-valid-row\nbob\tf\n")
     assert parsed == {"alice": True, "bob": False}
+
+
+def test_parse_team_admin_query_only_reports_admin_rows(mod):
+    # alice is admin of two teams; bob is a member of one but not admin
+    # there, and has no row at all for a team they don't belong to.
+    parsed = mod._parse_team_admin_query(
+        "alice\tTeam A\tt\n"
+        "alice\tTeam B\tt\n"
+        "bob\tTeam A\tf\n"
+    )
+    assert parsed == {"alice": ["Team A", "Team B"]}
+    assert "bob" not in parsed
+
+
+def test_parse_team_admin_query_ignores_malformed_lines(mod):
+    parsed = mod._parse_team_admin_query(
+        "alice\tTeam A\tt\nnot-a-valid-row\nbob\tTeam A\tf\n"
+    )
+    assert parsed == {"alice": ["Team A"]}
 
 
 # ---------------------------------------------------------------------------

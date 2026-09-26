@@ -227,3 +227,53 @@ Confirmed live that local peer auth via the OS user needs no password.
 **Deliberately out of scope**: any write path through this channel (this
 is a `SELECT`, on purpose, nothing else), and surfacing `is_admin` anywhere
 other than `list` (e.g. `create`'s result) until a real need shows up.
+
+## Correction: instance admin ≠ team admin (opskit #408)
+
+#406 shipped, got a live `list` call run against it, and the operator
+immediately caught a real mistake: a known account was reported as
+non-admin when they clearly were one, in the sense the operator meant.
+
+**What #406 actually measured**: `users.is_admin`, the instance-wide
+superadmin flag — accurately `false` for every account on this instance,
+because it's Pro-gated and this instance has no license, so nothing could
+ever have set it `true`. Technically correct, practically useless: on a
+community-edition instance, *nobody* will ever show `true` there, so the
+field can't distinguish anything.
+
+**What the operator actually meant**, found by searching
+`information_schema.columns` for every column named like `%admin%` rather
+than assuming the one already found was the only one: `team_members.admin`
+— a per-team-membership flag, **not** Pro-gated, and the mechanism that
+actually governs project/task permissions on this kind of instance. A
+live join across `team_members`/`users`/`teams` showed real accounts
+genuinely are team admins (multiple teams, in one case), confirming this
+is the practically meaningful field, not a hypothetical alternative.
+
+**Fix, not a patch**: rather than swap one field for the other (which
+would just relocate the same ambiguity — a future reader would still not
+know which "admin" a bare `admins` field meant), both are kept, renamed to
+be unambiguous on sight: `instance_admins` and `team_admin_of`. Every
+identifier in the code (`_INSTANCE_ADMIN_QUERY` /`_TEAM_ADMIN_QUERY`,
+`build_instance_admin_query_argv` / `build_team_admin_query_argv`,
+`_parse_instance_admin_query` / `_parse_team_admin_query`) says which one
+explicitly — no bare "admin" symbol left anywhere for a future edit to
+misuse the way this one did.
+
+`_parse_team_admin_query` only keeps rows where `tm.admin` is true (a
+username with no team-admin roles simply doesn't appear in
+`team_admin_of`, rather than appearing with an empty list) — a shorter,
+more useful shape than mirroring `instance_admins`' every-row dict, since
+"is this user an instance admin" has exactly one yes/no answer per user
+while "which teams is this user admin of" is naturally a membership list,
+often empty.
+
+**Lesson worth stating plainly**: an AI-summarized web page's claim about
+Vikunja's data model (quoted in #406's own PLAN.md section as "unverified
+secondary evidence") turned out to be *directionally* right — is_admin
+does exist independent of Pro — but incomplete in a way that mattered: it
+said nothing about team-level admin at all, because that wasn't the
+question asked of it. The fix wasn't reading more secondary sources more
+carefully; it was going back to the live schema and asking a broader
+question ("what columns are named like admin, anywhere") instead of
+stopping at the first match.
