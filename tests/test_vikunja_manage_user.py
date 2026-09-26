@@ -54,12 +54,16 @@ EXEC_CFG = {
     "config_path": "/opt/vikunja/config.yaml",
 }
 
+TENANT_WITH_DB = "client-with-db"
+EXEC_CFG_WITH_DB = {**EXEC_CFG, "db_name": "vikunja"}
+
 
 @pytest.fixture
 def isolated_tenants_file(tmp_path, monkeypatch):
     fixture_file = tmp_path / "tenants-vikunja.local.json"
     fixture_file.write_text(__import__("json").dumps({
         TENANT: {"base_url": "https://vikunja.example.org", "exec": EXEC_CFG},
+        TENANT_WITH_DB: {"base_url": "https://vikunja.example.org", "exec": EXEC_CFG_WITH_DB},
         "no-exec": {"base_url": "https://other.example.org"},
     }))
     monkeypatch.setenv("VIKUNJA_TENANTS_FILE", str(fixture_file))
@@ -272,6 +276,61 @@ def test_list_users_failure_is_surfaced(mod):
     run = fake_run([completed(1, stderr=b"connection refused")])
     with pytest.raises(RuntimeError, match="connection refused"):
         mod.list_users(TENANT, run=run)
+
+
+# ---------------------------------------------------------------------------
+# admin-status enrichment via direct DB read (#406) -- opt-in per tenant
+# ---------------------------------------------------------------------------
+
+def test_list_without_db_name_has_no_admin_query_call(mod):
+    run = fake_run([completed(0, stdout=b"id  username\n1   alice\n")])
+    result = mod.list_users(TENANT, run=run)
+
+    assert run.call_count == 1  # no psql call for a tenant without db_name
+    assert "admins" not in result
+    assert "admin_status_error" not in result
+
+
+def test_list_with_db_name_merges_admin_status(mod):
+    run = fake_run([
+        completed(0, stdout=b"id  username\n1   alice\n2   bob\n"),
+        completed(0, stdout=b"alice\tt\nbob\tf\n"),
+    ])
+    result = mod.list_users(TENANT_WITH_DB, run=run)
+
+    assert result["admins"] == {"alice": True, "bob": False}
+    assert "admin_status_error" not in result
+
+    admin_query_cmd = run.calls[1]["argv"][-1]
+    assert "psql" in admin_query_cmd
+    assert "-d vikunja" in admin_query_cmd
+    assert "-t" in admin_query_cmd
+    assert "-A" in admin_query_cmd
+    assert "SELECT username, is_admin FROM users" in admin_query_cmd
+    # not routed through the vikunja binary -- psql is a different executable
+    assert "/opt/vikunja/vikunja" not in admin_query_cmd
+
+
+def test_admin_query_failure_is_non_fatal_raw_listing_still_returned(mod):
+    run = fake_run([
+        completed(0, stdout=b"id  username\n1   alice\n"),
+        completed(1, stderr=b"psql: error: connection refused"),
+    ])
+    result = mod.list_users(TENANT_WITH_DB, run=run)
+
+    assert result["raw"] == "id  username\n1   alice"
+    assert "admins" not in result
+    assert "connection refused" in result["admin_status_error"]
+
+
+def test_parse_admin_query_handles_tab_separated_rows(mod):
+    parsed = mod._parse_admin_query("alice\tt\nbob\tf\n\n")
+    assert parsed == {"alice": True, "bob": False}
+
+
+def test_parse_admin_query_ignores_malformed_lines(mod):
+    parsed = mod._parse_admin_query("alice\tt\nnot-a-valid-row\nbob\tf\n")
+    assert parsed == {"alice": True, "bob": False}
 
 
 # ---------------------------------------------------------------------------

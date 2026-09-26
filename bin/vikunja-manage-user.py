@@ -19,6 +19,8 @@ vikunja.io/docs/cli/, fetched directly rather than paraphrased):
 
   create          Create a user. Non-admin unless --admin is given.
   list            List all users (raw CLI output -- best-effort, see below).
+                  Also reports is_admin per user, read directly from
+                  Postgres, when the tenant's exec config sets `db_name`.
   update          Change username/email/avatar-provider.
   enable/disable  Toggle account status (`user change-status`).
   delete          By default only EMAILS the user a deletion-confirmation
@@ -65,10 +67,19 @@ vikunja-ticket integration already reads:
           "ctid": <proxmox LXC id>,
           "exec_user": "vikunja",
           "binary": "/opt/vikunja/vikunja",
-          "config_path": "/opt/vikunja/config.yaml"
+          "config_path": "/opt/vikunja/config.yaml",
+          "db_name": "vikunja"
         }
       }
     }
+
+`db_name` is optional (opskit #406): omit it and `list` still returns the
+CLI's raw output exactly as before; set it (the Postgres database name the
+vikunja binary's own config.yaml points at) to also get an `admins` dict
+(username -> bool) merged into `list`'s result, read directly from
+Postgres over the same channel -- the only way to see is_admin status on
+an instance without an active Vikunja Pro license, since both the admin
+panel and `/api/v1/admin/*` are gated behind one.
 
 Override the tenants file path with VIKUNJA_TENANTS_FILE (same convention as
 mcp/vikunja-mcp-server.py -- keeps tests independent of a developer's real,
@@ -147,7 +158,7 @@ def resolve_exec_config(tenants: dict, tenant: str) -> dict:
     return exec_cfg
 
 
-def _remote(exec_cfg: dict, *parts: str) -> list:
+def _remote_as(exec_cfg: dict, executable: str, *parts: str) -> list:
     # ssh hands its whole remote-command argument to the target's shell
     # (`sh -c "..."`), so every interpolated value -- not just
     # username/email -- must be shell-quoted here, or a value containing
@@ -155,10 +166,17 @@ def _remote(exec_cfg: dict, *parts: str) -> list:
     # its own service user (opskit #402 review finding).
     remote_cmd = " ".join((
         f"pct exec {shlex.quote(str(exec_cfg['ctid']))} --",
-        f"sudo -u {shlex.quote(exec_cfg['exec_user'])} {shlex.quote(exec_cfg['binary'])}",
+        f"sudo -u {shlex.quote(exec_cfg['exec_user'])} {shlex.quote(executable)}",
         *parts,
     ))
     return ["ssh", "-o", "BatchMode=yes", exec_cfg["ssh_host"], remote_cmd]
+
+
+def _remote(exec_cfg: dict, *parts: str) -> list:
+    """The vikunja binary itself -- every `user <subcommand>` call.
+    `_remote_as` is the lower-level form for a different executable
+    (`psql`, for the admin-status read; opskit #406)."""
+    return _remote_as(exec_cfg, exec_cfg["binary"], *parts)
 
 
 def build_create_argv(
@@ -175,6 +193,39 @@ def build_create_argv(
 
 def build_list_argv(exec_cfg: dict) -> list:
     return _remote(exec_cfg, "user list", f"--config {shlex.quote(exec_cfg['config_path'])}")
+
+
+_ADMIN_QUERY = "SELECT username, is_admin FROM users ORDER BY id"
+
+
+def build_admin_query_argv(exec_cfg: dict, db_name: str) -> list:
+    # Vikunja's admin panel and its /api/v1/admin/* API are both gated
+    # behind an active Pro license (verified live -- this repo's own
+    # deployed instance runs without one), but `is_admin` is a real column
+    # on the `users` table regardless of license: Pro gates the
+    # *management* surface, not the underlying data (opskit #406). psql's
+    # `-t -A` (unaligned, tuples-only) plus a tab field separator makes the
+    # output trivially parseable without depending on `user list`'s
+    # box-drawing table format.
+    return _remote_as(
+        exec_cfg, "psql",
+        f"-d {shlex.quote(db_name)}", "-t", "-A", f"-F {shlex.quote(chr(9))}",
+        f"-c {shlex.quote(_ADMIN_QUERY)}",
+    )
+
+
+def _parse_admin_query(output: str) -> dict:
+    admins = {}
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split("\t")
+        if len(parts) != 2:
+            continue
+        username, flag = parts
+        admins[username] = flag.strip().lower() in ("t", "true", "1")
+    return admins
 
 
 def build_update_argv(
@@ -324,7 +375,12 @@ def create_user(
 def list_users(tenant: str, run=subprocess.run) -> dict:
     """Raw `vikunja user list` output -- no documented format to parse into
     structured rows, so this is intentionally the CLI's own text, not a
-    reshaped table."""
+    reshaped table. When the tenant's exec config sets an optional
+    `db_name`, this also reads is_admin status straight from Postgres
+    (opskit #406) -- the only way to get it on a Pro-less instance -- and
+    merges it in as `admins`. A failure on that second, best-effort read
+    never fails the whole call: the CLI-based listing that already worked
+    must keep working even if this newer path breaks."""
     tenants = load_tenants()
     exec_cfg = resolve_exec_config(tenants, tenant)
     listed = run(build_list_argv(exec_cfg), capture_output=True)
@@ -332,7 +388,17 @@ def list_users(tenant: str, run=subprocess.run) -> dict:
         raise RuntimeError(
             f"vikunja user list failed: {_text(listed.stderr) or _text(listed.stdout)}"
         )
-    return {"tenant": tenant, "raw": _text(listed.stdout)}
+    result = {"tenant": tenant, "raw": _text(listed.stdout)}
+
+    db_name = exec_cfg.get("db_name")
+    if db_name:
+        admin_query = run(build_admin_query_argv(exec_cfg, db_name), capture_output=True)
+        if admin_query.returncode != 0:
+            result["admin_status_error"] = _text(admin_query.stderr) or _text(admin_query.stdout)
+        else:
+            result["admins"] = _parse_admin_query(_text(admin_query.stdout))
+
+    return result
 
 
 def update_user(
