@@ -168,3 +168,62 @@ betting the whole feature on one guessed table shape.
 call still manages exactly one account), and anything that would require
 an actual Vikunja Pro license to test against (only documented, not built
 around blindly).
+
+## Extension: is_admin via direct DB read (opskit #406)
+
+Added after the first live call against a real instance (#402/#404's own
+"first live call" verification step, finally exercised): the operator
+asked `list` to also show whether each user is an instance admin.
+
+**Verified live, not guessed, before writing any code**: `vikunja user
+list`'s real output is a box-drawn table (`ID │ USERNAME │ EMAIL │ STATUS │
+ISSUER │ SUBJECT │ CREATED │ UPDATED`) — confirming `_resolve_user_id`'s
+tokenizer handles it correctly (the timestamp columns' colon-separated
+digit fragments could have collided with the true ID column; they don't,
+because the ID column is always the first digit-token left to right, and
+that's what the resolver takes). No admin column, no flags at all, matching
+the CLI docs. Separately, `\d users` on the live Postgres instance showed
+`is_admin boolean not null default false` as a real column, and `SELECT
+id, username, is_admin, status FROM users` showed all ten real accounts —
+including the original `admin` user — currently `is_admin = false`, with
+the CLI itself logging `"No license key configured. Pro features have been
+disabled."` on every invocation. So: the license gate is real and confirmed,
+but it gates the *management* surface (admin panel, `/api/v1/admin/*`), not
+the underlying column, which is exactly what makes a direct DB read the
+right tool here rather than a dead end.
+
+An AI-summarized web page had also claimed this same shape ("the flag
+still exists in community mode") before the live check — treated as
+unverified secondary evidence until confirmed directly against the real
+schema and data, not taken on its own.
+
+**Design**: `_remote()` was split into a generic `_remote_as(exec_cfg,
+executable, *parts)` (still `pct exec <ctid> -- sudo -u <exec_user>
+<executable> <parts>`, shell-quoted the same way) plus `_remote(exec_cfg,
+*parts)` as the vikunja-binary-specific case every existing subcommand
+already used — no behavior change for any of them. `build_admin_query_argv`
+uses `_remote_as(exec_cfg, "psql", ...)` to run `SELECT username, is_admin
+FROM users ORDER BY id` with `-t -A -F <tab>` (unaligned, tuples-only,
+tab-separated) so parsing never depends on `user list`'s box-drawing
+format — a completely different, trivially-parseable channel for this one
+query.
+
+A new **optional** per-tenant exec-config key, `db_name`: optional because
+this is enrichment on `list`, not a requirement for `list` to keep doing
+what it already did. Tenants without it get exactly the old behavior — no
+new required config, no test changes needed for #402/#404's existing
+suite. When set, `list_users()` runs the query and merges an `admins`
+dict (`username -> bool`) into its result; when the query itself fails
+(wrong `db_name`, `psql` missing, Postgres unreachable), that's a
+non-fatal `admin_status_error` field, not a failure of `list` — the raw
+CLI listing that already worked must keep working even if this newer,
+less-exercised path breaks.
+
+No new credential: still SSH host-key trust + passwordless sudo to the
+`exec_user`, same as everything else — just a different program (`psql`
+instead of the vikunja binary) invoked through the identical channel.
+Confirmed live that local peer auth via the OS user needs no password.
+
+**Deliberately out of scope**: any write path through this channel (this
+is a `SELECT`, on purpose, nothing else), and surfacing `is_admin` anywhere
+other than `list` (e.g. `create`'s result) until a real need shows up.

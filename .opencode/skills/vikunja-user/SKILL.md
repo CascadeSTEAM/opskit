@@ -24,7 +24,7 @@ triggers: vikunja user,add vikunja user,vikunja account,vikunja invite,vikunja s
 | Create a (non-admin) user, auto-generated password | `bin/vikunja-manage-user.py <tenant> create --username <name> --email <email>` |
 | ...with a password you already chose | `... --password '<value>'` |
 | Create and immediately promote to admin | `... --admin` (requires Vikunja Pro — see below) |
-| List all users (raw CLI output) | `bin/vikunja-manage-user.py <tenant> list` |
+| List all users (raw CLI output, plus admin status if `db_name` is configured) | `bin/vikunja-manage-user.py <tenant> list` |
 | Change username/email | `bin/vikunja-manage-user.py <tenant> update <user> --username <new>` / `--email <new>` |
 | Disable / re-enable an account | `bin/vikunja-manage-user.py <tenant> disable <user>` / `enable <user>` |
 | Request account deletion (safe default) | `bin/vikunja-manage-user.py <tenant> delete <user>` |
@@ -69,14 +69,24 @@ Steps). Output is JSON on every subcommand: a result dict on success,
    self-hosted community-edition instance will fail this call outright.
    `create --admin` inherits the same constraint; its failure is a
    `warnings` entry on the create's success envelope, not a bare error,
-   because the account already exists by then.
-6. Report any returned `password` back to the operator **once**, as a
+   because the account already exists by then. `is_admin` is still a real
+   column on the `users` table regardless of license — Pro only gates the
+   *management* surface (admin panel, `/api/v1/admin/*`), not the
+   underlying data — which is why `list` can still report it (next point)
+   even on a Pro-less instance.
+6. **`list`'s admin status comes from a direct, read-only Postgres query**,
+   not the CLI or API — the only path that works without a Pro license.
+   It only runs when the tenant's exec config sets `db_name`; without it,
+   `list` behaves exactly as before (raw CLI output only). When configured
+   but the query itself fails, that's a non-fatal `admin_status_error` on
+   the result — the CLI-based listing still comes back.
+7. Report any returned `password` back to the operator **once**, as a
    one-time bootstrap value — relay it to the new/affected user
    out-of-band and have them change it immediately. Never write it into a
    session note, an issue, a PR, or any other tracked file
    (`.opencode/rules/no-plaintext-creds.md`). This tool doesn't store it
    anywhere either; once printed, it's gone.
-7. On `create`, check `verified` in the result — it's `true` only if the
+8. On `create`, check `verified` in the result — it's `true` only if the
    username showed up in a follow-up `vikunja user list` on that same
    host. `false` is worth a second look even though `created` was `true`;
    it doesn't undo the create, just flags a `user list` parsing mismatch
@@ -101,6 +111,9 @@ Steps). Output is JSON on every subcommand: a result dict on success,
 - SSH/`pct exec` failures (unreachable host, `sudo` misconfigured, wrong
   `ctid`) show up as a non-JSON or empty stderr from the remote side — read
   it literally; safe to just re-run since nothing here retries automatically.
+- `list`'s admin-status query failing (wrong `db_name`, `psql` not on PATH,
+  Postgres unreachable) is an `admin_status_error` field alongside a
+  perfectly good `raw` listing — not a failure of `list` itself.
 
 ## Related
 
