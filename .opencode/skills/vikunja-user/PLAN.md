@@ -1,4 +1,4 @@
-# Plan: Vikunja user-creation tool (opskit #402)
+# Plan: Vikunja user-management tool (opskit #402, extended #404)
 
 Goal: let the agent create a real Vikunja account (username + email,
 non-admin by default) and report a one-time password, without inventing a
@@ -30,11 +30,13 @@ through `@linux`, not through a new HTTP client.
 
 ## Architecture
 
-- **`bin/vikunja-add-user.py`** (new) — one function, `create_user(tenant,
-  username, email, password, make_admin, run=subprocess.run)`, plus a thin
-  `main()`. `run` is an injected seam so tests never touch a real
-  socket/subprocess (mirrors how `mcp/vikunja-mcp-server.py`'s tests
-  monkeypatch `get_client`, not `requests` itself).
+- **`bin/vikunja-manage-user.py`** (renamed from `vikunja-add-user.py` in
+  #404, once its scope outgrew "add") — one function per action
+  (`create_user`, `list_users`, `update_user`, `set_status`, `delete_user`,
+  `reset_password`, `set_admin`), each taking `run=subprocess.run` as an
+  injected seam so tests never touch a real socket/subprocess (mirrors how
+  `mcp/vikunja-mcp-server.py`'s tests monkeypatch `get_client`, not
+  `requests` itself).
   - Reads the tenant's `exec` block from the **same** gitignored
     `mcp/tenants-vikunja.local.json` `vikunja-ticket` already uses — one
     tenant file, two transports (`base_url` for HTTP, `exec` for CLI), not a
@@ -97,22 +99,72 @@ silently reintroduce.
 
 ## Verification
 
-1. `python3 -m pytest tests/test_vikunja_add_user.py` — offline, argv-shape
+1. `python3 -m pytest tests/test_vikunja_manage_user.py` — offline, argv-shape
    and stdin-vs-argv assertions, error paths, `--admin` sequencing.
-2. First live call: `bin/vikunja-add-user.py <tenant> --username '<test>' --email
+2. First live call: `bin/vikunja-manage-user.py <tenant> create --username '<test>' --email
    '<test>@example.org'`, then confirm in the Vikunja admin UI that the
    account exists and that the stdin-fed password actually worked (the CLI's
    TTY assumption above, resolved live rather than guessed) — this is
    exactly the kind of fact `vikunja-ticket`'s own plan flagged as "taken
    from memory rather than a live call" until it had one.
-3. Delete or disable the test account afterward — this tool has no
-   `--delete`; use `vikunja user delete <id>` by hand through `@linux` if the
-   test account shouldn't remain.
+3. Delete or disable the test account afterward: `bin/vikunja-manage-user.py
+   <tenant> delete <test> --now` (immediate) — or `disable <test>` to keep it
+   around inert instead.
 
-## Deliberately out of scope for v1
+## Deliberately out of scope (v1, #402)
 
 No bulk/batch creation, no team assignment, no password reset flow (that's
 `vikunja user reset-password`, a separate concern), no email-invite (Vikunja
 has no CLI-triggered invite email; the operator relays the one-time password
 themselves). Add more only once a real need shows up, same discipline
 `vikunja-ticket`'s plan already set.
+
+## Extension: full account lifecycle (opskit #404)
+
+Added once the operator asked for "fully managing users," not just create.
+Same architecture, same tool, five more actions plus the rename above.
+
+Upstream facts fetched **verbatim** from `vikunja.io/docs/cli/` (not a
+paraphrase, to avoid compounding an already-thin evidence base with a
+second layer of guessing):
+
+- `user update [user id]`, `user change-status [user id]`, `user delete
+  [id]`, `user reset-password [user id]` all take a **numeric id**.
+  `user set-admin [username-or-id]` is the one documented exception that
+  accepts either — so `set_admin()` passes its `identifier` straight
+  through, unlike every other new action.
+- `user delete` without `--now` **only emails the user a confirmation
+  link** — the same flow as self-service deletion, and nothing is deleted
+  until they act on it. `--now` deletes immediately: upstream's own docs
+  say "USE WITH CAUTION." `reset_password()` mirrors this same
+  safe-by-default shape: no `--direct` means an email, `--direct` sets the
+  password immediately (over stdin, generated if omitted, never argv —
+  same fix class as `create`).
+- `user set-admin` **"Requires an active Vikunja Pro license with the
+  admin panel feature."** A self-hosted community-edition tenant (which is
+  what this repo's own deployed instance is) will fail this call outright.
+  That's not a bug to catch here — it surfaces as an ordinary `RuntimeError`
+  with the CLI's own stderr, same as any other remote failure. Documented
+  prominently in SKILL.md so an operator doesn't mistake a license error
+  for a broken tool.
+- `user list` still has no documented output format or `--output json`
+  flag, so id resolution has the exact same evidentiary status as
+  `create`'s post-create verification: best-effort, never a silent guess.
+
+**`_resolve_user_id()`** is the one new piece of real logic: a numeric
+identifier is used as-is (no network call); a username runs `user list`
+and looks for lines whose tokens include it exactly, taking the first
+digit-token on each matching line as an id candidate. Zero candidates or
+disagreeing candidates across multiple lines is a `LookupError` naming
+what happened, never a guess — same "zero or ambiguous is an error"
+convention as project/label/user matching everywhere else in this repo.
+Tokenizing splits on runs of non-word/`@`/`.`/`-` characters rather than
+plain whitespace, so a comma- or pipe-separated table parses the same as
+a whitespace-aligned one — `user list`'s actual format is still unverified
+against a live instance, so this stays deliberately permissive rather than
+betting the whole feature on one guessed table shape.
+
+**Deliberately out of scope for #404 too**: bulk/batch operations (each
+call still manages exactly one account), and anything that would require
+an actual Vikunja Pro license to test against (only documented, not built
+around blindly).
