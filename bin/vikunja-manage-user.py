@@ -285,7 +285,10 @@ def build_update_argv(
     exec_cfg: dict, user_id: str, username: str = None, email: str = None,
     avatar_provider: str = None,
 ) -> list:
-    parts = ["user update", shlex.quote(str(user_id))]
+    parts = [
+        "user update", f"--config {shlex.quote(exec_cfg['config_path'])}",
+        shlex.quote(str(user_id)),
+    ]
     if username is not None:
         parts.append(f"-u {shlex.quote(username)}")
     if email is not None:
@@ -297,20 +300,26 @@ def build_update_argv(
 
 def build_change_status_argv(exec_cfg: dict, user_id: str, enable: bool) -> list:
     return _remote(
-        exec_cfg, "user change-status", shlex.quote(str(user_id)),
-        "--enable" if enable else "--disable",
+        exec_cfg, "user change-status", f"--config {shlex.quote(exec_cfg['config_path'])}",
+        shlex.quote(str(user_id)), "--enable" if enable else "--disable",
     )
 
 
 def build_delete_argv(exec_cfg: dict, user_id: str, now: bool) -> list:
-    parts = ["user delete", shlex.quote(str(user_id))]
+    parts = [
+        "user delete", f"--config {shlex.quote(exec_cfg['config_path'])}",
+        shlex.quote(str(user_id)),
+    ]
     if now:
         parts.append("--now")
     return _remote(exec_cfg, *parts)
 
 
 def build_reset_password_argv(exec_cfg: dict, user_id: str, direct: bool) -> list:
-    parts = ["user reset-password", shlex.quote(str(user_id))]
+    parts = [
+        "user reset-password", f"--config {shlex.quote(exec_cfg['config_path'])}",
+        shlex.quote(str(user_id)),
+    ]
     if direct:
         parts.append("--direct")
     return _remote(exec_cfg, *parts)
@@ -318,8 +327,8 @@ def build_reset_password_argv(exec_cfg: dict, user_id: str, direct: bool) -> lis
 
 def build_set_admin_argv(exec_cfg: dict, identifier: str, admin: bool) -> list:
     return _remote(
-        exec_cfg, "user set-admin", shlex.quote(identifier),
-        "--admin" if admin else "--no-admin",
+        exec_cfg, "user set-admin", f"--config {shlex.quote(exec_cfg['config_path'])}",
+        shlex.quote(identifier), "--admin" if admin else "--no-admin",
     )
 
 
