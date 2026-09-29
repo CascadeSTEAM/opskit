@@ -24,10 +24,19 @@
   (`github-cli` skill). OpenCode alone also has a scoped, self-hosted `github`
   MCP (context/issues/pull_requests/repos, #386) for inline PR review-comment
   threads specifically — Claude Code and Crush still have none.
+- DNS/DHCP → use `@technitium` subagent (has native `technitium_*` tools).
+  Reads `environments/$ACTIVE_ENV/agents.yml` at session start for instance
+  names, scopes, and zones. Other agents reach Technitium via the
+  `bin/mcp-call.py technitium` bridge if needed.
+- Proxmox VE → use `@proxmox` subagent (has native `proxmox_*` tools).
+  Multi-env: BMS, CS, YC. Other agents reach Proxmox via the
+  `bin/mcp-call.py proxmox` bridge if needed.
 - Linux server ops → use `@linux` subagent (mikromcp tools denied at runtime)
 - Security audit / SOC2 / CVE / hardening on a Linux host → also `@linux` — it
   already denies `mikromcp_*`, so a request in scope for one host with
   MikroTik gear elsewhere in the environment stays unable to touch it.
+- Dev environment / project setup / skill install → use `@dev-env` subagent
+  (detects project type, installs appropriate AI agent skills).
 - Default task → use `build` agent (full tool access, bash: ask)
 
 If you are NOT in a domain-specific subagent and the task matches one, switch. Example: user asks about a router → invoke `@mikrotik` via Task tool.
@@ -115,7 +124,9 @@ All scripts are data-driven — they read from `environments/$ACTIVE_ENV/env.yml
 - `@incident` — incident, breach, outage, P1-P4 response
 - `@skill-builder` — create/fix/audit OpenCode skills
 - `@mikrotik` — RouterOS devices: switches, routers, WiFi APs, CAPsMAN (relay-shell denied, mikromcp only)
-- `@linux` — Linux server administration: Ubuntu, Ansible, Docker, Proxmox, and security audit/CVE/hardening on Linux hosts (mikromcp denied)
+- `@technitium` — Technitium DNS/DHCP: zones, records, scopes, reservations, cache (native technitium_* tools, reads agents.yml)
+- `@proxmox` — Proxmox VE clusters: VMs, containers, nodes, storage, snapshots, backups (native proxmox_* tools, multi-env: BMS, CS, YC)
+- `@linux` — Linux server administration: Ubuntu, Ansible, Docker, and security audit/CVE/hardening on Linux hosts (mikromcp denied)
 - `@code-reviewer` — reviews this repo and verifies findings by reproducing them (repo-scoped reads + this repo's own tests; edit/write/webfetch and every infrastructure namespace denied)
 
 Always use `@skill-builder` for new skills — enforces 4-field frontmatter and 60-line limit.

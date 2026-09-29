@@ -1,0 +1,18 @@
+# environments/example/agents.yml — fictional reference environment
+# All data uses documentation-range addresses. Conforms to no formal schema yet;
+# agents.yml describes which agent/tool to reach for each domain in this env.
+# See AGENTS.md for the project-level domain→agent mapping.
+
+# This file is gitignored (environments/*/). Never commit real instance data.
+
+dns:
+  agent: "@technitium"
+  provider: "technitium"
+  instances:
+    - name: "ex-dns"
+      description: "Example DNS+DHCP — do not touch"
+      status: active
+      dhcp:
+        scope: "Example Scope"
+        range: "192.0.2.10-192.0.2.254"
+        netmask: "255.255.255.0"
