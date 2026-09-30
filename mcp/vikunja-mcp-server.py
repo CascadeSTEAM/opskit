@@ -359,6 +359,7 @@ def vikunja_complete_task(
     tenant: str,
     task_id: int,
     approval_code: str,
+    done: bool = True,
 ) -> str:
     """
     Mark a task as done or undo done (re-open).
@@ -372,6 +373,7 @@ def vikunja_complete_task(
         task_id: Vikunja task API integer ID.
         approval_code: One-time approval code from the human. Without
             a valid code, the operation is rejected and logged.
+        done: True to mark done, False to re-open (default True).
     """
     if tenant not in TENANTS:
         return f"Invalid tenant '{tenant}'. Choose: {', '.join(TENANTS.keys())}"
@@ -386,7 +388,7 @@ def vikunja_complete_task(
 
     try:
         client = get_client(tenant)
-        result = client.complete_task(task_id, done=True)
+        result = client.complete_task(task_id, done=done)
         base_url = TENANTS[tenant]["base_url"].rstrip("/")
         return json.dumps({
             "status": "completed",
