@@ -116,3 +116,6 @@ grind-state.md
 # transient sqlite sidecars
 /proxmox-jobs.sqlite3-shm
 /proxmox-jobs.sqlite3-wal
+
+# Vikunja approval codes (one-time, human-generated secrets)
+mcp/vikunja-approval-codes.json

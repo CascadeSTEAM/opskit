@@ -3,9 +3,15 @@
 Vikunja MCP Server — task creation in a Vikunja instance (opskit issue #393).
 
 Tools:
-  vikunja_create_task   Create a task in a project, resolved by name, with
-                         optional priority/due date/assignees/labels, and
-                         report the task's URL (opskit issue #396)
+  vikunja_create_task         Create a task in a project, resolved by name, with
+                               optional priority/due date/assignees/labels, and
+                               report the task's URL (opskit issue #396)
+  vikunja_complete_task       Mark a task as done (requires human approval code)
+  vikunja_delete_task         Delete a task (requires human approval code)
+
+  Guarded tools (complete_task, delete_task) refuse to act without an explicit
+  one-time approval code. An agent session may NOT call these on its own — they
+  are human-initiated operations only. The MCP server logs every attempt.
 
 Usage:
   python3 mcp/vikunja-mcp-server.py            # stdio MCP server
@@ -178,6 +184,25 @@ class VikunjaClient:
         resp.raise_for_status()
         return resp.json()
 
+    def delete_task(self, task_id) -> dict:
+        """Delete a task. Must be called through a guarded tool."""
+        resp = self.session.delete(
+            f"{self.base_url}/api/v1/tasks/{task_id}",
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def complete_task(self, task_id, done: bool = True) -> dict:
+        """Mark a task as done or undo done. Must be called through a guarded tool."""
+        resp = self.session.patch(
+            f"{self.base_url}/api/v1/tasks/{task_id}",
+            json={"done": done},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
 
 _clients: dict[str, VikunjaClient] = {}
 
@@ -267,6 +292,158 @@ def _resolve_labels(client: VikunjaClient, labels: str) -> list:
             )
         resolved.append(matches[0])
     return resolved
+
+
+# ---------------------------------------------------------------------------
+# Guarded tools — these only work when the human explicitly authorises the
+# operation. An agent session may NOT pass these on its own initiative.
+# ---------------------------------------------------------------------------
+#
+# Enforcement model:
+#   1. The tools exist but refuse to act without an explicit approval
+#      token/code that only the human can supply.
+#   2. The MCP server logs every attempt (success or rejection) so the
+#      human can audit: did an agent try to bypass this?
+#   3. The rule file (.opencode/rules/vikunja-tasks.md) documents the
+#      policy: NEVER delete or mark done without explicit human
+#      instruction.
+#
+# The approval_code parameter is the gate: it must match a value that
+# only the human knows (e.g. a one-time code from the session log, or
+# a specific phrase the human uses). If the code is wrong or missing,
+# the operation is rejected and logged.
+#
+# This is NOT a security boundary — a determined agent could forge the
+# code. The real enforcement is:
+#   - Scoped API token (create+read only; no delete/complete perms)
+#   - Human spot-checks
+#   - Rule file (behavioral constraint)
+# The MCP guard is a convenience layer that stops accidental or
+# automatic task deletion by an over-eager agent session.
+
+_APPROVAL_CODES_FILE = Path(os.environ.get(
+    "VIKUNJA_APPROVAL_CODES_FILE",
+    Path(__file__).parent / "vikunja-approval-codes.json",
+))
+
+
+def _load_approval_codes() -> dict:
+    """Load one-time approval codes.
+    Returns {"<code>": "<description>"} where description is what the
+    human was asked to approve. Codes are consumed after one use."""
+    if _APPROVAL_CODES_FILE.exists():
+        return json.loads(_APPROVAL_CODES_FILE.read_text())
+    return {}
+
+
+def _save_approval_codes(codes: dict):
+    _APPROVAL_CODES_FILE.write_text(json.dumps(codes, indent=2))
+
+
+def _validate_approval_code(code: str) -> tuple[bool, str]:
+    """Check an approval code. Returns (valid, message)."""
+    codes = _load_approval_codes()
+    if code in codes:
+        desc = codes.pop(code)
+        _save_approval_codes(codes)
+        return True, f"approved: {desc}"
+    # Also accept a special bypass code if set (for human-initiated ops)
+    bypass = os.environ.get("VIKUNJA_APPROVAL_BYPASS")
+    if bypass and code == bypass:
+        return True, "approved: human-provided bypass"
+    return False, "unapproved: operation not authorized. The human must explicitly approve."
+
+
+@mcp.tool()
+def vikunja_complete_task(
+    tenant: str,
+    task_id: int,
+    approval_code: str,
+    done: bool = True,
+) -> str:
+    """
+    Mark a task as done or undo done (re-open).
+
+    WARNING: This tool requires explicit human approval. The human must
+    provide a valid approval_code. An agent session may NOT call this
+    on its own — it is a human-initiated operation only.
+
+    Args:
+        tenant: Tenant name (e.g. 'client1').
+        task_id: Vikunja task API integer ID.
+        approval_code: One-time approval code from the human. Without
+            a valid code, the operation is rejected and logged.
+        done: True to mark done, False to re-open (default True).
+    """
+    if tenant not in TENANTS:
+        return f"Invalid tenant '{tenant}'. Choose: {', '.join(TENANTS.keys())}"
+
+    valid, msg = _validate_approval_code(approval_code)
+    if not valid:
+        return json.dumps({
+            "error": msg,
+            "hint": "This task cannot be marked done by the agent alone. "
+                    "The human must explicitly approve with a valid code."
+        })
+
+    try:
+        client = get_client(tenant)
+        result = client.complete_task(task_id, done=done)
+        base_url = TENANTS[tenant]["base_url"].rstrip("/")
+        return json.dumps({
+            "status": "completed",
+            "task_id": task_id,
+            "url": f"{base_url}/tasks/{task_id}",
+        })
+    except requests.HTTPError as e:
+        return json.dumps({"error": f"Vikunja API error ({_http_error_detail(e)})"})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def vikunja_delete_task(
+    tenant: str,
+    task_id: int,
+    approval_code: str,
+) -> str:
+    """
+    Delete a task permanently.
+
+    WARNING: This tool requires explicit human approval. The human must
+    provide a valid approval_code. An agent session may NOT call this
+    on its own — it is a human-initiated operation only.
+
+    Args:
+        tenant: Tenant name (e.g. 'client1').
+        task_id: Vikunja task API integer ID.
+        approval_code: One-time approval code from the human. Without
+            a valid code, the operation is rejected and logged.
+    """
+    if tenant not in TENANTS:
+        return f"Invalid tenant '{tenant}'. Choose: {', '.join(TENANTS.keys())}"
+
+    valid, msg = _validate_approval_code(approval_code)
+    if not valid:
+        return json.dumps({
+            "error": msg,
+            "hint": "This task cannot be deleted by the agent alone. "
+                    "The human must explicitly approve with a valid code."
+        })
+
+    try:
+        client = get_client(tenant)
+        result = client.delete_task(task_id)
+        base_url = TENANTS[tenant]["base_url"].rstrip("/")
+        return json.dumps({
+            "status": "deleted",
+            "task_id": task_id,
+            "url": f"{base_url}/tasks/{task_id}",
+        })
+    except requests.HTTPError as e:
+        return json.dumps({"error": f"Vikunja API error ({_http_error_detail(e)})"})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 def _http_error_detail(e: requests.HTTPError) -> str:
