@@ -358,3 +358,7 @@ export OPSKIT_TICKET=<ID>                  # pin it, if another session shares t
 
 **Do not answer device/network/project questions from memory — the data changes.
 Call the relevant tool first, then answer from its output.**
+
+## Vikunja Task Management (Hard Rule)
+
+See `.opencode/rules/vikunja-tasks.md` for the full rule. **NEVER delete, close, or mark a Vikunja task as done unless the human explicitly says so in the present tense directed at a specific task.** Bulk operations, assumed completion, "tidying" — all forbidden. The human relies on Vikunja as the single source of truth for task tracking.
