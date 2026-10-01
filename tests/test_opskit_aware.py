@@ -318,3 +318,48 @@ class TestBidirectionalInit:
         assert (m / "opskit.md").is_file()
         backups = list(m.glob("opskit.md.bak.*"))
         assert len(backups) >= 1
+
+
+class TestAgentModeContract:
+    """An agent without `mode: subagent` passes the schema and is then silently not mounted (#415)."""
+
+    def _member_with_extra_agent(self, tmp_path: Path, text: str) -> Path:
+        import yaml
+        m = make_member(tmp_path / "m")
+        assert run("init", str(m)).returncode == 0
+        (m / "agents" / "extra.md").write_text(text)
+        pack = m / ".opskit" / "pack.yml"
+        data = yaml.safe_load(pack.read_text())
+        data["agents"].append({"path": "agents/extra.md"})
+        pack.write_text(yaml.safe_dump(data))
+        return m
+
+    def _check(self, m: Path) -> dict:
+        r = run("check", str(m))
+        return json.loads(r.stdout)
+
+    def test_missing_mode_is_a_warning_not_an_error(self, tmp_path):
+        m = self._member_with_extra_agent(tmp_path, "---\nname: extra\ndescription: d\n---\nbody\n")
+        out = self._check(m)
+        assert out["ok"] is True and out["errors"] == []
+        assert any("agents/extra.md" in w and "mode: subagent" in w for w in out["warnings"]), out
+
+    def test_a_non_subagent_mode_is_a_warning(self, tmp_path):
+        m = self._member_with_extra_agent(tmp_path, "---\ndescription: d\nmode: skill\n---\nbody\n")
+        assert any("agents/extra.md" in w for w in self._check(m)["warnings"])
+
+    def test_a_subagent_has_no_warning(self, tmp_path):
+        m = self._member_with_extra_agent(tmp_path, "---\ndescription: d\nmode: subagent\n---\nbody\n")
+        assert not [w for w in self._check(m)["warnings"] if "mode: subagent" in w]
+
+    def test_unreadable_frontmatter_never_crashes_check(self, tmp_path):
+        m = self._member_with_extra_agent(tmp_path, "---\n: : [\n---\nbody\n")
+        out = self._check(m)                                   # valid JSON, no traceback
+        assert out["ok"] is True
+
+
+class TestMemberDocs:
+    def test_docs_state_the_contract_the_mount_enforces(self):
+        text = (ROOT / "docs" / "opskit-aware.md").read_text()
+        for needle in ("mode: subagent", "prune --force", "frontmatter `name`"):
+            assert needle in text, f"docs/opskit-aware.md no longer mentions {needle!r}"
