@@ -667,7 +667,9 @@ def _atomic_write(path: Path, text: str) -> None:
 
 _EXCL_BEGIN = "# >>> opskit member renders (managed by project_sync.py; edit outside this block)"
 _EXCL_END = "# <<< opskit member renders"
-_EXCL_BLOCK_RE = re.compile(r"^# >>> opskit member renders.*?^# <<< opskit member renders\n?", re.M | re.S)
+# Only entry lines (anchored paths) may sit between the markers. A lone BEGIN left by a hand edit
+# therefore never matches, so a rewrite cannot swallow the user's lines that follow it.
+_EXCL_BLOCK_RE = re.compile(r"^# >>> opskit member renders[^\n]*\n(?:/[^\n]*\n)*# <<< opskit member renders\n?", re.M)
 
 
 def _replace_exclude_block(text: str, entries: list[str]) -> str:
