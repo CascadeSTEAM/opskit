@@ -3,6 +3,19 @@
 opskit follows the [DocWright lifecycle](https://github.com/growlf/docwright):
 issues → proposals → plans → docs.
 
+## First-time setup
+
+See the [README](README.md) for the quickest path to a working setup:
+
+```bash
+git clone https://github.com/CascadeSTEAM/opskit.git $HOME/Projects/opskit
+cd $HOME/Projects/opskit
+bash install.sh
+```
+
+For a fully capable workstation with MCP servers and vault access, see
+[docs/INSTALL.md](docs/INSTALL.md).
+
 ## Development setup
 
 ```bash
@@ -24,7 +37,6 @@ source bin/switch-env.sh my-test
 ## Testing
 
 ```bash
-pytest tests/
-ansible-lint ansible/
-shellcheck bin/*.sh
+make test    # the CI gate (also: pytest tests/)
+make lint    # shell + ansible-lint
 ```
