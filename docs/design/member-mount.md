@@ -199,6 +199,11 @@ Report by default, remove with `--force` or always (configurable).
 > links out of `git status` (tracked renders are never excluded; lines outside the block are never
 > touched). The block is per clone because member names can identify a client and must not reach the
 > tracked `.gitignore`.
+>
+> Phase 3: `opskit-aware.py check` warns when a pack agent lacks `mode: subagent`; `sync-skills --prune`
+> and `sync-agents --prune` now remove only renders whose shape they themselves write, so they can no
+> longer delete member renders or third-party installer files; the contract is documented in
+> `docs/opskit-aware.md`.
 
 ## 4. Schema updates
 

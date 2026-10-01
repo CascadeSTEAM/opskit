@@ -79,6 +79,27 @@ def _resolve_pack(path: Path) -> tuple[Path, Path]:
 
 
 # ── check ───────────────────────────────────────────────────────────────────
+def _frontmatter_mode(path: Path):
+    """The agent file's frontmatter `mode`: a string, "" when absent, None if unreadable.
+
+    None means "do not warn": `check` must never fail or crash on a file it cannot parse.
+    """
+    try:
+        text = path.read_text()
+        if not text.startswith("---\n"):
+            return ""
+        end = text.find("\n---", 4)
+        if end == -1:
+            return None
+        data = yaml.safe_load(text[4:end])
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    mode = data.get("mode")
+    return mode if isinstance(mode, str) else ""
+
+
 def cmd_check(args: argparse.Namespace) -> dict:
     target = Path(args.path or ".").resolve()
     member_root, pack_path = _resolve_pack(target)
@@ -147,6 +168,10 @@ def cmd_check(args: argparse.Namespace) -> dict:
             continue
         if not _rel(a["path"]).is_file():
             result["errors"].append(f"agents: missing file {a['path']}")
+        elif _frontmatter_mode(_rel(a["path"])) not in (None, "subagent"):
+            result["warnings"].append(
+                f"agents: {a['path']} has no 'mode: subagent' in its frontmatter; "
+                "OpsKit will not mount it (see docs/opskit-aware.md)")
     for s in _list(pack.get("skills")):
         if not (isinstance(s, dict) and isinstance(s.get("path"), str)):
             continue

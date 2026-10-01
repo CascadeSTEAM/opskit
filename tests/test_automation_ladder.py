@@ -344,6 +344,32 @@ def skills_repo(tmp_path: Path) -> Path:
     return root
 
 
+class TestSyncAgentsLeavesForeignRendersAlone:
+    """#415: --prune used to delete any .md whose stem was not a current agent."""
+
+    def test_prune_never_touches_renders_it_did_not_create(self, repo):
+        run(repo, "sync-agents")
+        oc, cc = repo / ".opencode" / "agent", repo / ".claude" / "agents"
+        (oc / "m-x.md").symlink_to("../../projects/m/agents/x.md")          # a member render
+        (cc / "m-x.md").write_text("---\nname: m-x\ndescription: d\nmember: m\n---\n"
+                                    "<!-- opskit-member-render: m -->\nbody\n")
+        (oc / "inst.md").write_text("written by a third-party installer\n")  # not ours either
+        (cc / "inst.md").write_text("written by a third-party installer\n")
+        out = json.loads(run(repo, "sync-agents", "--prune").stdout)
+        assert out["stale"] == [] and out["pruned"] == []
+        for p in (oc / "m-x.md", cc / "m-x.md", oc / "inst.md", cc / "inst.md"):
+            assert p.exists() or p.is_symlink(), f"{p} was deleted"
+
+    def test_its_own_stale_render_is_still_pruned_next_to_foreign_ones(self, repo):
+        run(repo, "sync-agents")
+        oc, cc = repo / ".opencode" / "agent", repo / ".claude" / "agents"
+        (oc / "inst.md").write_text("foreign\n")
+        (repo / "agents" / "mikrotik.md").unlink()
+        out = json.loads(run(repo, "sync-agents", "--prune").stdout)
+        assert out["pruned"] == ["mikrotik"]
+        assert not (cc / "mikrotik.md").exists() and (oc / "inst.md").exists()
+
+
 class TestSyncSkills:
     def test_backfills_every_missing_symlink(self, skills_repo):
         out = json.loads(run(skills_repo, "sync-skills").stdout)
@@ -422,3 +448,18 @@ class TestSyncSkills:
 
         assert "not-a-skill" not in out["synced"]
         assert not (skills_repo / ".claude" / "skills" / "not-a-skill").exists()
+
+
+class TestSyncSkillsLeavesForeignLinksAlone:
+    """#415: --prune used to delete any .claude/skills symlink without an .opencode/skills counterpart."""
+
+    def test_prune_never_touches_links_it_did_not_create(self, skills_repo):
+        run(skills_repo, "sync-skills")
+        cc = skills_repo / ".claude" / "skills"
+        (cc / "m-s").symlink_to("../../projects/m/skills/s")                 # a member render
+        (cc / "inst").symlink_to("../../../x/skills/inst")                   # a third-party installer
+        (cc / "mine").symlink_to("/tmp")                                     # the operator's own
+        out = json.loads(run(skills_repo, "sync-skills", "--prune").stdout)
+        for n in ("m-s", "inst", "mine"):
+            assert (cc / n).is_symlink(), f"{n} was deleted"
+            assert n not in out["stale"] and n not in out["pruned"]

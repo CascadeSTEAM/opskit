@@ -79,6 +79,30 @@ caught mechanically rather than discovered at mount time:
   mounting subagent MUST gate it behind explicit per-invocation approval — the
   docs are not themselves a safety control.
 
+## Agent files, skill names, and what mount does
+
+What a mounting OpsKit session requires of a member (verified against `bin/project_sync.py`):
+
+- **Agents must be in the OpenCode form: `mode: subagent` in the frontmatter.** That is the form
+  OpsKit's own `agents/*.md` use; the Claude Code file is generated from it. An agent without it
+  passes the schema, is **skipped** by `mount` (reported under `skipped` with the reason) and never
+  mounted. `opskit-aware.py check` warns about it.
+- **Rendered names are `<member>-<name>`** (`.opencode/agent/<member>-<agent>.md`,
+  `.opencode/skills/<member>-<skill>`, `.claude/skills/<member>-<skill>`). The prefix avoids file
+  collisions only: OpenCode lists a skill by its frontmatter `name`, not its directory, so two skills
+  with the same frontmatter `name` (a member's and a native one, or two members') collide. `mount`
+  reports such a skill as a conflict and does not render it. Keep skill names unique.
+- **`mount` and `sync-mount` never delete.** They report stale renders. `prune` reports them and
+  `prune --force` removes only what mount rendered (a symlink into `projects/<member>/`, or a generated
+  file marked `opskit-member-render`), never anything git tracks.
+- **Exit codes:** `mount` / `sync-mount` exit 1 on errors or conflicts; skipped items and stale renders
+  exit 0. The JSON is always printed first.
+- Rendered skill links are hidden from `git status` through a managed block in the per-clone
+  `.git/info/exclude` (member names can identify a client, so they never go in the tracked `.gitignore`).
+- Third-party installers that write into `.opencode/agent/`, `.claude/agents/` or `.claude/skills/`
+  are left alone by `sync-agents --prune` and `sync-skills --prune`: those only remove renders whose
+  shape they themselves write.
+
 ## How the pieces fit
 
 `agents/*.md` are rendered into both harnesses by
