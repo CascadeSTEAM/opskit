@@ -161,7 +161,7 @@ class TestOpencodeWiring:
         cfg_dir = tmp_path / ".config" / "opencode"
         cfg_dir.mkdir(parents=True)
         (cfg_dir / "opencode.json").write_text(
-            '{"mcp": {"bitwarden": {"type": "local", "command": ["npx", "-y", "@bitwarden/mcp-server"]}}}'
+            '{"mcp": {"bitwarden": {"type": "local", "command": ["echo"]}}}'
         )
         r = run_cli("doctor", env=_env(tmp_path, root=_git_repo(tmp_path)))
         assert r.returncode == 0, r.stdout
