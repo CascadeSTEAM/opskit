@@ -26,13 +26,17 @@ sync failures; skipped items and stale renders exit 0. Other commands exit 0 on 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -583,6 +587,127 @@ def _render_claude_agent_wrapper(
     return "".join(parts), has_soft
 
 
+# ── Concurrency + untracked-state helpers (#415 phase 2b) ──────────────────────
+
+class MemberLockBusy(RuntimeError):
+    """Another mount/prune holds the lock and did not release it in time."""
+
+
+def _git_path(root: Path, what: str) -> Path | None:
+    """`git rev-parse --git-path <what>` for `root`; None if root is not in a git repo."""
+    try:
+        r = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-path", what],
+                           capture_output=True, text=True)
+    except OSError:
+        return None
+    out = r.stdout.strip()
+    if r.returncode != 0 or not out:
+        return None
+    p = Path(out)
+    return p if p.is_absolute() else root / p
+
+
+@contextlib.contextmanager
+def _member_lock(root: Path, blocking: bool = True, timeout: float = 60.0):
+    """Exclusive lock around mount/prune so two sessions cannot interleave renders.
+
+    flock is released by the kernel if the holder dies. The wait is bounded so a hung
+    session cannot hang everyone else forever; `blocking=False` fails immediately.
+    """
+    try:
+        import fcntl
+    except ImportError:          # non-POSIX: run unlocked (OpsKit targets Linux)
+        yield False
+        return
+    path = _git_path(root, "opskit-member.lock")
+    if path is None:
+        digest = hashlib.sha1(str(Path(root).resolve()).encode()).hexdigest()[:12]
+        path = Path(tempfile.gettempdir()) / f"opskit-member-{digest}.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        deadline = time.monotonic() + (timeout if blocking else 0.0)
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise MemberLockBusy(f"another member mount/prune holds {path}")
+                time.sleep(0.05)
+        yield True
+    finally:
+        os.close(fd)
+
+
+def _atomic_symlink(link: Path, target: str) -> None:
+    """Point `link` at `target` without ever leaving it missing: temp link + rename."""
+    tmp = link.with_name(f".{link.name}.tmp-{os.getpid()}")
+    try:
+        if tmp.is_symlink() or tmp.exists():
+            tmp.unlink()
+        os.symlink(target, tmp)
+        os.replace(tmp, link)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    try:
+        tmp.write_text(text)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
+
+
+_EXCL_BEGIN = "# >>> opskit member renders (managed by project_sync.py; edit outside this block)"
+_EXCL_END = "# <<< opskit member renders"
+# Only entry lines (anchored paths) may sit between the markers. A lone BEGIN left by a hand edit
+# therefore never matches, so a rewrite cannot swallow the user's lines that follow it.
+_EXCL_BLOCK_RE = re.compile(r"^# >>> opskit member renders[^\n]*\n(?:/[^\n]*\n)*# <<< opskit member renders\n?", re.M)
+
+
+def _replace_exclude_block(text: str, entries: list[str]) -> str:
+    """Rewrite only our marked block; everything outside it is preserved."""
+    text = _EXCL_BLOCK_RE.sub("", text)
+    if not entries:
+        return text
+    if text and not text.endswith("\n"):
+        text += "\n"
+    return text + _EXCL_BEGIN + "\n" + "".join(f"{e}\n" for e in entries) + _EXCL_END + "\n"
+
+
+def _update_exclude(root: Path, dry_run: bool = False) -> dict:
+    """Keep untracked member skill links out of `git status` via the per-clone info/exclude.
+
+    Per clone on purpose: member names can identify a client and must never reach the
+    tracked .gitignore. Tracked renders are never excluded.
+    """
+    entries: list[str] = []
+    for sub in (".opencode/skills", ".claude/skills"):
+        d = root / sub
+        if d.is_dir():
+            for child in sorted(d.iterdir()):
+                if member_of_render(child) is not None and _is_tracked(root, child) is False:
+                    entries.append("/" + _rel(root, child))
+    path = _git_path(root, "info/exclude")
+    if path is None:
+        return {"path": None, "entries": len(entries), "updated": False, "reason": "not a git repository"}
+    if dry_run:
+        return {"path": str(path), "entries": len(entries), "updated": False, "reason": "dry run"}
+    old = path.read_text() if path.exists() else ""
+    new = _replace_exclude_block(old, entries)
+    if new != old:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write(path, new)
+    return {"path": str(path), "entries": len(entries), "updated": True}
+
+
 def _skill_name(skill_dir: Path) -> str:
     """The name a host lists this skill under: frontmatter `name`, else the directory name.
 
@@ -623,7 +748,7 @@ def exit_code(result: dict) -> int:
     return 1 if bad else 0
 
 
-def cmd_mount(args: argparse.Namespace | None = None, dry_run: bool = False) -> dict:
+def _cmd_mount(args: argparse.Namespace | None = None, dry_run: bool = False) -> dict:
     """Validate members and render their agents + skills.
 
     For each mounted member:
@@ -671,9 +796,7 @@ def cmd_mount(args: argparse.Namespace | None = None, dry_run: bool = False) -> 
         if not _can_write(link):
             return False
         if not dry_run:
-            if link.exists() or link.is_symlink():
-                link.unlink()
-            link.symlink_to(target)
+            _atomic_symlink(link, target)
             created_links.append((member, link))
         return True
 
@@ -751,7 +874,7 @@ def cmd_mount(args: argparse.Namespace | None = None, dry_run: bool = False) -> 
             cc_file = cc_dir / f"{name}-{base_name}.md"
             cc_ok = _can_write(cc_file)
             if cc_ok and not dry_run:
-                cc_file.write_text(cc_text)
+                _atomic_write(cc_file, cc_text)
 
             rendered_agents.append({"name": name, "agent": agent_rel,
                                     "status": "rendered" if (oc_ok and cc_ok) else "conflict"})
@@ -806,10 +929,13 @@ def cmd_mount(args: argparse.Namespace | None = None, dry_run: bool = False) -> 
     total_agents = sum(m.get("agents_rendered", 0) for m in mounted if m.get("status") == "mounted")
     total_skills = sum(m.get("skills_rendered", 0) for m in mounted if m.get("status") == "mounted")
 
+    exclude = _update_exclude(_ROOT, dry_run=dry_run)
+
     return {
         "mounted": mounted,
         "errors": errors,
         "conflicts": conflicts,
+        "exclude": exclude,
         "skipped": skipped,
         "stale": stale,
         "pruned": [],
@@ -831,7 +957,7 @@ def cmd_mount(args: argparse.Namespace | None = None, dry_run: bool = False) -> 
     }
 
 
-def cmd_prune(args: argparse.Namespace | None = None, force: bool = False, dry_run: bool = False) -> dict:
+def _cmd_prune(args: argparse.Namespace | None = None, force: bool = False, dry_run: bool = False) -> dict:
     """Report stale member renders; with force=True remove them.
 
     A path is removed only if ALL hold: it is a stale member render (see
@@ -855,8 +981,10 @@ def cmd_prune(args: argparse.Namespace | None = None, force: bool = False, dry_r
         elif force and not dry_run:
             path.unlink()
             removed.append(rel)
+    exclude = _update_exclude(root, dry_run=dry_run or not force) if (force and not dry_run) else None
     return {
         "stale": [_rel(root, p) for p, _ in stale],
+        "exclude": exclude,
         "reasons": {_rel(root, p): why for p, why in stale},
         "removed": removed,
         "skipped": skipped,
@@ -864,6 +992,16 @@ def cmd_prune(args: argparse.Namespace | None = None, force: bool = False, dry_r
         "summary": {"stale": len(stale), "removed": len(removed), "skipped": len(skipped)},
         "note": ("" if force else "Report only. Re-run with --force to remove the stale items listed."),
     }
+
+
+def cmd_mount(args: argparse.Namespace | None = None, dry_run: bool = False) -> dict:
+    with _member_lock(_root()):
+        return _cmd_mount(args, dry_run=dry_run)
+
+
+def cmd_prune(args: argparse.Namespace | None = None, force: bool = False, dry_run: bool = False) -> dict:
+    with _member_lock(_root()):
+        return _cmd_prune(args, force=force, dry_run=dry_run)
 
 
 # ── Sync + Mount ──────────────────────────────────────────────────────────────
@@ -923,7 +1061,11 @@ def main() -> int:
     psm.set_defaults(fn=lambda a: cmd_sync_mount())
 
     args = parser.parse_args()
-    result = args.fn(args)
+    try:
+        result = args.fn(args)
+    except MemberLockBusy as exc:
+        _emit({"errors": [{"error": str(exc)}], "conflicts": [], "summary": {"errors": 1}})
+        return 1
     _emit(result)
     return exit_code(result) if args.cmd in ("mount", "sync-mount") else 0
 

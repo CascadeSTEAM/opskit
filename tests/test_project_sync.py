@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -1035,6 +1036,195 @@ class TestInitMountPolicy:
         assert mod._sync_mount_is_fatal(0) is False
         assert mod._sync_mount_is_fatal(1) is False
         assert mod._sync_mount_is_fatal(2) is True
+
+
+class TestLock:
+    def test_second_holder_is_refused_while_the_lock_is_held(self, tmp_path: Path):
+        import time
+        _init_repo(tmp_path)
+        holder = subprocess.Popen(
+            [sys.executable, "-c",
+             "import sys, time\n"
+             f"sys.path.insert(0, {str(Path(ps.__file__).parent)!r})\n"
+             "import project_sync as ps\n"
+             "from pathlib import Path\n"
+             f"with ps._member_lock(Path({str(tmp_path)!r})):\n"
+             "    print('held', flush=True)\n"
+             "    time.sleep(30)\n"],
+            stdout=subprocess.PIPE, text=True)
+        try:
+            assert holder.stdout.readline().strip() == "held"
+            with pytest.raises(ps.MemberLockBusy):
+                with ps._member_lock(tmp_path, blocking=False):
+                    pass
+            t0 = time.time()
+            with pytest.raises(ps.MemberLockBusy):                      # a bounded wait, not a hang
+                with ps._member_lock(tmp_path, timeout=0.3):
+                    pass
+            assert time.time() - t0 < 5
+        finally:
+            holder.kill()
+            holder.wait()
+        with ps._member_lock(tmp_path, blocking=False):                  # free again once the holder died
+            pass
+
+    def test_mount_then_prune_in_one_process_does_not_deadlock(self, tmp_path, tmp_member):
+        _init_repo(tmp_path)
+        _wire(tmp_path, {"test-member": tmp_member})
+        ps.cmd_mount()
+        ps.cmd_prune(force=True)
+        ps.cmd_mount()
+
+
+class TestAtomicReplace:
+    def test_a_failed_link_replace_leaves_the_existing_render_intact(self, tmp_path: Path, monkeypatch):
+        link = tmp_path / "x"
+        link.symlink_to("../../projects/m/skills/old")
+        monkeypatch.setattr(ps.os, "symlink", lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
+        with pytest.raises(OSError):
+            ps._atomic_symlink(link, "../../projects/m/skills/new")
+        assert os.readlink(link) == "../../projects/m/skills/old"
+        assert [p.name for p in tmp_path.iterdir()] == ["x"], "no temp leftovers"
+
+    def test_a_failed_file_replace_leaves_the_previous_wrapper_intact(self, tmp_path: Path, monkeypatch):
+        f = tmp_path / "w.md"
+        f.write_text("old\n")
+        monkeypatch.setattr(ps.os, "replace", lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
+        with pytest.raises(OSError):
+            ps._atomic_write(f, "new\n")
+        assert f.read_text() == "old\n"
+        assert [p.name for p in tmp_path.iterdir()] == ["w.md"], "no temp leftovers"
+
+    def test_atomic_symlink_replaces_an_existing_link(self, tmp_path: Path):
+        link = tmp_path / "x"
+        link.symlink_to("old")
+        ps._atomic_symlink(link, "new")
+        assert os.readlink(link) == "new"
+
+    def test_concurrent_mounts_end_in_the_same_state_as_one(self, tmp_path: Path):
+        def build(root: Path) -> None:
+            _init_repo(root)
+            (root / "bin").mkdir()
+            shutil.copy(Path(ps.__file__), root / "bin" / "project_sync.py")
+            m = _make_member(root, "mem", agents=[("a.md", _SUBAGENT)],
+                             skills=[("s1", _SKILL.format(n="n1")), ("s2", _SKILL.format(n="n2"))])
+            _wire(root, {"mem": m})
+
+        one, many = tmp_path / "one", tmp_path / "many"
+        for r in (one, many):
+            build(r)
+        env = {k: v for k, v in os.environ.items() if k != "OPSKIT_ROOT"}
+        run = lambda r: subprocess.Popen([sys.executable, str(r / "bin" / "project_sync.py"), "mount"],
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env, text=True)
+        assert run(one).wait() == 0
+        procs = [run(many) for _ in range(8)]
+        codes = [pr.wait() for pr in procs]
+        errs = [pr.stderr.read() for pr in procs]
+        assert codes == [0] * 8, errs
+        assert _snapshot(many) == _snapshot(one)
+        assert not [p for p in many.rglob("*") if ".tmp-" in p.name]
+
+
+class TestExcludeBlock:
+    """Member renders must not show up as untracked files in a public repo (#415 R7)."""
+
+    def _member(self, tmp_path: Path) -> Path:
+        return _make_member(tmp_path, "mem", skills=[("s", _SKILL.format(n="mem-skill"))])
+
+    def _untracked(self, root: Path) -> list[str]:
+        out = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"],
+                             capture_output=True, text=True, check=True).stdout
+        return [line[3:] for line in out.splitlines() if line.startswith("??")]
+
+    def _exclude(self, root: Path) -> Path:
+        return root / ".git" / "info" / "exclude"
+
+    def test_rendered_skill_links_are_not_untracked(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        _make_natives(tmp_path)
+        m = self._member(tmp_path)
+        _wire(tmp_path, {"mem": m})
+        r = ps.cmd_mount()
+        assert not [u for u in self._untracked(tmp_path) if "mem-s" in u]
+        assert r["exclude"]["updated"] is True and r["exclude"]["entries"] == 2
+
+    def test_idempotent_and_preserves_lines_outside_the_block(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        m = self._member(tmp_path)
+        _wire(tmp_path, {"mem": m})
+        ex = self._exclude(tmp_path)
+        ex.parent.mkdir(parents=True, exist_ok=True)
+        ex.write_text("# my own line\n/scratch-notes\n")
+        ps.cmd_mount()
+        first = ex.read_text()
+        ps.cmd_mount()
+        assert ex.read_text() == first
+        assert first.startswith("# my own line\n/scratch-notes\n")
+        assert first.count("# >>> opskit member renders") == 1
+
+    def test_prune_force_removes_the_entries_and_the_empty_block(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        m = self._member(tmp_path)
+        _wire(tmp_path, {"mem": m})
+        ex = self._exclude(tmp_path)
+        ex.parent.mkdir(parents=True, exist_ok=True)
+        ex.write_text("/keep-me\n")
+        ps.cmd_mount()
+        (tmp_path / ".project-remotes").write_text("")
+        ps.cmd_prune(force=True)
+        assert ex.read_text() == "/keep-me\n"
+        assert not (tmp_path / ".opencode/skills/mem-s").exists()
+
+    def test_an_orphaned_begin_marker_never_swallows_user_lines(self, tmp_path: Path):
+        """Review of #421: a hand-edited file with a BEGIN but no END must not lose the lines after it."""
+        _init_repo(tmp_path)
+        m = self._member(tmp_path)
+        _wire(tmp_path, {"mem": m})
+        ex = self._exclude(tmp_path)
+        ex.parent.mkdir(parents=True, exist_ok=True)
+        ex.write_text("# >>> opskit member renders (managed by project_sync.py; edit outside this block)\n"
+                      "/user-line-a\n# a comment I wrote\n/user-line-b\n")
+        ps.cmd_mount()
+        ps.cmd_mount()
+        text = ex.read_text()
+        assert "/user-line-a" in text and "# a comment I wrote" in text and "/user-line-b" in text
+
+    def test_tracked_renders_are_not_excluded(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        m = self._member(tmp_path)
+        _wire(tmp_path, {"mem": m})
+        ps.cmd_mount()
+        _git(tmp_path, "add", "-f", ".claude/skills/mem-s")
+        _git(tmp_path, "commit", "-q", "-m", "x")
+        ps.cmd_mount()
+        text = self._exclude(tmp_path).read_text()
+        assert "/.opencode/skills/mem-s" in text and "/.claude/skills/mem-s" not in text
+
+    def test_linked_worktree_is_covered_too(self, tmp_path: Path):
+        main = tmp_path / "main"
+        _init_repo(main)
+        (main / "f").write_text("x")
+        _commit_all(main)
+        wt = tmp_path / "wt"
+        _git(main, "worktree", "add", "-q", "--detach", str(wt))
+        m = _make_member(tmp_path, "mem", skills=[("s", _SKILL.format(n="mem-skill"))])
+        _wire(wt, {"mem": m})
+        ps.cmd_mount()
+        assert not [u for u in self._untracked(wt) if "mem-s" in u]
+
+    def test_outside_a_git_repo_mount_still_works(self, tmp_path: Path):
+        m = self._member(tmp_path)
+        _wire(tmp_path, {"mem": m})
+        r = ps.cmd_mount()
+        assert r["exclude"]["updated"] is False
+        assert (tmp_path / ".opencode/skills/mem-s").is_symlink()
+
+    def test_dry_run_writes_nothing(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        m = self._member(tmp_path)
+        _wire(tmp_path, {"mem": m})
+        ps.cmd_mount(dry_run=True)
+        assert not self._exclude(tmp_path).exists() or "opskit member renders" not in self._exclude(tmp_path).read_text()
 
 
 class TestOpskitWrapper:

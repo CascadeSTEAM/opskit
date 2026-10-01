@@ -191,6 +191,14 @@ Report by default, remove with `--force` or always (configurable).
 > Claude Code and Crush were not tested for this. Remaining phases (locking and atomic replace,
 > `.git/info/exclude`, sibling `--prune` rules, `mode: subagent` check in `opskit-aware.py`) are
 > tracked in #415.
+>
+> Phase 2b: `mount` and `prune` run under an exclusive `flock` on the per-worktree
+> `opskit-member.lock` (bounded wait, then a clear error), links and generated wrappers are replaced
+> atomically (a failed replace leaves the previous render in place), and after a real mount or
+> `prune --force` a managed block in the per-clone `.git/info/exclude` keeps untracked member skill
+> links out of `git status` (tracked renders are never excluded; lines outside the block are never
+> touched). The block is per clone because member names can identify a client and must not reach the
+> tracked `.gitignore`.
 
 ## 4. Schema updates
 
