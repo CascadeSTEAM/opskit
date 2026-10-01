@@ -458,16 +458,21 @@ def cmd_sync_agents(args: argparse.Namespace) -> dict:
 
         synced.append(name)
 
-    # Stale renders: a rendered .md whose stem is not a currently-synced agent.
-    # Deliberately NOT `synced | skipped` — a skipped agent (still in agents/,
-    # but no longer mode: subagent) must not protect a render from a PRIOR run
-    # when it WAS a subagent; only a name currently rendered this run is safe.
+    # Stale renders: a render THIS tool created for an agent that is no longer a current
+    # subagent. "Created by this tool" is read from the render itself: the OpenCode side is
+    # a symlink with exactly the text sync-agents writes (`../../agents/<stem>.md`). Member
+    # renders (`../../projects/...`) and files placed by third-party installers never match,
+    # so --prune cannot delete them (#415). Deliberately NOT `synced | skipped` — a skipped
+    # agent (still in agents/, but no longer mode: subagent) must not protect a render from
+    # a PRIOR run when it WAS a subagent; only a name currently rendered this run is safe.
     current = set(synced)
     stale: list[str] = []
-    for rendered_dir in (oc_dir, cc_dir):
-        for existing in rendered_dir.glob("*.md"):
-            if existing.stem not in current:
-                stale.append(existing.stem)
+    for existing in oc_dir.glob("*.md"):
+        stem = existing.stem
+        if (existing.is_symlink()
+                and os.readlink(existing) == str(Path("../../agents") / f"{stem}.md")
+                and stem not in current):
+            stale.append(stem)
     stale = sorted(set(stale))
 
     # Deleting is opt-in: these directories are documented as generated and
@@ -549,9 +554,14 @@ def cmd_sync_skills(args: argparse.Namespace) -> dict:
 
     # Stale: a .claude/skills/<name> symlink with no matching
     # .opencode/skills/<name> (deleted skill, or never had a SKILL.md).
+    # Only links this tool could have created: the exact text it writes. Member renders
+    # (`../../projects/...`), links from third-party installers and the operator's own
+    # links never match, so --prune cannot delete them (#415).
     stale = sorted(
         existing.name for existing in cc_dir.iterdir()
-        if existing.is_symlink() and existing.name not in current
+        if existing.is_symlink()
+        and existing.name not in current
+        and existing.readlink() == Path("../../.opencode/skills") / existing.name
     )
 
     pruned: list[str] = []
