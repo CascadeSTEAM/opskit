@@ -714,6 +714,53 @@ class TestOwnership:
         assert ps.member_of_render(f) == "some-member"
 
 
+class TestOwnershipEdgeCases:
+    """Found in review of #417: each of these misjudged ownership."""
+
+    def test_marker_is_found_in_a_long_generated_file(self, tmp_path: Path):
+        # A long agent description pushes the marker far past the first KB of the file.
+        text, _ = ps._render_claude_agent_wrapper(
+            name="m-long", fm={"description": "x" * 5000, "mode": "subagent"},
+            body="body\n", member_name="m", trust={})
+        f = tmp_path / "m-long.md"
+        f.write_text(text)
+        assert ps.member_of_render(f) == "m"
+
+    def test_legacy_wrapper_without_marker_is_owned_by_member_field_and_name_prefix(self, tmp_path: Path):
+        f = tmp_path / "test-member-old.md"
+        f.write_text("---\nname: test-member-old\ndescription: d\nmember: test-member\n---\nbody\n")
+        assert ps.member_of_render(f) == "test-member"
+
+    def test_member_field_with_a_non_matching_filename_is_not_owned(self, tmp_path: Path):
+        f = tmp_path / "native-agent.md"
+        f.write_text("---\nname: native-agent\ndescription: d\nmember: test-member\n---\nbody\n")
+        assert ps.member_of_render(f) is None
+
+    def test_native_link_that_merely_contains_a_projects_segment_is_not_owned(self, tmp_path: Path):
+        link = tmp_path / "native"
+        link.symlink_to("../../.opencode/skills/projects/foo")
+        assert ps.member_of_render(link) is None
+
+    def test_legacy_three_level_link_is_owned(self, tmp_path: Path):
+        link = tmp_path / "legacy"
+        link.symlink_to("../../../projects/test-member/skills/s")  # what the old mount wrote
+        assert ps.member_of_render(link) == "test-member"
+
+    def test_mount_refreshes_legacy_renders_instead_of_reporting_conflicts(self, tmp_path: Path, tmp_member: Path):
+        """Upgrade path: renders made by the old code must be repaired, not frozen as conflicts."""
+        _wire(tmp_path, {"test-member": tmp_member})
+        legacy_wrapper = tmp_path / ".claude" / "agents" / "test-member-test.md"
+        legacy_wrapper.parent.mkdir(parents=True)
+        legacy_wrapper.write_text("---\nname: test-member-test\ndescription: d\nmember: test-member\n---\nold\n")
+        legacy_link = tmp_path / ".opencode" / "skills" / "test-member-test-skill"
+        legacy_link.parent.mkdir(parents=True)
+        legacy_link.symlink_to("../../../projects/test-member/skills/test-skill")  # dangles
+        result = ps.cmd_mount()
+        assert result["conflicts"] == []
+        assert "opskit-member-render: test-member" in legacy_wrapper.read_text()
+        assert legacy_link.resolve() == (tmp_member / "skills" / "test-skill").resolve()
+
+
 class TestPrune:
     """Stale member renders are REPORTED by mount and removed only by `prune --force`."""
 
