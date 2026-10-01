@@ -572,6 +572,12 @@ def cmd_lint(args):
 # init (OpsKit-aware member scaffold)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _sync_mount_is_fatal(returncode: int) -> bool:
+    """project_sync exits 1 when mount found conflicts/errors. By then `init` has already
+    scaffolded the member, so that is a warning; >= 2 means the tool itself failed."""
+    return returncode >= 2
+
+
 def cmd_init(args):
     target = Path(args.path or ".").resolve()
     extra: list[str] = []
@@ -657,7 +663,10 @@ def cmd_init(args):
         if sync_result.stderr:
             print(sync_result.stderr, file=sys.stderr, end='')
         if sync_result.returncode != 0:
-            sys.exit(sync_result.returncode)
+            if _sync_mount_is_fatal(sync_result.returncode):
+                sys.exit(sync_result.returncode)
+            print('warning: member mount reported conflicts or errors (see above); '
+                  'the member is scaffolded and registered.', file=sys.stderr)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

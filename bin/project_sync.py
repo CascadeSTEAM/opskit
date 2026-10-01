@@ -19,7 +19,8 @@ Usage:
     bin/project-sync.py sync-mount               # sync + mount in one step (never deletes)
     bin/project-sync.py prune [--force] [--dry-run]  # report (or with --force remove) stale member renders
 
-Exit 0 on partial success (some members skipped), exit 1 on unrecoverable error.
+Exit codes: `mount` / `sync-mount` exit 1 when there are errors, conflicts or (sync-mount)
+sync failures; skipped items and stale renders exit 0. Other commands exit 0 on partial success.
 """
 
 from __future__ import annotations
@@ -582,6 +583,46 @@ def _render_claude_agent_wrapper(
     return "".join(parts), has_soft
 
 
+def _skill_name(skill_dir: Path) -> str:
+    """The name a host lists this skill under: frontmatter `name`, else the directory name.
+
+    OpenCode lists by frontmatter name, not by directory (verified 2026-10-01), so the
+    `<member>-` directory prefix does not namespace skills. Never raises on bad YAML.
+    """
+    try:
+        fm, _ = _parse_frontmatter((skill_dir / "SKILL.md").read_text())
+        name = fm.get("name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        pass
+    return skill_dir.name
+
+
+def _native_skill_names(root: Path) -> dict[str, str]:
+    """{skill name: repo-relative path} for every skill NOT rendered by a member."""
+    names: dict[str, str] = {}
+    for sub in (".opencode/skills", ".claude/skills"):
+        d = root / sub
+        if not d.is_dir():
+            continue
+        for child in sorted(d.iterdir()):
+            if member_of_render(child) is not None or not child.is_dir():
+                continue
+            names.setdefault(_skill_name(child), _rel(root, child))
+    return names
+
+
+def exit_code(result: dict) -> int:
+    """1 if a mount-shaped result has errors or conflicts (or sync failures); skips and stale are fine."""
+    m = result.get("mount", result)
+    bad = bool(m.get("errors")) or bool(m.get("conflicts"))
+    sync = result.get("sync")
+    if isinstance(sync, dict) and sync.get("summary", {}).get("failed", 0):
+        bad = True
+    return 1 if bad else 0
+
+
 def cmd_mount(args: argparse.Namespace | None = None, dry_run: bool = False) -> dict:
     """Validate members and render their agents + skills.
 
@@ -607,6 +648,10 @@ def cmd_mount(args: argparse.Namespace | None = None, dry_run: bool = False) -> 
     mounted: list[dict] = []
     errors: list[dict] = []
     conflicts: list[dict] = []
+    skipped: list[dict] = []
+    created_links: list[tuple[str, Path]] = []
+    taken_names = _native_skill_names(_ROOT)   # skill names already provided by non-member entries
+    claimed_names: dict[str, str] = {}         # skill name -> member that rendered it this run
 
     def _link_target(link: Path, member: str, rel: str) -> str:
         # Relative to the link's own directory, and keeping `projects/<member>/` in the
@@ -622,13 +667,14 @@ def cmd_mount(args: argparse.Namespace | None = None, dry_run: bool = False) -> 
                 return False
         return True
 
-    def _put_link(link: Path, target: str) -> bool:
+    def _put_link(link: Path, target: str, member: str) -> bool:
         if not _can_write(link):
             return False
         if not dry_run:
             if link.exists() or link.is_symlink():
                 link.unlink()
             link.symlink_to(target)
+            created_links.append((member, link))
         return True
 
     for remote in remotes:
@@ -684,13 +730,15 @@ def cmd_mount(args: argparse.Namespace | None = None, dry_run: bool = False) -> 
             # Parse frontmatter to check mode
             fm, body = _parse_frontmatter(agent_file.read_text())
             if fm.get("mode") not in ("subagent",):
-                rendered_agents.append({"name": name, "agent": agent_rel, "status": "skipped", "reason": "not mode:subagent"})
+                reason = "no `mode: subagent` in frontmatter (OpenCode dialect); not rendered"
+                rendered_agents.append({"name": name, "agent": agent_rel, "status": "skipped", "reason": reason})
+                skipped.append({"member": name, "kind": "agent", "item": agent_rel, "reason": reason})
                 continue
 
             base_name = agent_file.stem
             # OpenCode: symlink
             oc_link = oc_dir / f"{name}-{base_name}.md"
-            oc_ok = _put_link(oc_link, _link_target(oc_link, name, agent_rel))
+            oc_ok = _put_link(oc_link, _link_target(oc_link, name, agent_rel), name)
 
             # Claude Code: generate wrapper
             cc_text, _ = _render_claude_agent_wrapper(
@@ -719,10 +767,20 @@ def cmd_mount(args: argparse.Namespace | None = None, dry_run: bool = False) -> 
                 continue
 
             prefix = f"{name}-{skill_dir.name}"
+            sname = _skill_name(skill_dir)
+            clash = taken_names.get(sname)
+            if clash is None and claimed_names.get(sname, name) != name:
+                clash = f"member '{claimed_names[sname]}'"
+            if clash is not None:
+                conflicts.append({"path": _rel(_ROOT, oc_skills_dir / prefix),
+                                  "reason": f"skill name '{sname}' already provided by {clash}; not rendered"})
+                rendered_skills.append({"name": name, "skill": skill_rel, "status": "conflict"})
+                continue
+            claimed_names[sname] = name
             ok = True
             for skills_dir in (oc_skills_dir, cc_skills_dir):
                 link = skills_dir / prefix
-                ok = _put_link(link, _link_target(link, name, skill_rel)) and ok
+                ok = _put_link(link, _link_target(link, name, skill_rel), name) and ok
 
             rendered_skills.append({"name": name, "skill": skill_rel,
                                     "status": "rendered" if ok else "conflict"})
@@ -730,22 +788,29 @@ def cmd_mount(args: argparse.Namespace | None = None, dry_run: bool = False) -> 
         mounted.append({
             "name": name,
             "status": "mounted",
-            "agents_rendered": len(rendered_agents),
-            "skills_rendered": len(rendered_skills),
+            "agents_rendered": sum(1 for a in rendered_agents if a.get("status") == "rendered"),
+            "skills_rendered": sum(1 for k in rendered_skills if k.get("status") == "rendered"),
             "rendered_agents": rendered_agents,
             "rendered_skills": rendered_skills,
         })
 
+    # ── Every link we created must resolve, or the tool reported success it did not achieve ──
+    for member, link in created_links:
+        if not link.exists():
+            errors.append({"name": member,
+                           "error": f"rendered link does not resolve: {_rel(_ROOT, link)} -> {os.readlink(link)}"})
+
     # ── Report stale renders (never delete here) ──
     stale = [_rel(_ROOT, p) for p, _ in _find_stale(_ROOT, {r["name"] for r in remotes})]
 
-    total_agents = sum(1 for m in mounted if m.get("status") != "skipped" for _ in m.get("rendered_agents", []))
-    total_skills = sum(1 for m in mounted if m.get("status") != "skipped" for _ in m.get("rendered_skills", []))
+    total_agents = sum(m.get("agents_rendered", 0) for m in mounted if m.get("status") == "mounted")
+    total_skills = sum(m.get("skills_rendered", 0) for m in mounted if m.get("status") == "mounted")
 
     return {
         "mounted": mounted,
         "errors": errors,
         "conflicts": conflicts,
+        "skipped": skipped,
         "stale": stale,
         "pruned": [],
         "dry_run": dry_run,
@@ -755,6 +820,7 @@ def cmd_mount(args: argparse.Namespace | None = None, dry_run: bool = False) -> 
             "skipped": sum(1 for m in mounted if m.get("status") == "skipped"),
             "errors": len(errors),
             "conflicts": len(conflicts),
+            "items_skipped": len(skipped),
             "agents_rendered": total_agents,
             "skills_rendered": total_skills,
             "stale": len(stale),
@@ -823,7 +889,7 @@ def cmd_sync_mount(args: argparse.Namespace | None = None) -> dict:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Manage OpsKit member repos (clone/pull/symlink + mount).",
     )
@@ -859,7 +925,8 @@ def main() -> None:
     args = parser.parse_args()
     result = args.fn(args)
     _emit(result)
+    return exit_code(result) if args.cmd in ("mount", "sync-mount") else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

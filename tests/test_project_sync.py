@@ -876,6 +876,167 @@ class TestSyncMount:
         assert "mount" in result
 
 
+def _make_member(base: Path, name: str, agents=(), skills=()) -> Path:
+    """Build a minimal member. agents: [(filename, file text)]; skills: [(dirname, SKILL.md text)]."""
+    m = base / name
+    (m / ".opskit").mkdir(parents=True)
+    pack = {
+        "contract": 1, "name": name, "description": "t", "data_classification": "public",
+        "sync": "symlink", "trust": {"bash": "ask", "tool_deny": []},
+        "agents": [{"path": f"agents/{fn}"} for fn, _ in agents],
+        "skills": [{"path": f"skills/{d}"} for d, _ in skills],
+    }
+    (m / ".opskit" / "pack.yml").write_text(yaml.safe_dump(pack))
+    for fn, text in agents:
+        (m / "agents").mkdir(exist_ok=True)
+        (m / "agents" / fn).write_text(text)
+    for d, text in skills:
+        (m / "skills" / d).mkdir(parents=True)
+        (m / "skills" / d / "SKILL.md").write_text(text)
+    return m
+
+
+_SKILL = "---\nname: {n}\ndescription: d\n---\nbody\n"
+_SUBAGENT = "---\nname: a\ndescription: d\nmode: subagent\n---\nbody\n"
+_PLAIN_AGENT = "---\nname: a\ndescription: d\n---\nbody\n"   # no `mode: subagent`
+
+
+def _run_main(monkeypatch, capsys, *argv) -> tuple[int, dict]:
+    monkeypatch.setattr(sys, "argv", ["project_sync.py", *argv])
+    rc = ps.main()
+    return rc, json.loads(capsys.readouterr().out)
+
+
+class TestAccounting:
+    def test_skipped_agent_is_not_counted_as_rendered(self, tmp_path: Path):
+        m = _make_member(tmp_path, "mem", agents=[("plain.md", _PLAIN_AGENT), ("sub.md", _SUBAGENT)])
+        _wire(tmp_path, {"mem": m})
+        r = ps.cmd_mount()
+        assert r["summary"]["agents_rendered"] == 1
+        assert r["summary"]["items_skipped"] == 1
+        (sk,) = r["skipped"]
+        assert sk["member"] == "mem" and sk["kind"] == "agent" and "mode: subagent" in sk["reason"]
+
+    def test_member_with_only_unrenderable_agents_renders_nothing(self, tmp_path: Path):
+        m = _make_member(tmp_path, "mem", agents=[("plain.md", _PLAIN_AGENT)])
+        _wire(tmp_path, {"mem": m})
+        r = ps.cmd_mount()
+        assert r["summary"]["agents_rendered"] == 0
+        assert not (tmp_path / ".opencode/agent/mem-plain.md").exists()
+
+
+class TestExitCodes:
+    def test_clean_mount_exits_0_and_prints_json(self, tmp_path, tmp_member, monkeypatch, capsys):
+        _wire(tmp_path, {"test-member": tmp_member})
+        rc, out = _run_main(monkeypatch, capsys, "mount")
+        assert rc == 0 and out["summary"]["errors"] == 0 and out["summary"]["conflicts"] == 0
+
+    def test_conflict_exits_1(self, tmp_path, tmp_member, monkeypatch, capsys):
+        _wire(tmp_path, {"test-member": tmp_member})
+        clash = tmp_path / ".opencode" / "skills" / "test-member-test-skill"
+        clash.mkdir(parents=True)
+        rc, out = _run_main(monkeypatch, capsys, "mount")
+        assert rc == 1 and out["summary"]["conflicts"] == 1
+
+    def test_member_error_exits_1(self, tmp_path, monkeypatch, capsys):
+        m = _make_member(tmp_path, "mem", agents=[("a.md", _SUBAGENT)])
+        (m / "agents" / "a.md").unlink()                      # pack lists it, file is gone
+        _wire(tmp_path, {"mem": m})
+        rc, out = _run_main(monkeypatch, capsys, "mount")
+        assert rc == 1 and out["summary"]["errors"] == 1
+
+    def test_stale_only_exits_0(self, tmp_path, tmp_member, monkeypatch, capsys):
+        _wire(tmp_path, {"test-member": tmp_member})
+        ps.cmd_mount()
+        (tmp_path / ".project-remotes").write_text("")
+        rc, out = _run_main(monkeypatch, capsys, "mount")
+        assert rc == 0 and out["summary"]["stale"] > 0
+
+    def test_skips_alone_exit_0(self, tmp_path, monkeypatch, capsys):
+        m = _make_member(tmp_path, "mem", agents=[("plain.md", _PLAIN_AGENT)])
+        _wire(tmp_path, {"mem": m})
+        rc, out = _run_main(monkeypatch, capsys, "mount")
+        assert rc == 0 and out["summary"]["items_skipped"] == 1
+
+    def test_a_link_that_does_not_resolve_is_an_error(self, tmp_path, tmp_member, monkeypatch, capsys):
+        # projects/<member> points somewhere that lacks the member's files (stale mount link).
+        remotes = tmp_path / ".project-remotes"
+        remotes.write_text(f"test-member {tmp_member}\n")
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        projects = tmp_path / "projects"
+        projects.mkdir()
+        (projects / "test-member").symlink_to(elsewhere)
+        ps._REMOTES, ps._PROJECTS = remotes, projects
+        rc, out = _run_main(monkeypatch, capsys, "mount")
+        assert rc == 1
+        assert any("does not resolve" in e["error"] for e in out["errors"])
+
+    def test_prune_report_exits_0(self, tmp_path, monkeypatch, capsys):
+        _init_repo(tmp_path)
+        _wire(tmp_path, {})
+        rc, _ = _run_main(monkeypatch, capsys, "prune")
+        assert rc == 0
+
+
+class TestSkillNameCollisions:
+    """OpenCode lists a skill by its frontmatter `name`, not its directory (verified 2026-10-01)."""
+
+    def test_member_skill_clashing_with_a_native_name_is_a_conflict(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        native = tmp_path / ".opencode" / "skills" / "some-dir"      # dir name differs from name
+        native.mkdir(parents=True)
+        (native / "SKILL.md").write_text(_SKILL.format(n="shared-name"))
+        _commit_all(tmp_path)
+        m = _make_member(tmp_path, "mem", skills=[("my-skill", _SKILL.format(n="shared-name"))])
+        _wire(tmp_path, {"mem": m})
+        before = _snapshot(tmp_path)
+        r = ps.cmd_mount()
+        assert _snapshot(tmp_path) == before                          # nothing rendered, native untouched
+        (c,) = r["conflicts"]
+        assert "shared-name" in c["reason"] and "some-dir" in c["reason"]
+
+    def test_two_members_with_the_same_skill_name_second_conflicts(self, tmp_path: Path):
+        a = _make_member(tmp_path, "mem-a", skills=[("s", _SKILL.format(n="shared-name"))])
+        b = _make_member(tmp_path, "mem-b", skills=[("s", _SKILL.format(n="shared-name"))])
+        _wire(tmp_path, {"mem-a": a, "mem-b": b})
+        r = ps.cmd_mount()
+        assert (tmp_path / ".opencode/skills/mem-a-s").is_symlink()
+        assert not (tmp_path / ".opencode/skills/mem-b-s").exists()
+        (c,) = r["conflicts"]                                         # one conflict per skill, not per target dir
+        assert "mem-a" in c["reason"] and c["path"].endswith("mem-b-s")
+
+    def test_a_member_never_collides_with_its_own_earlier_render(self, tmp_path: Path):
+        m = _make_member(tmp_path, "mem", skills=[("my-skill", _SKILL.format(n="other-name"))])
+        _wire(tmp_path, {"mem": m})
+        ps.cmd_mount()
+        r = ps.cmd_mount()
+        assert r["conflicts"] == []
+        assert (tmp_path / ".claude/skills/mem-my-skill").is_symlink()
+
+    def test_malformed_frontmatter_falls_back_to_the_directory_name(self, tmp_path: Path):
+        m = _make_member(tmp_path, "mem", skills=[("odd", "---\n: : : [\n---\nbody\n")])
+        _wire(tmp_path, {"mem": m})
+        r = ps.cmd_mount()                                            # must not raise
+        assert r["conflicts"] == []
+        assert (tmp_path / ".opencode/skills/mem-odd").is_symlink()
+
+
+class TestInitMountPolicy:
+    """`opskit init` has already scaffolded when it runs sync-mount: exit 1 is a warning, a crash is fatal."""
+
+    def test_exit_1_is_not_fatal_but_a_crash_is(self):
+        import importlib.machinery, importlib.util
+        path = Path(__file__).resolve().parent.parent / "bin" / "opskit"
+        loader = importlib.machinery.SourceFileLoader("opskit_cli_415", str(path))
+        spec = importlib.util.spec_from_loader("opskit_cli_415", loader)
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        assert mod._sync_mount_is_fatal(0) is False
+        assert mod._sync_mount_is_fatal(1) is False
+        assert mod._sync_mount_is_fatal(2) is True
+
+
 class TestOpskitWrapper:
     """`opskit member prune` used to be accepted by the wrapper and crash in project_sync.py."""
 

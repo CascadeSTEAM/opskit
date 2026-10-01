@@ -180,8 +180,16 @@ Report by default, remove with `--force` or always (configurable).
 > report stale renders. `prune` reports, `prune --force` removes — and only items this tool
 > provably rendered (a symlink whose target contains `projects/<member>/`, or a generated
 > file with `<!-- opskit-member-render: <member> -->`), never anything git tracks, never a
-> directory. Links are built relative to their own directory so they resolve. Remaining
-> phases (conflict accounting, locking, `.git/info/exclude`, sibling `--prune` rules) are
+> directory. Links are built relative to their own directory so they resolve. Phase 2a:
+> `agents_rendered` / `skills_rendered` count only what was actually rendered; skipped items are
+> listed under `skipped` with a reason (e.g. an agent without `mode: subagent`). Every link the
+> mount creates is checked to resolve. `mount` and `sync-mount` exit 1 on errors or conflicts
+> (skips and stale renders exit 0); `opskit init` treats exit 1 as a warning because the member is
+> already scaffolded. The `<member>-` directory prefix avoids file collisions only: OpenCode lists a
+> skill by its frontmatter `name` (verified 2026-10-01), so a member skill whose name is already
+> provided by a native skill or an earlier member is reported as a conflict and not rendered.
+> Claude Code and Crush were not tested for this. Remaining phases (locking and atomic replace,
+> `.git/info/exclude`, sibling `--prune` rules, `mode: subagent` check in `opskit-aware.py`) are
 > tracked in #415.
 
 ## 4. Schema updates
