@@ -172,6 +172,18 @@ During `mount --prune` (or always, if safe):
 `--prune` is **always safe** for rendered items (they were created by mount).
 Report by default, remove with `--force` or always (configurable).
 
+> **Erratum (#415, 2026-09-30).** The "always safe" premise above was wrong: the rendered
+> dirs are shared with native items (tracked skills in `.opencode/skills/`, tracked links in
+> `.claude/skills/`, `sync-agents` output), and prefix matching cannot say what a removed
+> member once rendered. The first implementation deleted by name and wiped native agents and
+> skills twice (#321, #415). Current behaviour: `mount`/`sync-mount` **never delete**; they
+> report stale renders. `prune` reports, `prune --force` removes — and only items this tool
+> provably rendered (a symlink whose target contains `projects/<member>/`, or a generated
+> file with `<!-- opskit-member-render: <member> -->`), never anything git tracks, never a
+> directory. Links are built relative to their own directory so they resolve. Remaining
+> phases (conflict accounting, locking, `.git/info/exclude`, sibling `--prune` rules) are
+> tracked in #415.
+
 ## 4. Schema updates
 
 ### 4.1 `pack.yml` — no changes needed

@@ -678,7 +678,7 @@ def cmd_member(args):
         sys.exit(1)
 
     result = subprocess.run(
-        [sys.executable, str(SCRIPT_DIR / 'project_sync.py'), subcmd],
+        [sys.executable, str(SCRIPT_DIR / 'project_sync.py'), subcmd, *(args.member_args or [])],
         cwd=str(REPO_ROOT),
         env={**os.environ, 'OPSKIT_ROOT': str(REPO_ROOT)},
         capture_output=True,
@@ -1670,9 +1670,9 @@ examples:
   opskit init                                     scaffold OpsKit member manifest
   opskit member status                            show member mount state
   opskit member sync                              clone/pull members + symlinks
-  opskit member mount                             validate + render agents/skills
+  opskit member mount [--dry-run]                 validate + render agents/skills (reports stale, never deletes)
   opskit member sync-mount                        sync + mount in one step
-  opskit member prune                             remove stale rendered items
+  opskit member prune [--force]                   report stale member renders; --force removes them
   opskit scan                                     discover + enrich + resolve
   opskit scan --dry-run                           preview without touching network
   opskit status                                   inventory summary
@@ -1722,6 +1722,8 @@ Without Semaphore, playbooks run via the CLI with  bin/ap.sh <playbook>.
     pm.add_argument('member_command', nargs='?',
                     choices=['status', 'sync', 'mount', 'sync-mount', 'prune'],
                     help='member subcommand')
+    pm.add_argument('member_args', nargs=argparse.REMAINDER,
+                    help='flags passed through to project_sync.py (e.g. prune --force, mount --dry-run)')
 
     # scan
     ps = sub.add_parser('scan', help='full network scan pipeline')
