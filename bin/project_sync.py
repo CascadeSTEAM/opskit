@@ -416,12 +416,18 @@ def cmd_pull() -> dict:
 # output). A name list can never say what is safe to delete (#321 tried; it rotted),
 # so ownership is read from the item itself:
 #   * a symlink whose target text contains `projects/<member>/` (works when dangling), or
-#   * a generated file carrying `<!-- opskit-member-render: <member> -->`.
+#   * a generated file carrying `<!-- opskit-member-render: <member> -->`, or (wrappers
+#     rendered before the marker existed) frontmatter `member: <name>` with a filename
+#     that starts `<name>-`.
 # Anything else is not ours and is never modified or removed.
 
 RENDER_MARKER_FMT = "<!-- opskit-member-render: {member} -->"
 _RENDER_MARKER_RE = re.compile(r"<!--\s*opskit-member-render:\s*([a-z][a-z0-9-]*)\s*-->")
-_PROJECTS_LINK_RE = re.compile(r"(?:^|/)projects/([a-z][a-z0-9-]*)(?:/|$)")
+# Anchored: a render's link text is always `../…/projects/<member>/…` (relative, from a
+# rendered dir). A native link that merely contains a `projects` path segment is not ours.
+_PROJECTS_LINK_RE = re.compile(r"^(?:\.\./)+projects/([a-z][a-z0-9-]*)(?:/|$)")
+# Wrappers rendered before the marker existed carry `member: <name>` in their frontmatter.
+_LEGACY_MEMBER_FIELD_RE = re.compile(r"^member:\s*['\"]?([a-z][a-z0-9-]*)['\"]?\s*$", re.M)
 _RENDER_SUBDIRS = (".opencode/agent", ".claude/agents", ".opencode/skills", ".claude/skills")
 
 
@@ -429,12 +435,20 @@ def member_of_render(path: Path) -> str | None:
     """Member that rendered `path`, or None if this tool did not create it."""
     try:
         if path.is_symlink():
-            m = _PROJECTS_LINK_RE.search(os.readlink(path))
+            m = _PROJECTS_LINK_RE.match(os.readlink(path))
             return m.group(1) if m else None
         if path.is_file():
             with open(path, "r", errors="replace") as fh:
-                m = _RENDER_MARKER_RE.search(fh.read(2048))
-            return m.group(1) if m else None
+                text = fh.read(1 << 20)  # renders are small; do not miss a marker after a long description
+            m = _RENDER_MARKER_RE.search(text)
+            if m:
+                return m.group(1)
+            if text.startswith("---\n"):
+                end = text.find("\n---", 4)
+                legacy = _LEGACY_MEMBER_FIELD_RE.search(text[4:end] if end != -1 else "")
+                if legacy and path.name.startswith(legacy.group(1) + "-"):
+                    return legacy.group(1)
+            return None
     except OSError:
         return None
     return None
