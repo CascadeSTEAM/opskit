@@ -5,6 +5,7 @@ Runs offline in tmp_path. Uses pytest's tmp_path fixture.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -451,8 +452,9 @@ class TestMount:
         oc_dir = tmp_path / ".opencode" / "agent"
         oc_agent = oc_dir / "test-member-test.md"
         assert oc_agent.is_symlink()
-        # Symlink target should be relative: ../../../projects/test-member/agents/test.md
-        assert oc_agent.readlink() == Path("../../../projects") / "test-member" / "agents/test.md"
+        # The link must RESOLVE to the member's agent file (#415: the old assertion pinned
+        # a string with one `..` too many and never resolved it, so a dangling link passed).
+        assert oc_agent.resolve() == (tmp_member / "agents" / "test.md").resolve()
 
         # Verify CC wrapper was created (file, not symlink — generated text)
         cc_dir = tmp_path / ".claude" / "agents"
@@ -535,104 +537,267 @@ class TestMount:
 # ── Prune ─────────────────────────────────────────────────────────────────────
 
 
+# ── #415: mount must never delete what it did not render ─────────────────────
+
+
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "core.hooksPath=/dev/null", "-C", str(root), *args],
+        check=True, capture_output=True,
+        env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+             "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"},
+    )
+
+
+def _init_repo(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    _git(root, "init", "-q")
+
+
+def _commit_all(root: Path) -> None:
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "x")
+
+
+_RENDER_DIRS = (".opencode/agent", ".claude/agents", ".opencode/skills", ".claude/skills")
+
+
+def _snapshot(root: Path, subdirs=_RENDER_DIRS) -> dict:
+    """Byte-exact picture of the rendered dirs: {relpath: (kind, payload)}."""
+    out: dict = {}
+    for sub in subdirs:
+        base = root / sub
+        if not base.exists():
+            continue
+        for p in sorted(base.rglob("*")):
+            rel = str(p.relative_to(root))
+            if p.is_symlink():
+                out[rel] = ("link", os.readlink(p))
+            elif p.is_file():
+                out[rel] = ("file", p.read_bytes())
+            else:
+                out[rel] = ("dir", None)
+    return out
+
+
+def _make_natives(root: Path) -> None:
+    """Native items as they exist in a real OpsKit checkout.
+
+    Tracked: a skill dir + the `.claude/skills` symlink to it.
+    Untracked/gitignored: rendered native agents (`sync-agents` output).
+    """
+    skill = root / ".opencode" / "skills" / "native-skill"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# native skill\n")
+    cc = root / ".claude" / "skills"
+    cc.mkdir(parents=True)
+    (cc / "native-skill").symlink_to("../../.opencode/skills/native-skill")
+    _commit_all(root)
+    for d in (".opencode/agent", ".claude/agents"):
+        (root / d).mkdir(parents=True, exist_ok=True)
+        (root / d / "native-agent.md").write_text("# native agent (generated, untracked)\n")
+
+
+def _wire(tmp_path: Path, members: dict[str, Path]) -> Path:
+    """Write .project-remotes + projects/ mount links and point the module at tmp_path."""
+    remotes = tmp_path / ".project-remotes"
+    remotes.write_text("".join(f"{n} {p}\n" for n, p in members.items()))
+    projects = tmp_path / "projects"
+    projects.mkdir(exist_ok=True)
+    for n, p in members.items():
+        link = projects / n
+        if not link.is_symlink():
+            link.symlink_to(p)
+    ps._REMOTES = remotes
+    ps._PROJECTS = projects
+    return remotes
+
+
+class TestMountNeverDeletesNatives:
+    """The #321 / #415 regression matrix: natives survive whatever the member set is."""
+
+    def test_zero_members_changes_nothing(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        _make_natives(tmp_path)
+        _wire(tmp_path, {})
+        before = _snapshot(tmp_path)
+        result = ps.cmd_mount()
+        assert _snapshot(tmp_path) == before
+        assert result["summary"]["pruned"] == 0
+
+    def test_one_member_leaves_natives_untouched(self, tmp_path: Path, tmp_member: Path):
+        _init_repo(tmp_path)
+        _make_natives(tmp_path)
+        before = _snapshot(tmp_path)
+        _wire(tmp_path, {"test-member": tmp_member})
+        result = ps.cmd_mount()
+        after = _snapshot(tmp_path)
+        for rel, state in before.items():
+            assert after.get(rel) == state, f"native {rel} was changed"
+        assert result["summary"]["pruned"] == 0
+        assert result["summary"]["mounted"] == 1
+
+    def test_mount_is_idempotent(self, tmp_path: Path, tmp_member: Path):
+        _init_repo(tmp_path)
+        _make_natives(tmp_path)
+        _wire(tmp_path, {"test-member": tmp_member})
+        ps.cmd_mount()
+        first = _snapshot(tmp_path)
+        ps.cmd_mount()
+        assert _snapshot(tmp_path) == first
+
+    def test_does_not_overwrite_a_destination_it_does_not_own(self, tmp_path: Path, tmp_member: Path):
+        _init_repo(tmp_path)
+        clash = tmp_path / ".opencode" / "skills" / "test-member-test-skill"
+        clash.mkdir(parents=True)
+        (clash / "SKILL.md").write_text("# a native skill that happens to share the name\n")
+        _commit_all(tmp_path)
+        _wire(tmp_path, {"test-member": tmp_member})
+        result = ps.cmd_mount()
+        assert (clash / "SKILL.md").read_text().startswith("# a native skill")
+        assert not clash.is_symlink()
+        assert any(c.get("path", "").endswith("test-member-test-skill")
+                   for c in result.get("conflicts", []))
+
+    def test_dry_run_changes_nothing(self, tmp_path: Path, tmp_member: Path):
+        _init_repo(tmp_path)
+        _make_natives(tmp_path)
+        _wire(tmp_path, {"test-member": tmp_member})
+        before = _snapshot(tmp_path)
+        result = ps.cmd_mount(dry_run=True)
+        assert _snapshot(tmp_path) == before
+        assert result["summary"]["mounted"] == 1
+
+
+class TestRender:
+    def test_every_rendered_link_resolves_to_the_member(self, tmp_path: Path, tmp_member: Path):
+        _wire(tmp_path, {"test-member": tmp_member})
+        ps.cmd_mount()
+        agent = tmp_member / "agents" / "test.md"
+        skill = tmp_member / "skills" / "test-skill"
+        assert (tmp_path / ".opencode/agent/test-member-test.md").resolve() == agent.resolve()
+        for d in (".opencode/skills", ".claude/skills"):
+            link = tmp_path / d / "test-member-test-skill"
+            assert link.is_symlink()
+            assert link.resolve() == skill.resolve(), f"{d} link dangles: {os.readlink(link)}"
+
+    def test_claude_wrapper_carries_the_ownership_marker(self, tmp_path: Path, tmp_member: Path):
+        _wire(tmp_path, {"test-member": tmp_member})
+        ps.cmd_mount()
+        wrapper = (tmp_path / ".claude/agents/test-member-test.md").read_text()
+        assert "<!-- opskit-member-render: test-member -->" in wrapper
+        assert ps.member_of_render(tmp_path / ".claude/agents/test-member-test.md") == "test-member"
+
+
+class TestOwnership:
+    def test_symlink_into_projects_is_owned(self, tmp_path: Path):
+        link = tmp_path / "x"
+        link.symlink_to("../../projects/some-member/skills/x")  # dangling on purpose
+        assert ps.member_of_render(link) == "some-member"
+
+    def test_native_symlink_is_not_owned(self, tmp_path: Path):
+        link = tmp_path / "x"
+        link.symlink_to("../../.opencode/skills/x")
+        assert ps.member_of_render(link) is None
+
+    def test_plain_file_or_dir_without_marker_is_not_owned(self, tmp_path: Path):
+        f = tmp_path / "removed-member-stale.md"
+        f.write_text("# looks like a member render by name only\n")
+        d = tmp_path / "removed-member-stale-skill"
+        d.mkdir()
+        assert ps.member_of_render(f) is None
+        assert ps.member_of_render(d) is None
+
+    def test_generated_file_with_marker_is_owned(self, tmp_path: Path):
+        f = tmp_path / "w.md"
+        f.write_text("---\nname: w\n---\n<!-- opskit-member-render: some-member -->\nbody\n")
+        assert ps.member_of_render(f) == "some-member"
+
+
 class TestPrune:
+    """Stale member renders are REPORTED by mount and removed only by `prune --force`."""
 
-    def test_prune_stale_agent_render(self, tmp_path: Path, tmp_member: Path):
-        """Stale agent render from removed member should be pruned."""
-        remotes = tmp_path / ".project-remotes"
-        remotes.write_text(f"test-member {tmp_member}\n")
-        projects = tmp_path / "projects"
-        projects.mkdir()
-        link = projects / "test-member"
-        link.symlink_to(tmp_member)
+    def _render_then_drop_member(self, tmp_path: Path, tmp_member: Path):
+        _init_repo(tmp_path)
+        _make_natives(tmp_path)
+        _wire(tmp_path, {"test-member": tmp_member})
+        ps.cmd_mount()
+        (tmp_path / ".project-remotes").write_text("")  # member removed
+        return _snapshot(tmp_path)
 
-        # Create stale render in the context dir under tmp_path
-        opskit_dir = tmp_path / ".opencode"
-        agent_dir = opskit_dir / "agent"
-        agent_dir.mkdir(parents=True)
-
-        # Create a stale render for a member that no longer exists
-        stale_link = agent_dir / "removed-member-stale.md"
-        stale_link.write_text("# stale\n")
-
-        ps._REMOTES = remotes
-        ps._PROJECTS = projects
-
+    def test_mount_reports_stale_but_deletes_nothing(self, tmp_path: Path, tmp_member: Path):
+        before = self._render_then_drop_member(tmp_path, tmp_member)
         result = ps.cmd_mount()
-        # The stale render should be pruned
-        assert not stale_link.exists()
-        assert any("agent" in p for p in result.get("pruned", []))
+        assert _snapshot(tmp_path) == before
+        stale = set(result["stale"])
+        assert ".opencode/skills/test-member-test-skill" in stale
+        assert ".claude/agents/test-member-test.md" in stale
 
-    def test_prune_stale_skill_render(self, tmp_path: Path, tmp_member: Path):
-        """Stale skill render from removed member should be pruned."""
-        remotes = tmp_path / ".project-remotes"
-        remotes.write_text(f"test-member {tmp_member}\n")
-        projects = tmp_path / "projects"
-        projects.mkdir()
-        link = projects / "test-member"
-        link.symlink_to(tmp_member)
+    def test_prune_without_force_only_reports(self, tmp_path: Path, tmp_member: Path):
+        before = self._render_then_drop_member(tmp_path, tmp_member)
+        result = ps.cmd_prune()
+        assert _snapshot(tmp_path) == before
+        assert result["removed"] == []
+        assert ".opencode/agent/test-member-test.md" in result["stale"]
 
-        # Stale skill render under tmp_path/.claude/skills/
-        skills_dir = tmp_path / ".claude" / "skills"
-        skills_dir.mkdir(parents=True)
+    def test_prune_force_removes_only_stale_member_renders(self, tmp_path: Path, tmp_member: Path):
+        before = self._render_then_drop_member(tmp_path, tmp_member)
+        lookalike = tmp_path / ".opencode" / "agent" / "removed-member-stale.md"
+        lookalike.write_text("# not a render: no link into projects/, no marker\n")
+        result = ps.cmd_prune(force=True)
+        after = _snapshot(tmp_path)
+        assert lookalike.exists(), "a file that merely LOOKS like a render must survive"
+        for rel, state in before.items():
+            if "test-member" in rel:
+                assert rel not in after, f"{rel} should have been pruned"
+            else:
+                assert after.get(rel) == state, f"{rel} must not be touched"
+        assert result["removed"]
 
-        stale_skill = skills_dir / "removed-member-stale-skill"
-        stale_skill.mkdir()
+    def test_prune_force_dry_run_removes_nothing(self, tmp_path: Path, tmp_member: Path):
+        before = self._render_then_drop_member(tmp_path, tmp_member)
+        ps.cmd_prune(force=True, dry_run=True)
+        assert _snapshot(tmp_path) == before
 
-        ps._REMOTES = remotes
-        ps._PROJECTS = projects
+    def test_live_member_renders_are_not_stale(self, tmp_path: Path, tmp_member: Path):
+        _init_repo(tmp_path)
+        _make_natives(tmp_path)
+        _wire(tmp_path, {"test-member": tmp_member})
+        ps.cmd_mount()
+        before = _snapshot(tmp_path)
+        result = ps.cmd_prune(force=True)
+        assert result["stale"] == [] and result["removed"] == []
+        assert _snapshot(tmp_path) == before
 
-        result = ps.cmd_mount()
-        # The stale skill should be pruned
-        assert not stale_skill.exists()
+    def test_tracked_paths_are_never_removed_even_if_they_look_owned(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        cc = tmp_path / ".claude" / "skills"
+        cc.mkdir(parents=True)
+        (cc / "tracked-link").symlink_to("../../projects/gone-member/skills/x")
+        _commit_all(tmp_path)
+        _wire(tmp_path, {})
+        result = ps.cmd_prune(force=True)
+        assert (cc / "tracked-link").is_symlink()
+        assert any(sk["path"].endswith("tracked-link") and "tracked" in sk["reason"]
+                   for sk in result["skipped"])
 
-    def test_prune_preserves_native_skill(self, tmp_path: Path, tmp_member: Path):
-        """Native skill dirs must not be pruned even though they have no member prefix."""
-        remotes = tmp_path / ".project-remotes"
-        remotes.write_text(f"test-member {tmp_member}\n")
-        projects = tmp_path / "projects"
-        projects.mkdir()
-        link = projects / "test-member"
-        link.symlink_to(tmp_member)
+    def test_prune_refuses_when_tracked_state_cannot_be_verified(self, tmp_path: Path):
+        # No git repo here: fail safe — remove nothing.
+        cc = tmp_path / ".claude" / "skills"
+        cc.mkdir(parents=True)
+        (cc / "x").symlink_to("../../projects/gone-member/skills/x")
+        _wire(tmp_path, {})
+        result = ps.cmd_prune(force=True)
+        assert (cc / "x").is_symlink()
+        assert result["removed"] == []
 
-        skills_dir = tmp_path / ".opencode" / "skills"
-        skills_dir.mkdir(parents=True)
-
-        # Create a native skill dir (no member prefix)
-        native_skill = skills_dir / "backup"
-        native_skill.mkdir()
-        native_skill.joinpath("SKILL.md").write_text("# backup\n")
-
-        ps._REMOTES = remotes
-        ps._PROJECTS = projects
-
-        result = ps.cmd_mount()
-        # Native skill must survive
-        assert native_skill.exists()
-        assert not any("backup" in p for p in result.get("pruned", []))
-
-    def test_prune_stale_skill_render(self, tmp_path: Path, tmp_member: Path):
-        """Stale skill render from removed member should be pruned."""
-        remotes = tmp_path / ".project-remotes"
-        remotes.write_text(f"test-member {tmp_member}\n")
-        projects = tmp_path / "projects"
-        projects.mkdir()
-        link = projects / "test-member"
-        link.symlink_to(tmp_member)
-
-        # Stale skill render under tmp_path/.claude/skills/
-        skills_dir = tmp_path / ".claude" / "skills"
-        skills_dir.mkdir(parents=True)
-
-        stale_skill = skills_dir / "removed-member-stale-skill"
-        stale_skill.mkdir()
-
-        ps._REMOTES = remotes
-        ps._PROJECTS = projects
-
-        result = ps.cmd_mount()
-        # The stale skill should be pruned
-        assert not stale_skill.exists()
+    def test_prune_subcommand_is_wired_into_the_cli(self, tmp_path: Path, monkeypatch, capsys):
+        _init_repo(tmp_path)
+        _wire(tmp_path, {})
+        monkeypatch.setattr(sys, "argv", ["project_sync.py", "prune"])
+        ps.main()
+        out = json.loads(capsys.readouterr().out)
+        assert out["removed"] == [] and "stale" in out
 
 
 class TestSyncMount:
