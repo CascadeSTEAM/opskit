@@ -1175,6 +1175,20 @@ class TestExcludeBlock:
         assert ex.read_text() == "/keep-me\n"
         assert not (tmp_path / ".opencode/skills/mem-s").exists()
 
+    def test_an_orphaned_begin_marker_never_swallows_user_lines(self, tmp_path: Path):
+        """Review of #421: a hand-edited file with a BEGIN but no END must not lose the lines after it."""
+        _init_repo(tmp_path)
+        m = self._member(tmp_path)
+        _wire(tmp_path, {"mem": m})
+        ex = self._exclude(tmp_path)
+        ex.parent.mkdir(parents=True, exist_ok=True)
+        ex.write_text("# >>> opskit member renders (managed by project_sync.py; edit outside this block)\n"
+                      "/user-line-a\n# a comment I wrote\n/user-line-b\n")
+        ps.cmd_mount()
+        ps.cmd_mount()
+        text = ex.read_text()
+        assert "/user-line-a" in text and "# a comment I wrote" in text and "/user-line-b" in text
+
     def test_tracked_renders_are_not_excluded(self, tmp_path: Path):
         _init_repo(tmp_path)
         m = self._member(tmp_path)
