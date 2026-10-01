@@ -15,9 +15,9 @@ Usage:
     bin/project-sync.py status [--json]          # show mount state per member
     bin/project-sync.py sync                     # clone/pull + create symlinks
     bin/project-sync.py pull                     # pull updates for clone members
-    bin/project-sync.py mount [--name NAME]      # validate + render agents/skills
-    bin/project-sync.py sync-mount               # sync + mount in one step
-    bin/project-sync.py prune                    # remove stale rendered items
+    bin/project-sync.py mount [--dry-run]        # validate + render agents/skills; REPORTS stale
+    bin/project-sync.py sync-mount               # sync + mount in one step (never deletes)
+    bin/project-sync.py prune [--force] [--dry-run]  # report (or with --force remove) stale member renders
 
 Exit 0 on partial success (some members skipped), exit 1 on unrecoverable error.
 """
@@ -410,6 +410,83 @@ def cmd_pull() -> dict:
 # ── Mount ─────────────────────────────────────────────────────────────────────
 
 
+# ── Ownership: what may this tool change or delete? (#415) ─────────────────────
+#
+# The rendered dirs are SHARED with native items (tracked skills, `sync-agents`
+# output). A name list can never say what is safe to delete (#321 tried; it rotted),
+# so ownership is read from the item itself:
+#   * a symlink whose target text contains `projects/<member>/` (works when dangling), or
+#   * a generated file carrying `<!-- opskit-member-render: <member> -->`.
+# Anything else is not ours and is never modified or removed.
+
+RENDER_MARKER_FMT = "<!-- opskit-member-render: {member} -->"
+_RENDER_MARKER_RE = re.compile(r"<!--\s*opskit-member-render:\s*([a-z][a-z0-9-]*)\s*-->")
+_PROJECTS_LINK_RE = re.compile(r"(?:^|/)projects/([a-z][a-z0-9-]*)(?:/|$)")
+_RENDER_SUBDIRS = (".opencode/agent", ".claude/agents", ".opencode/skills", ".claude/skills")
+
+
+def member_of_render(path: Path) -> str | None:
+    """Member that rendered `path`, or None if this tool did not create it."""
+    try:
+        if path.is_symlink():
+            m = _PROJECTS_LINK_RE.search(os.readlink(path))
+            return m.group(1) if m else None
+        if path.is_file():
+            with open(path, "r", errors="replace") as fh:
+                m = _RENDER_MARKER_RE.search(fh.read(2048))
+            return m.group(1) if m else None
+    except OSError:
+        return None
+    return None
+
+
+def _root() -> Path:
+    env = os.environ.get("OPSKIT_ROOT", "")
+    return Path(env) if env else _PROJECTS.parent
+
+
+def _is_tracked(root: Path, path: Path) -> bool | None:
+    """True/False if git tracks `path`; None when that cannot be determined."""
+    try:
+        rel = os.path.relpath(str(path), str(root))
+        r = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "--error-unmatch", "--", rel],
+            capture_output=True, text=True,
+        )
+    except OSError:
+        return None
+    if r.returncode == 0:
+        return True
+    if r.returncode == 1:
+        return False
+    return None  # not a repo / git failed: callers must fail safe
+
+
+def _find_stale(root: Path, live_members: set[str]) -> list[tuple[Path, str]]:
+    """Member renders whose member is gone from .project-remotes, or whose link dangles.
+
+    Only direct children of the four rendered dirs, only items we provably created.
+    """
+    stale: list[tuple[Path, str]] = []
+    for sub in _RENDER_SUBDIRS:
+        d = root / sub
+        if not d.is_dir():
+            continue
+        for child in sorted(d.iterdir()):
+            owner = member_of_render(child)
+            if owner is None:
+                continue
+            if owner not in live_members:
+                stale.append((child, f"member '{owner}' is not in .project-remotes"))
+            elif child.is_symlink() and not child.exists():
+                stale.append((child, "dangling link (member not mounted in this checkout)"))
+    return stale
+
+
+def _rel(root: Path, path: Path) -> str:
+    return os.path.relpath(str(path), str(root))
+
+
 def _parse_frontmatter(text: str) -> tuple[dict, str]:
     """Split frontmatter from body. Returns (fm_dict, body_text)."""
     # Handle empty frontmatter (---\n---) and non-empty cases
@@ -468,7 +545,7 @@ def _render_claude_agent_wrapper(
         width=4096,
     ).strip()
 
-    parts = [f"---\n{fm_yaml}\n---\n"]
+    parts = [f"---\n{fm_yaml}\n---\n", RENDER_MARKER_FMT.format(member=member_name) + "\n"]
     if perm:
         parts.append(f"<!-- opencode-permission: {json.dumps(perm)} -->\n")
 
@@ -491,35 +568,54 @@ def _render_claude_agent_wrapper(
     return "".join(parts), has_soft
 
 
-def cmd_mount(args: argparse.Namespace | None = None) -> dict:
-    """Validate members, render agents + skills, prune stale renders.
+def cmd_mount(args: argparse.Namespace | None = None, dry_run: bool = False) -> dict:
+    """Validate members and render their agents + skills.
 
     For each mounted member:
       1. Run opskit-aware.py check on the member root
       2. Render agents (symlinks for OpenCode, generated wrappers for Claude Code)
       3. Symlink skills into both discovery paths
-      4. Prune stale renders for removed members
+    Then REPORT stale renders. Mount never deletes (#415): removal is `prune --force`.
+    A destination that exists and was not rendered by a member is left alone and
+    reported under `conflicts`.
     """
-    # Always derive from _PROJECTS so tests that swap _PROJECTS get mounted
-    # into tmp_path.  OPSKIT_ROOT can override both _PROJECTS and this.
-    _root_env = os.environ.get("OPSKIT_ROOT", "")
-    if _root_env:
-        _ROOT = Path(_root_env)
-    else:
-        _ROOT = _PROJECTS.parent
+    _ROOT = _root()
     oc_dir = _ROOT / ".opencode" / "agent"
     cc_dir = _ROOT / ".claude" / "agents"
     oc_skills_dir = _ROOT / ".opencode" / "skills"
     cc_skills_dir = _ROOT / ".claude" / "skills"
 
-    oc_dir.mkdir(parents=True, exist_ok=True)
-    cc_dir.mkdir(parents=True, exist_ok=True)
-    oc_skills_dir.mkdir(parents=True, exist_ok=True)
-    cc_skills_dir.mkdir(parents=True, exist_ok=True)
+    if not dry_run:
+        for d in (oc_dir, cc_dir, oc_skills_dir, cc_skills_dir):
+            d.mkdir(parents=True, exist_ok=True)
 
     remotes = parse_remotes(_REMOTES)
     mounted: list[dict] = []
     errors: list[dict] = []
+    conflicts: list[dict] = []
+
+    def _link_target(link: Path, member: str, rel: str) -> str:
+        # Relative to the link's own directory, and keeping `projects/<member>/` in the
+        # text so the link is recognisable as ours even when it dangles.
+        return os.path.relpath(str(_PROJECTS / member / rel), str(link.parent))
+
+    def _can_write(dest: Path) -> bool:
+        """True if dest is free or was rendered by a member; else record a conflict."""
+        if dest.exists() or dest.is_symlink():
+            if member_of_render(dest) is None:
+                conflicts.append({"path": _rel(_ROOT, dest),
+                                  "reason": "exists and was not rendered by a member; left untouched"})
+                return False
+        return True
+
+    def _put_link(link: Path, target: str) -> bool:
+        if not _can_write(link):
+            return False
+        if not dry_run:
+            if link.exists() or link.is_symlink():
+                link.unlink()
+            link.symlink_to(target)
+        return True
 
     for remote in remotes:
         name = remote["name"]
@@ -577,14 +673,10 @@ def cmd_mount(args: argparse.Namespace | None = None) -> dict:
                 rendered_agents.append({"name": name, "agent": agent_rel, "status": "skipped", "reason": "not mode:subagent"})
                 continue
 
-            # OpenCode: symlink
             base_name = agent_file.stem
+            # OpenCode: symlink
             oc_link = oc_dir / f"{name}-{base_name}.md"
-            if oc_link.exists() or oc_link.is_symlink():
-                oc_link.unlink()
-            # Relative path from .opencode/agent/ to projects/<name>/agents/<file>
-            oc_target = Path("../../../projects") / name / agent_rel
-            oc_link.symlink_to(oc_target)
+            oc_ok = _put_link(oc_link, _link_target(oc_link, name, agent_rel))
 
             # Claude Code: generate wrapper
             cc_text, _ = _render_claude_agent_wrapper(
@@ -594,9 +686,13 @@ def cmd_mount(args: argparse.Namespace | None = None) -> dict:
                 member_name=name,
                 trust=trust,
             )
-            (cc_dir / f"{name}-{base_name}.md").write_text(cc_text)
+            cc_file = cc_dir / f"{name}-{base_name}.md"
+            cc_ok = _can_write(cc_file)
+            if cc_ok and not dry_run:
+                cc_file.write_text(cc_text)
 
-            rendered_agents.append({"name": name, "agent": agent_rel, "status": "rendered"})
+            rendered_agents.append({"name": name, "agent": agent_rel,
+                                    "status": "rendered" if (oc_ok and cc_ok) else "conflict"})
 
         # ── Render skills ──
         for skill in (pack.get("skills") or []):
@@ -608,23 +704,14 @@ def cmd_mount(args: argparse.Namespace | None = None) -> dict:
                 errors.append({"name": name, "error": f"skill dir missing: {skill_rel}"})
                 continue
 
-            skill_name = skill_dir.name
-            prefix = f"{name}-{skill_name}"
+            prefix = f"{name}-{skill_dir.name}"
+            ok = True
+            for skills_dir in (oc_skills_dir, cc_skills_dir):
+                link = skills_dir / prefix
+                ok = _put_link(link, _link_target(link, name, skill_rel)) and ok
 
-            # OpenCode: symlink
-            oc_skill_link = oc_skills_dir / prefix
-            if oc_skill_link.exists() or oc_skill_link.is_symlink():
-                oc_skill_link.unlink()
-            oc_skill_target = Path("../../../projects") / name / skill_rel
-            oc_skill_link.symlink_to(oc_skill_target)
-
-            # Claude Code: symlink (Claude Code follows symlinks for skills)
-            cc_skill_link = cc_skills_dir / prefix
-            if cc_skill_link.exists() or cc_skill_link.is_symlink():
-                cc_skill_link.unlink()
-            cc_skill_link.symlink_to(oc_skill_target)
-
-            rendered_skills.append({"name": name, "skill": skill_rel, "status": "rendered"})
+            rendered_skills.append({"name": name, "skill": skill_rel,
+                                    "status": "rendered" if ok else "conflict"})
 
         mounted.append({
             "name": name,
@@ -635,55 +722,8 @@ def cmd_mount(args: argparse.Namespace | None = None) -> dict:
             "rendered_skills": rendered_skills,
         })
 
-    # ── Prune stale renders ──
-    # Build set of all currently-rendered member names
-    active_members = {r["name"] for r in remotes if r["name"] not in ("example",)}
-
-    # Native skill names (from AGENTS.md Skills list) — these must not be pruned
-    NATIVE_SKILLS = {
-        "startsession", "lifecycle", "git", "security", "backup", "infra",
-        "check-connectivity", "templates", "tools", "endsession", "idea-triage",
-        "idea-cmd", "baseline", "gh", "helpdesk-ticket", "frappe-access",
-        "dogfood-cycle", "release", "zabbix", "cleanup", "handoff",
-        "ticket-triage", "gitlab-pages-dns", "grind", "knowledge-base",
-        "routeros", "github-cli", "triage",
-    }
-
-    pruned: list[dict] = []
-
-    for rendered_dir, kind in [
-        (oc_dir, "agent"), (cc_dir, "agent"),
-        (oc_skills_dir, "skill"), (cc_skills_dir, "skill"),
-    ]:
-        for existing in sorted(rendered_dir.glob("*.md")) if kind == "agent" else sorted(rendered_dir.glob("*")):
-            # Skip directories in skill dir
-            if kind == "skill" and existing.is_dir():
-                stem = existing.name
-            else:
-                stem = existing.stem
-            # Check if this render has no member source
-            # Format: <member-name>-<rest> — try to match member name
-            found = False
-            # Native skills are always preserved
-            if stem in NATIVE_SKILLS:
-                found = True
-            else:
-                for m in active_members:
-                    if kind == "agent" and stem.startswith(f"{m}-"):
-                        found = True
-                        break
-                    if kind == "skill" and stem.startswith(f"{m}-"):
-                        found = True
-                        break
-            if not found:
-                if existing.is_dir():
-                    shutil.rmtree(existing)
-                else:
-                    existing.unlink()
-                pruned.append({
-                    kind: f"{existing.parent.name}/{existing.name}",
-                    "reason": f"no active member with prefix {stem.split('-')[0] if '-' in stem else stem}",
-                })
+    # ── Report stale renders (never delete here) ──
+    stale = [_rel(_ROOT, p) for p, _ in _find_stale(_ROOT, {r["name"] for r in remotes})]
 
     total_agents = sum(1 for m in mounted if m.get("status") != "skipped" for _ in m.get("rendered_agents", []))
     total_skills = sum(1 for m in mounted if m.get("status") != "skipped" for _ in m.get("rendered_skills", []))
@@ -691,16 +731,58 @@ def cmd_mount(args: argparse.Namespace | None = None) -> dict:
     return {
         "mounted": mounted,
         "errors": errors,
-        "pruned": pruned,
+        "conflicts": conflicts,
+        "stale": stale,
+        "pruned": [],
+        "dry_run": dry_run,
         "summary": {
             "total": len(remotes),
             "mounted": sum(1 for m in mounted if m.get("status") == "mounted"),
             "skipped": sum(1 for m in mounted if m.get("status") == "skipped"),
             "errors": len(errors),
+            "conflicts": len(conflicts),
             "agents_rendered": total_agents,
             "skills_rendered": total_skills,
-            "pruned": len(pruned),
+            "stale": len(stale),
+            "pruned": 0,
         },
+        "note": ("Stale member renders found; mount never deletes. Review with "
+                 "`prune`, remove with `prune --force`." if stale else ""),
+    }
+
+
+def cmd_prune(args: argparse.Namespace | None = None, force: bool = False, dry_run: bool = False) -> dict:
+    """Report stale member renders; with force=True remove them.
+
+    A path is removed only if ALL hold: it is a stale member render (see
+    member_of_render), it is a symlink or a plain file (never rmtree), git does not
+    track it, and tracking could be verified (not a repo => remove nothing).
+    """
+    root = _root()
+    remotes = parse_remotes(_REMOTES)
+    stale = _find_stale(root, {r["name"] for r in remotes})
+    removed: list[str] = []
+    skipped: list[dict] = []
+    for path, why in stale:
+        rel = _rel(root, path)
+        tracked = _is_tracked(root, path)
+        if tracked is None:
+            skipped.append({"path": rel, "reason": "cannot verify tracked state (not a git repo?); left in place"})
+        elif tracked:
+            skipped.append({"path": rel, "reason": "tracked by git; never removed"})
+        elif path.is_dir() and not path.is_symlink():
+            skipped.append({"path": rel, "reason": "is a directory; refusing to rmtree"})
+        elif force and not dry_run:
+            path.unlink()
+            removed.append(rel)
+    return {
+        "stale": [_rel(root, p) for p, _ in stale],
+        "reasons": {_rel(root, p): why for p, why in stale},
+        "removed": removed,
+        "skipped": skipped,
+        "dry_run": dry_run,
+        "summary": {"stale": len(stale), "removed": len(removed), "skipped": len(skipped)},
+        "note": ("" if force else "Report only. Re-run with --force to remove the stale items listed."),
     }
 
 
@@ -746,8 +828,15 @@ def main() -> None:
     ps.set_defaults(fn=lambda a: cmd_pull())
 
     # mount — validate members, render agents/skills, prune stale
-    pm = sub.add_parser("mount", help="validate + render agents/skills, prune stale")
-    pm.set_defaults(fn=lambda a: cmd_mount())
+    pm = sub.add_parser("mount", help="validate + render agents/skills; reports stale, never deletes")
+    pm.add_argument("--dry-run", action="store_true", help="show what would be rendered; change nothing")
+    pm.set_defaults(fn=lambda a: cmd_mount(dry_run=a.dry_run))
+
+    # prune — report stale member renders; --force removes them
+    pp = sub.add_parser("prune", help="report stale member renders (--force to remove)")
+    pp.add_argument("--force", action="store_true", help="actually remove the stale items")
+    pp.add_argument("--dry-run", action="store_true", help="with --force: still remove nothing")
+    pp.set_defaults(fn=lambda a: cmd_prune(force=a.force, dry_run=a.dry_run))
 
     # sync-mount — sync + mount in one step
     psm = sub.add_parser("sync-mount", help="sync + mount in one step")

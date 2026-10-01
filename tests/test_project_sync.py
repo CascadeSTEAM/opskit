@@ -827,3 +827,16 @@ class TestSyncMount:
         result = ps.cmd_sync_mount()
         assert "sync" in result
         assert "mount" in result
+
+
+class TestOpskitWrapper:
+    """`opskit member prune` used to be accepted by the wrapper and crash in project_sync.py."""
+
+    def test_member_prune_runs_and_forwards_flags(self):
+        opskit = Path(__file__).resolve().parent.parent / "bin" / "opskit"
+        r = subprocess.run([sys.executable, str(opskit), "member", "prune", "--dry-run"],
+                           capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stderr
+        out = json.loads(r.stdout)
+        assert out["dry_run"] is True      # proves --dry-run reached project_sync.py
+        assert out["removed"] == []
