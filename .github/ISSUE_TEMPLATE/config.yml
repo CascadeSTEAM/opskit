@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: OpsKit documentation
+    url: https://github.com/CascadeSTEAM/opskit/tree/main/docs
+    about: Please read the docs before filing an issue.
+  - name: Contributing guide
+    url: https://github.com/CascadeSTEAM/opskit/blob/main/CONTRIBUTING.md
+    about: See the contribution guidelines.
