@@ -103,6 +103,21 @@
       failed_when: false
       check_mode: false
 
+    # On a first run there is no deploy key until the real run creates it, so under --check the
+    # clone cannot succeed. That is the normal two-run pattern, so preview it instead of failing.
+    - name: Note when a dry run has no deploy key yet
+      ansible.builtin.set_fact:
+        app_preview_only: "{{ ansible_check_mode and (deploy_pub.content is not defined) }}"
+
+    - name: Preview the first-run key handoff
+      ansible.builtin.debug:
+        msg: >-
+          [check mode] no deploy key exists on {{ inventory_hostname }} yet. A real run would generate
+          one, then stop at the clone and print its PUBLIC half; add it as a read-only deploy key on
+          {{ app_repo }} and re-run. The clone, secrets, environment lines and start-up are not
+          previewed until the key exists. Nothing was changed.
+      when: app_preview_only | bool
+
     - name: Fetch GitHub's published SSH host keys
       ansible.builtin.uri:
         url: https://api.github.com/meta
@@ -121,6 +136,7 @@
       loop: "{{ github_meta.json.ssh_keys }}"
 
     - name: Clone the application, telling the operator which key to authorize if refused
+      when: not (app_preview_only | bool)
       block:
         - name: Clone or update the application
           ansible.builtin.git:
@@ -143,7 +159,9 @@
         cmd: "{{ app_dest }}/{{ app_env_script }}"
         chdir: "{{ app_dest }}"
         creates: "{{ app_dest }}/.env"
-      when: app_env_script | length > 0
+      when:
+        - app_env_script | length > 0
+        - not ansible_check_mode
 
     - name: Write the host-specific environment lines
       ansible.builtin.lineinfile:
@@ -153,19 +171,23 @@
         create: false
       loop: "{{ app_env | dict2items }}"
       no_log: true
+      when: not ansible_check_mode
 
     - name: Keep the environment file private
       ansible.builtin.file:
         path: "{{ app_dest }}/.env"
         mode: "0600"
       failed_when: false
+      when: not ansible_check_mode
 
     - name: Bring the stack up
       ansible.builtin.command:
         cmd: "{{ app_up_command }}"
         chdir: "{{ app_dest }}"
       changed_when: true
-      when: app_up | bool
+      when:
+        - app_up | bool
+        - not ansible_check_mode
 
     - name: Report
       ansible.builtin.debug:

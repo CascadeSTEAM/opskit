@@ -178,6 +178,20 @@ def test_git_state_is_visible_under_check_mode():
     assert meta.get("check_mode") is False
 
 
+def test_check_mode_without_a_key_previews_instead_of_failing():
+    """First run: no deploy key exists yet, so under --check the clone cannot succeed. That is the normal
+    two-run pattern, not an error: preview it, do not end the dry run in a red failure."""
+    flag = _task_named("Note when a dry run has no deploy key yet")
+    assert "app_preview_only" in str(flag["ansible.builtin.set_fact"])
+    assert "ansible_check_mode" in str(flag["ansible.builtin.set_fact"])
+    block = next(t for t in _tasks() if "block" in t and any("ansible.builtin.git" in b for b in t["block"]))
+    assert "app_preview_only" in str(block.get("when")), "the clone is skipped when only previewing"
+    preview = _task_named("Preview the first-run key handoff")
+    assert "app_preview_only" in str(preview.get("when"))
+    for name in ("Generate the application's secrets", "Write the host-specific environment lines", "Bring the stack up"):
+        assert "ansible_check_mode" in str(_task_named(name).get("when")), f"{name!r} needs a checked-out tree, so skip it under --check"
+
+
 def test_the_report_states_what_was_and_was_not_done():
     text = str(_task_named("Report")["ansible.builtin.debug"])
     assert "app_up" in text
