@@ -1,0 +1,168 @@
+---
+# schedule-mail-auth-check.yml: run bin/mail-auth-check.py every week from a systemd USER timer (opskit #431).
+#
+# The checker is read-only: it looks up SPF, DKIM, DMARC, delegation and blocklist state for the domains listed in
+# environments/<env>/mail-domains.yml and saves a report under <primary checkout>/.local/mail-auth/<env>/. The unit runs
+# with --fail-on regression, so it fails ONLY when a result got worse than the previous saved run; a known, accepted
+# warning does not raise the alarm every week. A failed unit is the alert for now (see `systemctl --user --failed`);
+# a fuller notification system (Matrix, email, text message) is tracked as an idea in docs/ideas.md.
+#
+# Per the IaC rule this file is the rebuild path for that schedule.
+#
+# Targets the mail_auth_check_hosts inventory group (ansible_connection: local). The hostname assert below is MANDATORY:
+# connection=local means "whatever machine runs ansible".
+#
+# Run from the PRIMARY checkout (units must not point into a worktree, which is deleted after the PR merges):
+#   bash bin/ap.sh playbooks/schedule-mail-auth-check.yml -e mail_auth_env=<env> --check --diff
+#   bash bin/ap.sh playbooks/schedule-mail-auth-check.yml -e mail_auth_env=<env>
+
+- name: Schedule the weekly email-authentication check
+  hosts: mail_auth_check_hosts
+  gather_facts: true
+
+  vars:
+    # mail_auth_env has no default on purpose: the schedule must never guess which environment's domains to check.
+    mail_auth_root: "{{ ansible_facts['env']['HOME'] }}/Projects/opskit"
+    mail_auth_schedule: "Mon *-*-* 07:30:00"
+    mail_auth_delay: 15m
+    mail_auth_user_units: "{{ ansible_facts['env']['HOME'] }}/.config/systemd/user"
+
+  tasks:
+    - name: Refuse to run on the wrong machine (mandatory for connection=local)
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['hostname'] == inventory_hostname
+        fail_msg: >-
+          This machine is {{ ansible_facts['hostname'] }}, not {{ inventory_hostname }}; refusing to schedule a check
+          meant for another host.
+
+    - name: Require the environment to be named
+      ansible.builtin.assert:
+        that:
+          - mail_auth_env is defined
+          - mail_auth_env is match('^[a-z0-9][a-z0-9_-]*$')
+        fail_msg: Pass -e mail_auth_env=<environment name>; it has no default on purpose.
+
+    - name: Look at the checkout root
+      ansible.builtin.stat:
+        path: "{{ mail_auth_root }}/.git"
+      register: mail_auth_git
+
+    - name: Refuse a root that is a git worktree or is not a checkout
+      ansible.builtin.assert:
+        that:
+          - mail_auth_git.stat.exists
+          - mail_auth_git.stat.isdir
+        fail_msg: >-
+          {{ mail_auth_root }} is not the primary checkout (its .git is not a directory). A unit pointing into a worktree stops
+          working when that worktree is removed. Pass -e mail_auth_root=<primary checkout>.
+
+    - name: Look for the tool
+      ansible.builtin.stat:
+        path: "{{ mail_auth_root }}/bin/mail-auth-check.py"
+      register: mail_auth_tool
+
+    - name: Require that the tool exists in the primary checkout
+      ansible.builtin.assert:
+        that:
+          - mail_auth_tool.stat.exists
+        fail_msg: >-
+          bin/mail-auth-check.py is not in {{ mail_auth_root }}. Merge the change that adds it and pull the primary
+          checkout first.
+
+    - name: Look for the environment's domain configuration
+      ansible.builtin.stat:
+        path: "{{ mail_auth_root }}/environments/{{ mail_auth_env }}/mail-domains.yml"
+      register: mail_auth_config
+
+    - name: Require that the configuration exists in the private environment layer
+      ansible.builtin.assert:
+        that:
+          - mail_auth_config.stat.exists
+        fail_msg: >-
+          environments/{{ mail_auth_env }}/mail-domains.yml is missing. Copy environments/example/mail-domains.yml there and list
+          the real domains (it is environment data and never goes in the public repo).
+
+    - name: Check that dig is installed
+      ansible.builtin.command:
+        argv: [which, dig]
+      register: mail_auth_dig
+      changed_when: false
+      failed_when: mail_auth_dig.rc != 0
+      check_mode: false
+
+    - name: Check that the unit's python can import PyYAML
+      ansible.builtin.command:
+        argv: [/usr/bin/python3, -c, import yaml]
+      register: mail_auth_pyyaml
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Require PyYAML for the unit's python
+      ansible.builtin.assert:
+        that:
+          - mail_auth_pyyaml.rc == 0
+        fail_msg: >-
+          /usr/bin/python3 cannot import yaml, and the service runs the tool with it. Install it
+          (apt install python3-yaml) before scheduling; otherwise the first run fails with an ImportError.
+
+    - name: Make sure the user unit directory exists
+      ansible.builtin.file:
+        path: "{{ mail_auth_user_units }}"
+        state: directory
+        mode: "0755"
+
+    - name: Write the service unit
+      ansible.builtin.copy:
+        dest: "{{ mail_auth_user_units }}/mail-auth-check.service"
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Email authentication health check, read-only (managed by opskit schedule-mail-auth-check.yml)
+          Documentation=file://{{ mail_auth_root }}/.opencode/skills/mail-auth-check/SKILL.md
+
+          [Service]
+          Type=oneshot
+          WorkingDirectory={{ mail_auth_root }}
+          Environment=OPSKIT_ROOT={{ mail_auth_root }}
+          ExecStart=/usr/bin/python3 {{ mail_auth_root }}/bin/mail-auth-check.py --env {{ mail_auth_env }} --save --fail-on regression
+          # Exit 2 = a FAIL or a result worse than the last saved run; the unit then shows as failed.
+          SuccessExitStatus=0 1
+
+    - name: Write the timer unit
+      ansible.builtin.copy:
+        dest: "{{ mail_auth_user_units }}/mail-auth-check.timer"
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Weekly email authentication health check (managed by opskit schedule-mail-auth-check.yml)
+
+          [Timer]
+          OnCalendar={{ mail_auth_schedule }}
+          RandomizedDelaySec={{ mail_auth_delay }}
+          Persistent=true
+          Unit=mail-auth-check.service
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Enable the timer in the user manager
+      ansible.builtin.systemd:
+        name: mail-auth-check.timer
+        scope: user
+        enabled: true
+        state: started
+        daemon_reload: true
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['user_uid'] }}"
+      when: not ansible_check_mode
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          The weekly check for environment {{ mail_auth_env }} is scheduled ({{ mail_auth_schedule }}, catches up after
+          downtime). Look at it with: systemctl --user list-timers mail-auth-check.timer ; systemctl --user --failed ;
+          journalctl --user -u mail-auth-check ; python3 {{ mail_auth_root }}/bin/mail-auth-check.py --env {{ mail_auth_env }} --status.
+          Not done here: enabling linger (loginctl enable-linger needs root; without it the timer runs only while this
+          user is logged in, and Persistent=true catches up at the next login) and any notification beyond a failed unit.

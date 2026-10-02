@@ -91,6 +91,19 @@ triggers: startsession,start session,session start,update project folder,update 
      (stale vault session, `gh` unavailable, no active environment set),
      report the one-line failure and move on — a missing vault unlock at
      session start is routine, not a blocker for anything else in this list.
+   - Mail-authentication freshness (opt-in: only when the active environment has
+     `environments/$ACTIVE_ENV/mail-domains.yml`; otherwise say nothing):
+
+     ```bash
+     if [ -f "environments/$ACTIVE_ENV/mail-domains.yml" ]; then
+       python3 bin/mail-auth-check.py --status --max-age-days 10
+     fi
+     ```
+
+     Exit 0 → say nothing. Exit 3 (never run, or the last run is older than 10 days) or
+     exit 2 (the last run found a FAIL) → one line to the operator, and offer to run
+     `python3 bin/mail-auth-check.py --save` (read-only lookups). Never change DNS from
+     here; see the `mail-auth-check` skill for the proposal and approval procedure.
 7. **Offer vault-session refresh if the vault is locked (offer-only, never
    automatic).** A stale session cache needs the operator's master password
    behind a popup — an agent must never do that unprompted. Check quietly:
@@ -107,8 +120,8 @@ triggers: startsession,start session,session start,update project folder,update 
      this repo and writes the cache file agents consume.
 8. **Report back:** one line each for the branch check, repo sync, hooks
    path, each subfolder/Env layer, whether a ticket pin was set, and the
-   persistent-context surfacing above — state synced, or what is blocked
-   and why.
+   persistent-context surfacing above (plus the mail-authentication nudge when it
+   fired) — state synced, or what is blocked and why.
 
 ## Failure handling
 

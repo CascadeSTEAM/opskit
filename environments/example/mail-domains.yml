@@ -1,0 +1,14 @@
+# Domains that bin/mail-auth-check.py (skill: mail-auth-check) checks, and what to expect of each.
+# Environment data: copy this file to environments/<env>/mail-domains.yml in the PRIVATE layer and list your real
+# domains there. Names and addresses below are documentation values (example.com, RFC 5737), never real ones.
+domains:
+  - name: example.com
+    provider: google-workspace     # google-workspace | generic | none (what to expect of MX, SPF and DKIM)
+    dkim_selectors: [google]       # DNS cannot list selectors, so name them; omitted = the provider's default
+    sending_ips: [203.0.113.7]     # only addresses YOU send from (public IPv4); omit for a hosted provider
+  - name: shop.example.com
+    provider: generic              # no provider-specific expectations
+    dkim_selectors: [s1, s2]
+  - name: parked.example.org
+    provider: none
+    expect_mail: false             # must send and accept no mail: expects `v=spf1 -all` and a null MX
