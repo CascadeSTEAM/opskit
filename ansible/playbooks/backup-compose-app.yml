@@ -1,0 +1,113 @@
+---
+# backup-compose-app.yml — Schedule nightly local backups, with retention, for a Docker Compose
+# application deployed by deploy-compose-app.yml (opskit #429).
+#
+# What it installs on the guest:
+#   - /usr/local/sbin/<app_name>-backup : runs the PROJECT'S OWN backup script (default
+#     bin/docker-backup.sh, which dumps the database and archives uploaded media), then keeps only
+#     the newest <backup_keep> backups. `set -eu` means a failed backup stops the script before the
+#     prune, so a bad night never deletes the last good copy.
+#   - /etc/cron.d/<app_name>-backup     : runs the wrapper nightly as root, logging to
+#     /var/log/<app_name>-backup.log.
+#
+# Pruning only ever removes directories inside the backup directory whose names look like a UTC
+# timestamp (as the project script creates them), never anything else.
+#
+# NOT covered here (deliberately): a copy to another machine. Backups on the same disk do not
+# survive losing the guest; an off-box destination is a separate decision and follow-up.
+#
+# Restore with the project's own tooling, e.g. `bin/docker-restore.sh backups/<timestamp>`.
+#
+# Run from this repo root (documentation-range values shown):
+#   ansible-playbook -i environments/$ACTIVE_ENV/ansible/inventory.yml \
+#     ansible/playbooks/backup-compose-app.yml \
+#     -e target_host=<inventory-alias> -e app_name=myapp [-e backup_keep=14] --check
+
+- name: Schedule local backups for a Docker Compose application
+  # target_host is supplied at run time with `-e target_host=<host>`; the assert below
+  # fails loudly for the other required parameter (#83: per-line ignore, never skip_list).
+  hosts: "{{ target_host }}"  # noqa: syntax-check[specific]
+  gather_facts: false
+
+  vars:
+    # --- Required, no default. See the first assert. ---------------------
+    # app_name   short name of the deployed application (as given to deploy-compose-app.yml)
+
+    app_dest: "/opt/{{ app_name }}"
+    backup_script: bin/docker-backup.sh
+    backup_dir: backups
+    backup_keep: 14
+    backup_hour: 3
+    backup_minute: 17
+    backup_wrapper: "/usr/local/sbin/{{ app_name }}-backup"
+    backup_log: "/var/log/{{ app_name }}-backup.log"
+
+  tasks:
+    - name: Require the parameter that must never be guessed
+      ansible.builtin.assert:
+        that:
+          - app_name is defined
+        fail_msg: >-
+          Pass -e app_name=<name>. It has no default on purpose: this play installs a root cron job,
+          so it must never pick the application by itself.
+
+    - name: Validate names and numbers before they reach a file or a cron line
+      ansible.builtin.assert:
+        that:
+          - app_name is match('^[A-Za-z0-9][A-Za-z0-9_-]*$')
+          - backup_keep | int >= 1
+          - backup_hour | int >= 0
+          - backup_hour | int <= 23
+          - backup_minute | int >= 0
+          - backup_minute | int <= 59
+          - backup_script is match('^[A-Za-z0-9._/-]+$')
+          - backup_dir is match('^[A-Za-z0-9._-]+$')
+        fail_msg: >-
+          app_name may use letters, digits, '_' and '-'; backup_keep must be at least 1; backup_hour
+          0-23; backup_minute 0-59; backup_script and backup_dir plain relative paths.
+
+    - name: Make sure cron is installed
+      ansible.builtin.apt:
+        name: cron
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install the backup wrapper
+      ansible.builtin.copy:
+        dest: "{{ backup_wrapper }}"
+        owner: root
+        group: root
+        mode: "0750"
+        content: |
+          #!/bin/sh
+          # Managed by opskit backup-compose-app.yml (#429). Do not edit by hand.
+          set -eu
+          cd {{ app_dest }}
+          ./{{ backup_script }}
+          # Only reached when the backup above succeeded. Keep the newest {{ backup_keep }}; remove older
+          # timestamp-named directories inside {{ backup_dir }}/ and nothing else.
+          ls -1d {{ backup_dir }}/[0-9]*T*Z 2>/dev/null | sort | head -n -{{ backup_keep }} | while read -r old; do
+            rm -rf -- "$old"
+          done
+
+    - name: Schedule the nightly backup in cron.d
+      ansible.builtin.copy:
+        dest: "/etc/cron.d/{{ app_name }}-backup"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by opskit backup-compose-app.yml (#429).
+          SHELL=/bin/sh
+          PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          {{ backup_minute | int }} {{ backup_hour | int }} * * * root {{ backup_wrapper }} >> {{ backup_log }} 2>&1
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {{ app_name }} on {{ inventory_hostname }}: nightly backup at
+          {{ '%02d' | format(backup_hour | int) }}:{{ '%02d' | format(backup_minute | int) }}, keeping the newest
+          {{ backup_keep }} in {{ app_dest }}/{{ backup_dir }}/, log {{ backup_log }}.
+          Restore with the project's restore script. Not done here: an off-box copy, so these backups do
+          not survive losing this guest.
