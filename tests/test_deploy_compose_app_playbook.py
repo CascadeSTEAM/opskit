@@ -127,9 +127,11 @@ def test_the_deploy_key_is_generated_only_when_absent_and_has_no_passphrase_prom
 
 def test_the_private_key_is_never_read_or_printed():
     for task in _flatten(_tasks()):
+        if "block" in task or "rescue" in task:
+            continue  # judge the individual tasks inside a block, not the block as one lump
         body = str(task)
         if "slurp" in body or "ansible.builtin.debug" in body or "ansible.builtin.fail" in body or "cat " in body:
-            assert not re.search(r"deploy_key(_path)?\s*\}\}(?!\.pub)", body.replace("}}.pub", "}}-PUB")), (
+            assert not re.search(r"deploy_key(_path)?\s*\}\}(?!\.pub)", body), (
                 f"task {task.get('name')!r} may expose the private key"
             )
     slurp = _task_named("Read the deploy key's PUBLIC half")
