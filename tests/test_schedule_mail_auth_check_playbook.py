@@ -183,3 +183,23 @@ def test_the_interpreter_the_unit_will_use_must_be_able_to_import_pyyaml():
     unit_index = next(i for i, n in enumerate(names) if "service unit" in n)
     assert index < unit_index, "check before anything is installed"
     assert "/usr/bin/python3" in _unit("service unit"), "the checked interpreter must be the one the unit runs"
+
+
+def test_every_unit_is_named_per_environment_so_environments_do_not_overwrite_each_other():
+    """#433: with one fixed name, scheduling a second environment on the same host replaced the first one's schedule."""
+    unit = "mail-auth-check-{{ mail_auth_env }}"
+    assert _task_named("service unit")["ansible.builtin.copy"]["dest"].endswith(f"{unit}.service")
+    assert _task_named("timer unit")["ansible.builtin.copy"]["dest"].endswith(f"{unit}.timer")
+    assert f"Unit={unit}.service" in _unit("timer unit")
+    enable = next(t for t in _tasks() if "ansible.builtin.systemd" in t)
+    assert enable["ansible.builtin.systemd"]["name"] == f"{unit}.timer"
+
+
+def test_the_bare_unqualified_unit_names_are_gone():
+    text = _text()
+    assert not re.search(r"mail-auth-check\.(service|timer)", text), "a fixed name would collide between environments"
+
+
+def test_the_report_shows_the_per_environment_commands():
+    report = str(_task_named("Report")["ansible.builtin.debug"])
+    assert "mail-auth-check-" in report and "list-timers" in report
