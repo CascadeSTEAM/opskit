@@ -55,7 +55,7 @@ class FakeResolver:
         return list(self.records.get(key, []))
 
 
-def google_domain(**over):
+def google_domain(over=None):
     """A healthy Google-Workspace-style domain: SPF, DKIM, DMARC, MX, consistent nameservers."""
     d = "example.com"
     rec = {
@@ -70,7 +70,7 @@ def google_domain(**over):
         (d, "CAA"): [],
         (d, "DS"): [],
     }
-    rec.update(over)
+    rec.update(over or {})
     return FakeResolver(rec)
 
 
@@ -101,13 +101,13 @@ def test_a_healthy_spf_passes_and_counts_one_lookup():
 
 
 def test_a_missing_spf_fails_when_the_domain_sends_mail():
-    out = mac.check_spf(spec(), google_domain(**{("example.com", "TXT"): ["google-site-verification=abc"]}))
+    out = mac.check_spf(spec(), google_domain({("example.com", "TXT"): ["google-site-verification=abc"]}))
     assert status_of(out, "spf") == {mac.FAIL}
 
 
 def test_two_spf_records_are_a_permanent_error():
     two = ["v=spf1 include:_spf.google.com ~all", "v=spf1 include:other.example.org ~all"]
-    out = mac.check_spf(spec(), google_domain(**{("example.com", "TXT"): two}))
+    out = mac.check_spf(spec(), google_domain({("example.com", "TXT"): two}))
     assert status_of(out, "spf") == {mac.FAIL}
     assert "more than one" in " ".join(f.message for f in find(out, "spf")).lower()
 
@@ -137,12 +137,12 @@ def test_an_include_loop_terminates_and_is_reported():
 )
 def test_the_spf_ending_decides_the_verdict(tail, expected):
     spf = f"v=spf1 include:_spf.google.com {tail}".strip()
-    out = mac.check_spf(spec(), google_domain(**{("example.com", "TXT"): [spf]}))
+    out = mac.check_spf(spec(), google_domain({("example.com", "TXT"): [spf]}))
     assert status_of(out, "spf") == {expected}
 
 
 def test_an_expected_include_that_is_missing_warns():
-    out = mac.check_spf(spec(), google_domain(**{("example.com", "TXT"): ["v=spf1 ip4:192.0.2.9 ~all"]}))
+    out = mac.check_spf(spec(), google_domain({("example.com", "TXT"): ["v=spf1 ip4:192.0.2.9 ~all"]}))
     assert mac.WARN in status_of(out, "spf") or mac.FAIL in status_of(out, "spf")
 
 
@@ -173,22 +173,22 @@ def test_a_good_2048_bit_key_passes():
 
 
 def test_a_1024_bit_key_warns_and_weaker_fails():
-    weak = google_domain(**{("google._domainkey.example.com", "TXT"): ["v=DKIM1; k=rsa; p=" + RSA_1024_SPKI]})
+    weak = google_domain({("google._domainkey.example.com", "TXT"): ["v=DKIM1; k=rsa; p=" + RSA_1024_SPKI]})
     assert status_of(mac.check_dkim(spec(), weak), "dkim:google") == {mac.WARN}
 
 
 def test_a_missing_configured_selector_fails():
-    gone = google_domain(**{("google._domainkey.example.com", "TXT"): []})
+    gone = google_domain({("google._domainkey.example.com", "TXT"): []})
     assert status_of(mac.check_dkim(spec(), gone), "dkim:google") == {mac.FAIL}
 
 
 def test_a_revoked_key_with_an_empty_p_fails():
-    revoked = google_domain(**{("google._domainkey.example.com", "TXT"): ["v=DKIM1; k=rsa; p="]})
+    revoked = google_domain({("google._domainkey.example.com", "TXT"): ["v=DKIM1; k=rsa; p="]})
     assert status_of(mac.check_dkim(spec(), revoked), "dkim:google") == {mac.FAIL}
 
 
 def test_a_record_that_is_not_dkim_fails():
-    wrong = google_domain(**{("google._domainkey.example.com", "TXT"): ["hello world"]})
+    wrong = google_domain({("google._domainkey.example.com", "TXT"): ["hello world"]})
     assert status_of(mac.check_dkim(spec(), wrong), "dkim:google") == {mac.FAIL}
 
 
@@ -213,27 +213,27 @@ def test_dmarc_monitor_only_passes_with_a_note_to_tighten_later():
 
 @pytest.mark.parametrize("policy", ["quarantine", "reject"])
 def test_enforcing_dmarc_policies_pass(policy):
-    rec = google_domain(**{("_dmarc.example.com", "TXT"): [f"v=DMARC1; p={policy}; rua=mailto:d@example.com"]})
+    rec = google_domain({("_dmarc.example.com", "TXT"): [f"v=DMARC1; p={policy}; rua=mailto:d@example.com"]})
     assert status_of(mac.check_dmarc(spec(), rec), "dmarc") == {mac.PASS}
 
 
 def test_missing_dmarc_warns_for_a_sending_domain():
-    out = mac.check_dmarc(spec(), google_domain(**{("_dmarc.example.com", "TXT"): []}))
+    out = mac.check_dmarc(spec(), google_domain({("_dmarc.example.com", "TXT"): []}))
     assert status_of(out, "dmarc") == {mac.WARN}
 
 
 def test_an_invalid_policy_fails():
-    bad = google_domain(**{("_dmarc.example.com", "TXT"): ["v=DMARC1; p=banana"]})
+    bad = google_domain({("_dmarc.example.com", "TXT"): ["v=DMARC1; p=banana"]})
     assert status_of(mac.check_dmarc(spec(), bad), "dmarc") == {mac.FAIL}
 
 
 def test_two_dmarc_records_fail():
     two = ["v=DMARC1; p=none", "v=DMARC1; p=reject"]
-    assert status_of(mac.check_dmarc(spec(), google_domain(**{("_dmarc.example.com", "TXT"): two})), "dmarc") == {mac.FAIL}
+    assert status_of(mac.check_dmarc(spec(), google_domain({("_dmarc.example.com", "TXT"): two})), "dmarc") == {mac.FAIL}
 
 
 def test_missing_report_address_is_only_information():
-    rec = google_domain(**{("_dmarc.example.com", "TXT"): ["v=DMARC1; p=none"]})
+    rec = google_domain({("_dmarc.example.com", "TXT"): ["v=DMARC1; p=none"]})
     out = mac.check_dmarc(spec(), rec)
     assert mac.INFO in {f.status for f in out} and mac.FAIL not in {f.status for f in out}
 
@@ -246,13 +246,13 @@ def test_google_mx_for_a_google_domain_passes():
 
 
 def test_non_google_mx_for_a_google_domain_warns():
-    other = google_domain(**{("example.com", "MX"): ["10 mail.example.org."]})
+    other = google_domain({("example.com", "MX"): ["10 mail.example.org."]})
     assert status_of(mac.check_mx(spec(), other), "mx") == {mac.WARN}
 
 
 def test_no_mx_fails_when_mail_is_expected_and_null_mx_is_right_when_it_is_not():
-    none = google_domain(**{("example.com", "MX"): []})
-    null = google_domain(**{("example.com", "MX"): ["0 ."]})
+    none = google_domain({("example.com", "MX"): []})
+    null = google_domain({("example.com", "MX"): ["0 ."]})
     assert status_of(mac.check_mx(spec(), none), "mx") == {mac.FAIL}
     assert status_of(mac.check_mx(spec(), null), "mx") == {mac.FAIL}
     assert status_of(mac.check_mx(spec(provider="none", expect_mail=False), null), "mx") == {mac.PASS}
@@ -266,12 +266,12 @@ def test_consistent_nameservers_pass():
 
 
 def test_a_nameserver_with_a_different_serial_warns():
-    skew = google_domain(**{("example.com", "SOA", "ns2.example.net"): ["ns1.example.net. h.example.net. 2026091500 1 1 1 1"]})
+    skew = google_domain({("example.com", "SOA", "ns2.example.net"): ["ns1.example.net. h.example.net. 2026091500 1 1 1 1"]})
     assert status_of(mac.check_delegation(spec(), skew), "delegation") == {mac.WARN}
 
 
 def test_an_unreachable_nameserver_warns():
-    down = google_domain(**{("example.com", "SOA", "ns2.example.net"): []})
+    down = google_domain({("example.com", "SOA", "ns2.example.net"): []})
     assert status_of(mac.check_delegation(spec(), down), "delegation") == {mac.WARN}
 
 
@@ -290,21 +290,21 @@ def test_a_clean_address_passes_and_a_listed_one_warns_naming_the_list():
     clean = google_domain()
     out = mac.check_blocklists(spec(sending_ips=["203.0.113.7"]), clean)
     assert status_of(out, "blocklist:203.0.113.7") == {mac.PASS}
-    listed = google_domain(**{("7.113.0.203.bl.spamcop.net", "A"): ["127.0.0.2"]})
+    listed = google_domain({("7.113.0.203.bl.spamcop.net", "A"): ["127.0.0.2"]})
     out = mac.check_blocklists(spec(sending_ips=["203.0.113.7"]), listed)
     assert status_of(out, "blocklist:203.0.113.7") == {mac.WARN}
     assert "spamcop" in " ".join(f.message for f in find(out, "blocklist:203.0.113.7")).lower()
 
 
 def test_an_open_resolver_refusal_is_inconclusive_not_listed():
-    refused = google_domain(**{("7.113.0.203.zen.spamhaus.org", "A"): ["127.255.255.254"]})
+    refused = google_domain({("7.113.0.203.zen.spamhaus.org", "A"): ["127.255.255.254"]})
     out = mac.check_blocklists(spec(sending_ips=["203.0.113.7"]), refused)
     assert mac.WARN not in status_of(out, "blocklist:203.0.113.7")
     assert any("inconclusive" in f.message.lower() for f in find(out, "blocklist:203.0.113.7"))
 
 
 def test_a_domain_listing_is_reported():
-    out = mac.check_blocklists(spec(), google_domain(**{("example.com.multi.surbl.org", "A"): ["127.0.0.2"]}))
+    out = mac.check_blocklists(spec(), google_domain({("example.com.multi.surbl.org", "A"): ["127.0.0.2"]}))
     assert status_of(out, "blocklist:domain") == {mac.WARN}
 
 
@@ -323,7 +323,7 @@ def test_the_hardening_extras_are_information_never_a_failure():
 
 
 def test_dnssec_is_reported_enabled_when_a_ds_record_exists():
-    out = mac.check_extras(spec(), google_domain(**{("example.com", "DS"): ["12345 13 2 abcdef"]}))
+    out = mac.check_extras(spec(), google_domain({("example.com", "DS"): ["12345 13 2 abcdef"]}))
     assert status_of(out, "dnssec") == {mac.PASS}
 
 
@@ -336,7 +336,7 @@ def test_a_healthy_domain_has_no_warnings_or_failures():
 
 
 def test_the_summary_overall_is_the_worst_status():
-    broken = google_domain(**{("example.com", "MX"): []})
+    broken = google_domain({("example.com", "MX"): []})
     assert mac.summarize(mac.run_checks(spec(), broken))["overall"] == mac.FAIL
 
 
@@ -476,7 +476,7 @@ def test_regression_mode_uses_the_saved_report(tmp_path):
     cfg = str(_config(tmp_path))
     args = ["--config", cfg, "--save", "--state-dir", str(tmp_path), "--env", "lab", "--no-blocklists", "--fail-on", "regression"]
     assert mac.main(args, resolver=google_domain(), now=NOW) == 0
-    worse = google_domain(**{("_dmarc.example.com", "TXT"): []})
+    worse = google_domain({("_dmarc.example.com", "TXT"): []})
     assert mac.main(args, resolver=worse, now=NOW + timedelta(days=7)) == 2, "DMARC disappearing is a regression"
     assert mac.main(args, resolver=worse, now=NOW + timedelta(days=14)) == 0, "the same known state is not an alert again"
 
@@ -506,6 +506,47 @@ def test_the_tool_cannot_change_dns():
 def test_the_default_resolver_is_read_only_dig():
     source = SCRIPT.read_text()
     assert '"dig"' in source and "+short" in source
+
+
+def _dig_command(**kwargs):
+    """The argv DigResolver would run for a query, without running dig."""
+    seen = {}
+
+    def fake_run(cmd, **_):
+        seen["cmd"] = cmd
+        return mock.Mock(stdout="")
+
+    with mock.patch.object(mac.shutil, "which", return_value="/usr/bin/dig"), mock.patch.object(mac.subprocess, "run", fake_run):
+        resolver = mac.DigResolver(**kwargs.pop("init", {}))
+        resolver.query("example.com", "MX", **kwargs)
+    return seen["cmd"]
+
+
+def test_the_default_resolver_asks_a_public_server_not_the_local_one():
+    """On a network with split-horizon DNS the local resolver returns an internal view (other nameservers, no MX), which
+    made real domains look broken. Receivers see the public view, so that is what must be checked."""
+    cmd = _dig_command()
+    assert "@1.1.1.1" in cmd, "no server given must still mean a public recursive resolver, never the system resolver"
+
+
+def test_a_specific_nameserver_overrides_the_public_default():
+    cmd = _dig_command(server="ns1.example.net")
+    assert "@ns1.example.net" in cmd and "@1.1.1.1" not in cmd
+
+
+def test_the_public_resolver_can_be_chosen():
+    assert "@9.9.9.9" in _dig_command(init={"recursive": "9.9.9.9"})
+
+
+def test_main_passes_the_chosen_resolver_through(tmp_path):
+    seen = []
+
+    class Spy(FakeResolver):
+        pass
+
+    with mock.patch.object(mac, "DigResolver", lambda **kw: seen.append(kw) or google_domain()):
+        mac.main(["--domain", "example.com", "--no-blocklists", "--resolver", "9.9.9.9"], now=NOW)
+    assert seen and seen[0].get("recursive") == "9.9.9.9"
 
 
 def test_a_missing_dig_is_a_clear_error():
