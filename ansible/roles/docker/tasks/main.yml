@@ -21,6 +21,9 @@
   register: docker_check
   changed_when: false
   failed_when: false
+  # Read-only, so it runs under --check too; skipped, a dry run would claim
+  # Docker is present on a host that has none (opskit #427).
+  check_mode: false
 
 - name: Install Docker Engine and Compose v2
   when: docker_check.rc != 0

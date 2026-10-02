@@ -54,6 +54,15 @@ def test_precondition_checks_compose_v2_not_bare_docker_version():
     )
 
 
+def test_precondition_runs_under_check_mode_so_a_dry_run_is_truthful():
+    """#427: the detection is read-only, so it must run under --check. Skipped, docker_check has no
+    rc and a dry run reports 'Docker already present' on a host that has none."""
+    tasks = _flatten(_role_tasks())
+    precondition = next(t for t in tasks if t.get("register") == "docker_check")
+    assert precondition.get("check_mode") is False
+    assert precondition.get("changed_when") is False
+
+
 def test_install_is_gated_on_the_precondition():
     tasks = _role_tasks()
     install_block = next(t for t in tasks if t.get("block"))
