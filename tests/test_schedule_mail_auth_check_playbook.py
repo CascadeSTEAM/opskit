@@ -168,3 +168,18 @@ def test_playbook_passes_ansible_syntax_check():
         cwd=ROOT,
     )
     assert result.returncode == 0, result.stderr
+
+
+
+def test_the_interpreter_the_unit_will_use_must_be_able_to_import_pyyaml():
+    """The service runs /usr/bin/python3 and the tool imports yaml; without this check the first scheduled run fails with an
+    ImportError nobody expected."""
+    names = [str(t.get("name", "")).lower() for t in _tasks()]
+    index = next(i for i, n in enumerate(names) if "pyyaml" in n)
+    check = _tasks()[index]
+    command = str(check.get("ansible.builtin.command", ""))
+    assert "/usr/bin/python3" in command and "import yaml" in command
+    assert check.get("changed_when") is False and check.get("check_mode") is False
+    unit_index = next(i for i, n in enumerate(names) if "service unit" in n)
+    assert index < unit_index, "check before anything is installed"
+    assert "/usr/bin/python3" in _unit("service unit"), "the checked interpreter must be the one the unit runs"

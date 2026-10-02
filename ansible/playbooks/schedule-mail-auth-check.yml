@@ -91,6 +91,22 @@
       failed_when: mail_auth_dig.rc != 0
       check_mode: false
 
+    - name: Check that the unit's python can import PyYAML
+      ansible.builtin.command:
+        argv: [/usr/bin/python3, -c, import yaml]
+      register: mail_auth_pyyaml
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Require PyYAML for the unit's python
+      ansible.builtin.assert:
+        that:
+          - mail_auth_pyyaml.rc == 0
+        fail_msg: >-
+          /usr/bin/python3 cannot import yaml, and the service runs the tool with it. Install it
+          (apt install python3-yaml) before scheduling; otherwise the first run fails with an ImportError.
+
     - name: Make sure the user unit directory exists
       ansible.builtin.file:
         path: "{{ mail_auth_user_units }}"

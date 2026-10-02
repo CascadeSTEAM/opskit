@@ -402,6 +402,9 @@ def test_the_config_loads_and_normalises():
         "domains:\n  - name: example.com\n    dkim_selectors: ['bad selector!']\n",
         "domains:\n  - name: example.com\n  - name: example.com\n",
         "nothing: here\n",
+        'domains:\n  - name: example.com\n    expect_mail: "no"\n',  # a string is not a boolean
+        "domains:\n  - name: example.com\n    dkim_selectors: google\n",  # a string, not a list
+        "domains:\n  - name: example.com\n    sending_ips: 203.0.113.7\n",
     ],
 )
 def test_a_bad_config_is_refused_with_a_clear_error(bad):
@@ -508,18 +511,22 @@ def test_the_default_resolver_is_read_only_dig():
     assert '"dig"' in source and "+short" in source
 
 
-def _dig_command(**kwargs):
-    """The argv DigResolver would run for a query, without running dig."""
-    seen = {}
+def _dig_commands(**kwargs):
+    """Every argv DigResolver would run for one query, without running dig. A-record lookups answer 192.0.2.53."""
+    seen = []
 
     def fake_run(cmd, **_):
-        seen["cmd"] = cmd
-        return mock.Mock(stdout="")
+        seen.append(cmd)
+        return mock.Mock(stdout="192.0.2.53\n" if cmd[-1] == "A" else "")
 
     with mock.patch.object(mac.shutil, "which", return_value="/usr/bin/dig"), mock.patch.object(mac.subprocess, "run", fake_run):
         resolver = mac.DigResolver(**kwargs.pop("init", {}))
         resolver.query("example.com", "MX", **kwargs)
-    return seen["cmd"]
+    return seen
+
+
+def _dig_command(**kwargs):
+    return _dig_commands(**kwargs)[-1]
 
 
 def test_the_default_resolver_asks_a_public_server_not_the_local_one():
@@ -529,9 +536,36 @@ def test_the_default_resolver_asks_a_public_server_not_the_local_one():
     assert "@1.1.1.1" in cmd, "no server given must still mean a public recursive resolver, never the system resolver"
 
 
-def test_a_specific_nameserver_overrides_the_public_default():
-    cmd = _dig_command(server="ns1.example.net")
-    assert "@ns1.example.net" in cmd and "@1.1.1.1" not in cmd
+def test_a_nameserver_address_is_used_as_given():
+    cmd = _dig_command(server="198.51.100.9")
+    assert "@198.51.100.9" in cmd and "@1.1.1.1" not in cmd
+
+
+def test_a_nameserver_hostname_is_resolved_through_the_public_resolver_first():
+    """dig resolves an @hostname with the SYSTEM resolver, which on a split-horizon network can return an internal address."""
+    commands = _dig_commands(server="ns1.example.net")
+    assert len(commands) == 2
+    assert commands[0][-2:] == ["ns1.example.net", "A"] and "@1.1.1.1" in commands[0], "resolve the name publicly first"
+    assert "@192.0.2.53" in commands[1] and "@ns1.example.net" not in commands[1]
+
+
+@pytest.mark.parametrize("hostile", ["-x", "a b", "ns1.example.net;id", "@@", "../x", ""])
+def test_a_hostile_nameserver_name_never_reaches_dig(hostile):
+    """Nameserver names come from DNS, which is untrusted input."""
+    commands = _dig_commands(server=hostile) if hostile else _dig_commands()
+    assert all(hostile not in " ".join(c) for c in commands if hostile)
+
+
+def test_an_unresolvable_nameserver_name_yields_no_answer_not_a_fallback_to_the_system_resolver():
+    ran = []
+
+    def fake_run(cmd, **_):
+        ran.append(cmd)
+        return mock.Mock(stdout="")
+
+    with mock.patch.object(mac.shutil, "which", return_value="/usr/bin/dig"), mock.patch.object(mac.subprocess, "run", fake_run):
+        assert mac.DigResolver().query("example.com", "SOA", server="ns1.example.net") == []
+    assert len(ran) == 1, "only the public lookup of the name; the SOA query is not attempted"
 
 
 def test_the_public_resolver_can_be_chosen():
@@ -560,3 +594,34 @@ def test_no_real_addresses_or_names_in_the_tool_or_its_tests():
     private = re.compile(r"\b(10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)\b")
     for path in (SCRIPT, Path(__file__)):
         assert not private.search(path.read_text()), f"{path.name} contains a private address"
+
+
+
+def test_saving_an_ad_hoc_domain_run_is_refused(tmp_path, capsys):
+    """A one-domain run saved as the environment's baseline would make the next scheduled run compare against a partial set."""
+    code = mac.main(["--domain", "example.com", "--save", "--state-dir", str(tmp_path), "--env", "lab", "--no-blocklists"],
+                    resolver=google_domain(), now=NOW)
+    assert code == 4 and "--save" in capsys.readouterr().err
+    assert not (tmp_path / "mail-auth").exists()
+
+
+@pytest.mark.parametrize("env", ["../x", "a/b", "", ".hidden", "x y"])
+def test_an_environment_name_cannot_escape_the_state_directory(tmp_path, env):
+    with pytest.raises(ValueError):
+        mac.save_report(tmp_path, env, {"generated": NOW.isoformat(), "findings": [], "summary": {}})
+    assert mac.main(["--status", "--state-dir", str(tmp_path), "--env", env], now=NOW) == 4
+
+
+def test_a_report_with_a_naive_timestamp_is_reported_not_a_traceback(tmp_path):
+    mac.save_report(tmp_path, "lab", {"generated": "2026-10-02T12:00:00", "findings": [], "summary": {"overall": "PASS"}})
+    code, message = mac.status(tmp_path, "lab", 10, NOW)
+    assert code == 3 and "timestamp" in message
+
+
+def test_the_startsession_nudge_is_silent_and_unambiguous_when_there_is_no_config():
+    """`test -f ... && cmd` exits 1 when the file is absent, which reads like a result of the tool."""
+    text = (ROOT / ".opencode" / "skills" / "startsession" / "SKILL.md").read_text()
+    section = text[text.index("Mail-authentication freshness") : text.index("7. **Offer vault-session refresh")]
+    assert 'if [ -f "environments/$ACTIVE_ENV/mail-domains.yml" ]' in section
+    assert re.search(r"\n\s+fi\n", section), "the if must be closed"
+    assert 'test -f "environments' not in section

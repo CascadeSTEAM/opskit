@@ -95,8 +95,9 @@ triggers: startsession,start session,session start,update project folder,update 
      `environments/$ACTIVE_ENV/mail-domains.yml`; otherwise say nothing):
 
      ```bash
-     test -f "environments/$ACTIVE_ENV/mail-domains.yml" && \
+     if [ -f "environments/$ACTIVE_ENV/mail-domains.yml" ]; then
        python3 bin/mail-auth-check.py --status --max-age-days 10
+     fi
      ```
 
      Exit 0 → say nothing. Exit 3 (never run, or the last run is older than 10 days) or

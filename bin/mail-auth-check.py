@@ -66,6 +66,7 @@ DNSBL_IP_ZONES = ("bl.spamcop.net", "zen.spamhaus.org", "b.barracudacentral.org"
 DNSBL_DOMAIN_ZONES = ("multi.surbl.org", "multi.uribl.com", "dbl.spamhaus.org")
 HOSTNAME = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}$")
 SELECTOR = re.compile(r"^[A-Za-z0-9._-]+$")
+ENV_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 # Documentation ranges (RFC 5737) are accepted on purpose: examples and tests use them, and Python's is_global rejects them.
 # Everything else must be globally routable: private, shared, loopback, link-local and reserved space says nothing to a
 # public blocklist.
@@ -108,7 +109,10 @@ class DigResolver:
 
     A query with no explicit server goes to a PUBLIC recursive resolver, never the system one: on a network with
     split-horizon DNS the system resolver returns an internal view of the domain, and what matters is what
-    receivers on the internet see. Per-nameserver queries (delegation) name their server explicitly.
+    receivers on the internet see. Per-nameserver queries (delegation) name their server explicitly; a server given
+    as a HOSTNAME is first resolved through the same public resolver (dig would otherwise resolve `@hostname` with the
+    system resolver). Server names come from DNS, which is untrusted input: anything that is not a plain hostname or
+    an IP literal is refused, so it can never reach dig's command line.
     """
 
     def __init__(self, timeout: int = 4, recursive: str = DEFAULT_RESOLVER):
@@ -116,14 +120,44 @@ class DigResolver:
             raise ToolMissing("`dig` is not installed (package: dnsutils or bind-utils); it is the only lookup tool used.")
         self.timeout = timeout
         self.recursive = recursive
+        self._addresses: dict = {}
 
-    def query(self, name: str, rtype: str, server: str | None = None) -> list:
-        cmd = ["dig", "+short", f"+time={self.timeout}", "+tries=2", "@" + (server or self.recursive), name, rtype]
+    def _run(self, name: str, rtype: str, address: str) -> list:
+        cmd = ["dig", "+short", f"+time={self.timeout}", "+tries=2", "@" + address, name, rtype]
         try:
             out = subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout * 3 + 5).stdout
         except subprocess.TimeoutExpired:
             return []
-        lines = [line.strip() for line in out.splitlines() if line.strip() and not line.startswith(";")]
+        return [line.strip() for line in out.splitlines() if line.strip() and not line.startswith(";")]
+
+    def _server_address(self, server: str | None):
+        if server is None:
+            return self.recursive
+        try:
+            ipaddress.ip_address(server)
+            return server
+        except ValueError:
+            pass
+        host = server.strip().rstrip(".").lower()
+        if not HOSTNAME.match(host):
+            return None
+        if host not in self._addresses:
+            found = None
+            for line in self._run(host, "A", self.recursive):
+                try:
+                    if ipaddress.ip_address(line).version == 4:
+                        found = line
+                        break
+                except ValueError:
+                    continue
+            self._addresses[host] = found
+        return self._addresses[host]
+
+    def query(self, name: str, rtype: str, server: str | None = None) -> list:
+        address = self._server_address(server)
+        if not address:
+            return []
+        lines = self._run(name, rtype, address)
         if rtype.upper() == "TXT":
             joined = []
             for line in lines:
@@ -541,6 +575,11 @@ def load_config(text: str) -> list:
         provider = item.get("provider", "generic")
         if provider not in PROVIDERS:
             raise ConfigError(f"{name}: provider must be one of {', '.join(PROVIDERS)}, got {provider!r}")
+        for field in ("dkim_selectors", "sending_ips"):
+            if not isinstance(item.get(field, []), list):
+                raise ConfigError(f"{name}: {field} must be a list, got {item[field]!r}")
+        if not isinstance(item.get("expect_mail", True), bool):
+            raise ConfigError(f"{name}: expect_mail must be true or false (unquoted), got {item['expect_mail']!r}")
         selectors = [str(s) for s in item.get("dkim_selectors", [])]
         for selector in selectors:
             if not SELECTOR.match(selector):
@@ -554,7 +593,7 @@ def load_config(text: str) -> list:
             if ip.version != 4 or not (ip.is_global or any(ip in net for net in DOCUMENTATION_NETS)):
                 raise ConfigError(f"{name}: sending_ips must be public IPv4 addresses (blocklists say nothing about private ones), got {raw}")
             ips.append(str(ip))
-        specs.append(DomainSpec(name, provider, selectors, ips, bool(item.get("expect_mail", True))))
+        specs.append(DomainSpec(name, provider, selectors, ips, item.get("expect_mail", True)))
     return specs
 
 
@@ -562,6 +601,8 @@ def load_config(text: str) -> list:
 
 
 def _env_state(state_dir: Path, env: str) -> Path:
+    if not ENV_NAME.match(env or ""):
+        raise ValueError(f"{env!r} is not a valid environment name (letters, digits, - and _)")
     return Path(state_dir) / "mail-auth" / env
 
 
@@ -591,7 +632,7 @@ def status(state_dir, env: str, max_age_days: int, now: datetime) -> tuple:
         return 3, f"mail-auth-check has never run for environment {env!r}"
     try:
         age = (now - datetime.fromisoformat(report["generated"])).days
-    except (KeyError, ValueError):
+    except (KeyError, ValueError, TypeError):
         return 3, "the last saved report has no usable timestamp"
     summary = report.get("summary", {})
     overall = summary.get("overall", "unknown")
@@ -662,7 +703,14 @@ def main(argv=None, resolver=None, now=None) -> int:
 
     now = now or datetime.now(timezone.utc)
     root = _repo_root()
-    env = args.env or _default_env(root)
+    env = args.env if args.env is not None else _default_env(root)
+    if not ENV_NAME.match(env):
+        print(f"mail-auth-check: {env!r} is not a valid environment name (letters, digits, - and _)", file=sys.stderr)
+        return 4
+    if args.save and args.domain:
+        print("mail-auth-check: --save needs a configuration-driven run, not --domain: an ad-hoc subset saved as the "
+              "baseline would make the next scheduled run compare against a partial set", file=sys.stderr)
+        return 4
     state_dir = Path(args.state_dir) if args.state_dir else _main_checkout(root) / ".local"
 
     if args.status:
