@@ -1,0 +1,198 @@
+---
+# deploy-compose-app.yml — Deploy (or update) a Docker Compose application from a PRIVATE
+# GitHub repository onto a guest that already has Docker and SSH (opskit #425).
+#
+# Layer order: provision-compose-app-lxc.yml creates the container, bootstrap-lxc-access.yml
+# gives it SSH, install-docker.yml gives it Docker, and this play puts the application on top.
+# Per the IaC rule this is system/deployment state, so this file is the rebuild path.
+#
+# GitHub access: the repository is private, so the guest clones over SSH with its own
+# dedicated, read-only DEPLOY KEY. This play generates the keypair on the guest when absent
+# and FAILS with the PUBLIC key in the message if the clone is rejected: add that key as a
+# read-only deploy key on the repository, then re-run (two runs on first deployment is
+# expected, the same pattern as deploy-buildsmith.yml). The private key never leaves the guest
+# and is never read or printed by this play.
+#
+# Host keys: GitHub's SSH host keys are taken from GitHub's own published list
+# (https://api.github.com/meta), never trusted on first use.
+#
+# Application state is NOT managed here: the database, uploaded media and application accounts
+# are the application's own data, handled with the project's own backup/restore tooling. For a
+# first deployment that starts from a restored backup, run this play with -e app_up=false so the
+# project's restore script controls the start-up order, then run it again without the override.
+#
+# Run from this repo root (documentation-range values shown):
+#   ansible-playbook -i environments/$ACTIVE_ENV/ansible/inventory.yml \
+#     ansible/playbooks/deploy-compose-app.yml \
+#     -e target_host=<inventory-alias> -e app_name=myapp \
+#     -e app_repo=git@github.com:example-org/myapp.git \
+#     [-e @environments/$ACTIVE_ENV/playbooks/<vars-file>.yml] [-e app_up=false] --check
+
+- name: Deploy a Docker Compose application from a private git repository
+  # target_host is supplied at run time with `-e target_host=<host>`; the assert below
+  # fails loudly for the other required parameters (#83: per-line ignore, never skip_list).
+  hosts: "{{ target_host }}"  # noqa: syntax-check[specific]
+  gather_facts: false
+
+  vars:
+    # --- Required, no defaults. See the first assert. --------------------
+    # app_name   short name; also names the checkout directory and the deploy key
+    # app_repo   git@github.com:<owner>/<repo>.git (private repositories included)
+
+    app_ref: main
+    app_dest: "/opt/{{ app_name }}"
+    app_deploy_key_path: "/root/.ssh/{{ app_name }}_deploy"
+
+    # Host-specific, NON-secret environment lines written into the project's .env (a dict).
+    # Generated secrets already in .env are never touched; values given here ARE written, so do
+    # not pass secrets through it.
+    app_env: {}
+    # Path (relative to the checkout) of the project's script that creates .env with generated
+    # secrets. Run only when .env does not exist yet. Empty = skip.
+    app_env_script: ""
+
+    # Bring the stack up at the end. Set false for a first deployment that restores a backup.
+    app_up: true
+    app_up_command: docker compose up -d --build
+
+  tasks:
+    - name: Require the parameters that must never be guessed
+      ansible.builtin.assert:
+        that:
+          - app_name is defined
+          - app_repo is defined
+        fail_msg: >-
+          Pass -e app_name=<name> and -e app_repo=git@github.com:<owner>/<repo>.git. Neither has
+          a default on purpose: this play installs software and writes a deploy key on a real
+          host, so it must never pick the application or its source by itself.
+
+    - name: Accept only GitHub SSH repository URLs
+      ansible.builtin.assert:
+        that:
+          - app_repo is match('^git@github\.com:[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(\.git)?$')
+        fail_msg: >-
+          app_repo must look like git@github.com:<owner>/<repo>.git. Host-key verification in this
+          play is GitHub-specific; another host would silently skip it, so it is refused.
+
+    - name: Install git
+      ansible.builtin.apt:
+        name: git
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Make sure root's .ssh directory exists
+      ansible.builtin.file:
+        path: /root/.ssh
+        state: directory
+        mode: "0700"
+
+    # Generated once, with no passphrase (it is a per-purpose, revocable, read-only key that lives
+    # only on this guest); `creates` makes re-runs leave an existing key alone.
+    - name: Generate a dedicated deploy key
+      ansible.builtin.command:
+        cmd: >-
+          ssh-keygen -t ed25519 -N '' -C '{{ app_name }}-deploy@{{ inventory_hostname }}'
+          -f {{ app_deploy_key_path }}
+        creates: "{{ app_deploy_key_path }}"
+
+    - name: Read the deploy key's PUBLIC half
+      ansible.builtin.slurp:
+        src: "{{ app_deploy_key_path }}.pub"
+      register: deploy_pub
+      failed_when: false
+      check_mode: false
+
+    # On a first run there is no deploy key until the real run creates it, so under --check the
+    # clone cannot succeed. That is the normal two-run pattern, so preview it instead of failing.
+    - name: Note when a dry run has no deploy key yet
+      ansible.builtin.set_fact:
+        app_preview_only: "{{ ansible_check_mode and (deploy_pub.content is not defined) }}"
+
+    - name: Preview the first-run key handoff
+      ansible.builtin.debug:
+        msg: >-
+          [check mode] no deploy key exists on {{ inventory_hostname }} yet. A real run would generate
+          one, then stop at the clone and print its PUBLIC half; add it as a read-only deploy key on
+          {{ app_repo }} and re-run. The clone, secrets, environment lines and start-up are not
+          previewed until the key exists. Nothing was changed.
+      when: app_preview_only | bool
+
+    - name: Fetch GitHub's published SSH host keys
+      ansible.builtin.uri:
+        url: https://api.github.com/meta
+        return_content: true
+      register: github_meta
+      delegate_to: localhost
+      run_once: true
+      check_mode: false
+
+    - name: Trust only GitHub's published host keys
+      ansible.builtin.known_hosts:
+        path: /root/.ssh/known_hosts
+        name: github.com
+        key: "github.com {{ item }}"
+        state: present
+      loop: "{{ github_meta.json.ssh_keys }}"
+
+    - name: Clone the application, telling the operator which key to authorize if refused
+      when: not (app_preview_only | bool)
+      block:
+        - name: Clone or update the application
+          ansible.builtin.git:
+            repo: "{{ app_repo }}"
+            dest: "{{ app_dest }}"
+            version: "{{ app_ref }}"
+            key_file: "{{ app_deploy_key_path }}"
+            update: true
+          register: app_git
+      rescue:
+        - name: Stop with the public key to add as a read-only deploy key
+          ansible.builtin.fail:
+            msg: >-
+              The clone of {{ app_repo }} was rejected. Add this PUBLIC key as a read-only deploy
+              key on that repository, then re-run this play:
+              {{ (deploy_pub.content | default('') | b64decode) | trim }}
+
+    - name: Generate the application's secrets
+      ansible.builtin.command:
+        cmd: "{{ app_dest }}/{{ app_env_script }}"
+        chdir: "{{ app_dest }}"
+        creates: "{{ app_dest }}/.env"
+      when:
+        - app_env_script | length > 0
+        - not ansible_check_mode
+
+    - name: Write the host-specific environment lines
+      ansible.builtin.lineinfile:
+        path: "{{ app_dest }}/.env"
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+        create: false
+      loop: "{{ app_env | dict2items }}"
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Keep the environment file private
+      ansible.builtin.file:
+        path: "{{ app_dest }}/.env"
+        mode: "0600"
+      failed_when: false
+      when: not ansible_check_mode
+
+    - name: Bring the stack up
+      ansible.builtin.command:
+        cmd: "{{ app_up_command }}"
+        chdir: "{{ app_dest }}"
+      changed_when: true
+      when:
+        - app_up | bool
+        - not ansible_check_mode
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {{ app_name }} checked out at {{ app_git.after | default('(unknown: check mode)') }}
+          ({{ app_ref }}) in {{ app_dest }} on {{ inventory_hostname }}.
+          Stack start: {{ 'done (app_up=true)' if (app_up | bool) else 'NOT started (app_up=false): start it with the project tooling' }}.
+          Not done here: application data and accounts, reverse-proxy routes, DNS.
