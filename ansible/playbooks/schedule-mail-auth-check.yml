@@ -7,6 +7,7 @@
 # warning does not raise the alarm every week. A failed unit is the alert for now (see `systemctl --user --failed`);
 # a fuller notification system (Matrix, email, text message) is tracked as an idea in docs/ideas.md.
 #
+# Several environments can be scheduled on one host: each gets its own unit pair, mail-auth-check-<env>.service/.timer.
 # Per the IaC rule this file is the rebuild path for that schedule.
 #
 # Targets the mail_auth_check_hosts inventory group (ansible_connection: local). The hostname assert below is MANDATORY:
@@ -115,11 +116,11 @@
 
     - name: Write the service unit
       ansible.builtin.copy:
-        dest: "{{ mail_auth_user_units }}/mail-auth-check.service"
+        dest: "{{ mail_auth_user_units }}/mail-auth-check-{{ mail_auth_env }}.service"
         mode: "0644"
         content: |
           [Unit]
-          Description=Email authentication health check, read-only (managed by opskit schedule-mail-auth-check.yml)
+          Description=Email authentication health check for environment {{ mail_auth_env }} (read-only, managed by opskit)
           Documentation=file://{{ mail_auth_root }}/.opencode/skills/mail-auth-check/SKILL.md
 
           [Service]
@@ -132,24 +133,24 @@
 
     - name: Write the timer unit
       ansible.builtin.copy:
-        dest: "{{ mail_auth_user_units }}/mail-auth-check.timer"
+        dest: "{{ mail_auth_user_units }}/mail-auth-check-{{ mail_auth_env }}.timer"
         mode: "0644"
         content: |
           [Unit]
-          Description=Weekly email authentication health check (managed by opskit schedule-mail-auth-check.yml)
+          Description=Weekly email authentication health check for environment {{ mail_auth_env }} (managed by opskit)
 
           [Timer]
           OnCalendar={{ mail_auth_schedule }}
           RandomizedDelaySec={{ mail_auth_delay }}
           Persistent=true
-          Unit=mail-auth-check.service
+          Unit=mail-auth-check-{{ mail_auth_env }}.service
 
           [Install]
           WantedBy=timers.target
 
     - name: Enable the timer in the user manager
       ansible.builtin.systemd:
-        name: mail-auth-check.timer
+        name: mail-auth-check-{{ mail_auth_env }}.timer
         scope: user
         enabled: true
         state: started
@@ -162,7 +163,8 @@
       ansible.builtin.debug:
         msg: >-
           The weekly check for environment {{ mail_auth_env }} is scheduled ({{ mail_auth_schedule }}, catches up after
-          downtime). Look at it with: systemctl --user list-timers mail-auth-check.timer ; systemctl --user --failed ;
-          journalctl --user -u mail-auth-check ; python3 {{ mail_auth_root }}/bin/mail-auth-check.py --env {{ mail_auth_env }} --status.
+          downtime). Look at it with: systemctl --user list-timers 'mail-auth-check-*.timer' ; systemctl --user --failed ;
+          journalctl --user -u {{ 'mail-auth-check-' ~ mail_auth_env }} ;
+          python3 {{ mail_auth_root }}/bin/mail-auth-check.py --env {{ mail_auth_env }} --status.
           Not done here: enabling linger (loginctl enable-linger needs root; without it the timer runs only while this
           user is logged in, and Persistent=true catches up at the next login) and any notification beyond a failed unit.
