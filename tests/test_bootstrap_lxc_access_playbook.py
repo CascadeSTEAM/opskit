@@ -130,7 +130,7 @@ def test_the_sshd_config_is_validated_before_ssh_is_enabled():
 
 
 def test_everything_goes_through_pct_on_the_node():
-    for fragment in ("Install", "authorized"):
+    for fragment in ("Install", "Authorize"):
         task = _task_named(fragment)
         assert "pct exec" in _cmd(task) or "pct" in str(task), f"{fragment!r} must act through pct exec"
 

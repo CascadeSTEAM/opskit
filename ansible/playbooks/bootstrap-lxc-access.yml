@@ -1,0 +1,263 @@
+---
+# bootstrap-lxc-access.yml — Give a freshly created LXC container an SSH server and
+# key-only root access (opskit #425), so every later play can reach it over SSH.
+#
+# A new container from provision-compose-app-lxc.yml (#423) is stopped and has no sshd,
+# so there is nothing to connect to. This play therefore acts entirely through `pct` on
+# the Proxmox node, the same bootstrap route provision-runner-lxc.yml uses.
+#
+# SAFETY POSTURE
+#   - Acts only on the container named by ct_id, and only if it exists. It starts a stopped
+#     container; it never stops, resets, resizes, restores or destroys anything.
+#   - Key-only: root may log in with a key (PermitRootLogin prohibit-password) and password
+#     authentication is switched off. The play never sets a password for any account.
+#   - Only PUBLIC keys are accepted. Anything else (a private key pasted by mistake, a path,
+#     a typo) is refused before a single change is made.
+#   - The sshd configuration is validated (`sshd -t`) before the service is enabled.
+#   - Idempotent: packages, keys and the config drop-in are only touched when they differ.
+#   - Dry run (--check): the read-only discovery still runs, so the preview reflects reality;
+#     nothing is changed.
+#
+# Not done here (deliberately): Docker, the application, firewalling, an operator account.
+#
+# Run from this repo root (documentation-range values shown):
+#   ansible-playbook -i environments/$ACTIVE_ENV/ansible/inventory.yml \
+#     ansible/playbooks/bootstrap-lxc-access.yml \
+#     -e target_host=<proxmox-node-alias> -e ct_id=<id> \
+#     -e '{"ct_authorized_keys": ["ssh-ed25519 AAAA... comment"]}' \
+#     [-e ct_ssh_check_host=192.0.2.50] --check
+
+- name: Bootstrap SSH access into an LXC container
+  # target_host is supplied at run time with `-e target_host=<host>`; the assert below
+  # fails loudly for the other required parameters (#83: per-line ignore, never skip_list).
+  hosts: "{{ target_host }}"  # noqa: syntax-check[specific]
+  gather_facts: false
+
+  vars:
+    # --- Required, no defaults. See the first assert. --------------------
+    # ct_id                container ID of an EXISTING container on this node
+    # ct_authorized_keys   list of OpenSSH PUBLIC key lines to authorize for root
+
+    # Optional: an address to probe from the node once sshd is up (omit to skip the probe).
+    ct_ssh_check_host: ""
+    ct_ssh_packages:
+      - openssh-server
+      - python3
+      - ca-certificates
+
+  tasks:
+    - name: Require the parameters that must never be guessed
+      ansible.builtin.assert:
+        that:
+          - ct_id is defined
+          - ct_authorized_keys is defined
+        fail_msg: >-
+          Pass -e ct_id=<id> and -e '{"ct_authorized_keys": ["<public key line>"]}'.
+          Neither has a default on purpose: this play opens SSH on a container, so it must
+          never pick the container or the keys by itself.
+
+    - name: Refuse anything that is not a public key
+      ansible.builtin.assert:
+        that:
+          - ct_authorized_keys is not string
+          - ct_authorized_keys | length > 0
+          - ct_authorized_keys | select('search', 'PRIVATE KEY') | list | length == 0
+          - ct_authorized_keys | select('search', '[\r\n]') | list | length == 0
+          - >-
+            ct_authorized_keys
+            | select('match', '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-nistp256@openssh.com) [A-Za-z0-9+/=]+( .*)?$')
+            | list | length == ct_authorized_keys | length
+        fail_msg: >-
+          ct_authorized_keys must be a non-empty list of single-line OpenSSH PUBLIC keys
+          (ssh-ed25519 ..., ssh-rsa ..., ecdsa-sha2-... or an sk- key). Private key material,
+          paths, multi-line values and anything else are refused before any change is made.
+
+    # Read-only discovery. check_mode: false so a --check run still sees the real state.
+    - name: Read the container config
+      ansible.builtin.command: "pct config {{ ct_id }}"
+      register: ct_cfg
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Refuse to act on a container that does not exist
+      ansible.builtin.assert:
+        that:
+          - ct_cfg.rc == 0
+        fail_msg: >-
+          CT {{ ct_id }} does not exist on {{ target_host }}. This play only bootstraps an
+          existing container; create it first (provision-compose-app-lxc.yml).
+
+    - name: Read the container status
+      ansible.builtin.command: "pct status {{ ct_id }}"
+      register: ct_state
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Start the container
+      ansible.builtin.command: "pct start {{ ct_id }}"
+      changed_when: true
+      when: "'status: stopped' in ct_state.stdout"
+
+    - name: Wait for the container to be running
+      ansible.builtin.command: "pct status {{ ct_id }}"
+      register: ct_running
+      until: "'status: running' in ct_running.stdout"
+      retries: 15
+      delay: 2
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Report what check mode would do
+      ansible.builtin.debug:
+        msg: >-
+          [check mode] CT {{ ct_id }} exists and is
+          {{ 'STOPPED: would start it' if 'status: stopped' in ct_state.stdout else 'already running' }};
+          would install {{ ct_ssh_packages | join(', ') }} if missing, authorize
+          {{ ct_authorized_keys | length }} public key(s) for root, write key-only sshd settings
+          (PermitRootLogin prohibit-password, PasswordAuthentication no), validate the sshd
+          config and enable the SSH service. Nothing was changed.
+      when: ansible_check_mode
+
+    # ---- Everything below needs a running container, so it is skipped under --check ----
+
+    - name: Wait for the container's network to resolve names
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ ct_id }}", --, getent, hosts, deb.debian.org]
+      register: ct_dns
+      until: ct_dns.rc == 0
+      retries: 20
+      delay: 3
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Check which packages are already installed
+      ansible.builtin.command:
+        argv: "{{ ['pct', 'exec', ct_id | string, '--', 'dpkg-query', '-W', '-f=${Package} ${Status}\\n'] + ct_ssh_packages }}"
+      register: ct_pkgs
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: not ansible_check_mode
+
+    - name: Install the SSH server and Python
+      ansible.builtin.command:
+        argv:
+          - pct
+          - exec
+          - "{{ ct_id }}"
+          - --
+          - sh
+          - -c
+          - >-
+            apt-get update -qq &&
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq {{ ct_ssh_packages | join(' ') }}
+      changed_when: true
+      when:
+        - not ansible_check_mode
+        - ct_ssh_packages | reject('in', (ct_pkgs.stdout | default('')) | regex_findall('(\S+) install ok installed')) | list | length > 0
+
+    - name: Create root's .ssh directory
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ ct_id }}", --, install, -d, -m, "700", /root/.ssh]
+      changed_when: false
+      when: not ansible_check_mode
+
+    # The key is passed as a positional argument ($1), never interpolated into the shell
+    # text, so nothing in it can be interpreted by the shell. A key is appended only when
+    # that exact line is not already present.
+    - name: Authorize the public keys for root
+      ansible.builtin.command:
+        argv:
+          - pct
+          - exec
+          - "{{ ct_id }}"
+          - --
+          - sh
+          - -c
+          - |
+            umask 077
+            touch /root/.ssh/authorized_keys
+            chmod 600 /root/.ssh/authorized_keys
+            grep -qxF "$1" /root/.ssh/authorized_keys || { printf '%s\n' "$1" >> /root/.ssh/authorized_keys; echo ADDED; }
+          - sh
+          - "{{ item }}"
+      register: ct_keys
+      changed_when: "'ADDED' in ct_keys.stdout"
+      loop: "{{ ct_authorized_keys }}"
+      when: not ansible_check_mode
+
+    - name: Write the key-only sshd settings
+      ansible.builtin.command:
+        argv:
+          - pct
+          - exec
+          - "{{ ct_id }}"
+          - --
+          - sh
+          - -c
+          - |
+            mkdir -p /etc/ssh/sshd_config.d
+            printf '%s\n' 'PermitRootLogin prohibit-password' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' > /tmp/10-opskit.conf
+            if cmp -s /tmp/10-opskit.conf /etc/ssh/sshd_config.d/10-opskit.conf; then rm -f /tmp/10-opskit.conf; else mv /tmp/10-opskit.conf /etc/ssh/sshd_config.d/10-opskit.conf; echo CHANGED; fi
+      register: ct_sshd_conf
+      changed_when: "'CHANGED' in ct_sshd_conf.stdout"
+      when: not ansible_check_mode
+
+    - name: Validate the sshd configuration
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ ct_id }}", --, sshd, -t]
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Check whether the SSH service is already active and enabled
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ ct_id }}", --, sh, -c, "systemctl is-active ssh && systemctl is-enabled ssh"]
+      register: ct_ssh_svc
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: not ansible_check_mode
+
+    - name: Enable and start the SSH service
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ ct_id }}", --, systemctl, enable, --now, ssh]
+      changed_when: true
+      when:
+        - not ansible_check_mode
+        - ct_ssh_svc.rc != 0
+
+    # A running sshd that picked up a config change needs a reload; harmless when unchanged.
+    - name: Reload sshd so the settings are live
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ ct_id }}", --, systemctl, reload, ssh]
+      changed_when: true
+      when:
+        - not ansible_check_mode
+        - ct_sshd_conf.changed
+        - ct_ssh_svc.rc == 0
+
+    - name: Probe the SSH port from the node
+      ansible.builtin.command:
+        argv: [timeout, "5", bash, -c, "echo > /dev/tcp/{{ ct_ssh_check_host }}/22"]
+      register: ct_probe
+      until: ct_probe.rc == 0
+      retries: 10
+      delay: 2
+      changed_when: false
+      when:
+        - not ansible_check_mode
+        - ct_ssh_check_host | length > 0
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          CT {{ ct_id }} on {{ target_host }} now has an SSH server with key-only root login;
+          {{ ct_authorized_keys | length }} public key(s) authorized
+          ({{ ct_keys.results | selectattr('changed') | list | length }} newly added).
+          Connect with an SSH alias for the container's address (never a raw IP).
+          Port 22 probe from the node:
+          {{ 'answered' if (ct_ssh_check_host | length > 0) else 'skipped (no ct_ssh_check_host given)' }}.
+          Not done here: Docker, the application, a firewall, an operator account.
+      when: not ansible_check_mode
