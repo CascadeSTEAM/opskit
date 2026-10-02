@@ -68,7 +68,12 @@ def _with_guards(tasks, inherited=""):
 
 
 def _task_named(fragment):
-    hits = [t for t in _flatten(_tasks()) if fragment.lower() in str(t.get("name", "")).lower()]
+    """An exact name wins over a substring match (so "Report" is the final report, not "Report that ... exists")."""
+    tasks = _flatten(_tasks())
+    exact = [t for t in tasks if str(t.get("name", "")) == fragment]
+    if exact:
+        return exact[0]
+    hits = [t for t in tasks if fragment.lower() in str(t.get("name", "")).lower()]
     assert hits, f"no task whose name contains {fragment!r}"
     return hits[0]
 
@@ -172,9 +177,12 @@ def test_the_firewall_is_an_explicit_choice():
 def test_the_vnic_firewall_flag_follows_the_choice():
     cmd = _cmd(_create_task())
     assert "firewall=1" in cmd
-    assert re.search(r"\{%-?\s*if\s+ct_firewall[^%]*%\}[^{]*firewall=1", cmd) or re.search(
-        r"\{\{[^}]*ct_firewall[^}]*firewall=1", cmd
-    ), "firewall=1 must be emitted only when ct_firewall is true"
+    conditional = (
+        re.search(r"\{%-?\s*if\s+ct_firewall[^%]*%\}[^{]*firewall=1", cmd)
+        or re.search(r"\{\{[^}]*ct_firewall[^}]*firewall=1", cmd)  # {{ 'x firewall=1' ... }} after the condition
+        or re.search(r"\{\{[^}]*firewall=1[^}]*ct_firewall[^}]*\}\}", cmd)  # {{ ',firewall=1' if ct_firewall }}
+    )
+    assert conditional, "firewall=1 must be emitted only when ct_firewall is true"
 
 
 def test_firewall_rules_and_datacenter_assertion_apply_only_when_chosen():

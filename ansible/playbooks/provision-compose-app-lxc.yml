@@ -1,0 +1,327 @@
+---
+# provision-compose-app-lxc.yml — Create an unprivileged LXC container on a
+# Proxmox node that can run Docker, to host a Docker Compose application
+# (opskit #423). Generic cousin of provision-erpnext-dev-lxc.yml: everything
+# environment-specific is a variable the caller supplies.
+#
+# Per .opencode/rules/iac-required.md the container is system/deployment state,
+# so its rebuild path is this playbook, not a hand-run `pct create`.
+#
+# SAFETY POSTURE
+#   - Create-only and idempotent: an existing container is never recreated,
+#     reconfigured or destroyed. If the target ID is used by something whose
+#     hostname is not ct_hostname, the play FAILS rather than adopting it.
+#   - Nothing the environment owns is invented: ct_id, ct_ip, ct_gateway and
+#     ct_hostname have NO defaults. A guessed address either collides with a
+#     live host or yields an unreachable container, and both look like success.
+#   - The firewall is an explicit choice (ct_firewall, default true):
+#       true  -> the vNIC gets firewall=1 and a default-deny rules file is
+#                written. Proxmox only honours that when the DATACENTER firewall
+#                is on, so the play asserts it first (opt out knowingly with
+#                -e require_datacenter_firewall=false).
+#       false -> no firewall flag, no rules file, no datacenter precondition.
+#                The report then says plainly that the container is NOT
+#                firewalled. Use this on a node whose datacenter firewall is
+#                off by design; do not enable cluster-wide state as a side
+#                effect of provisioning one container.
+#   - Docker needs nesting and keyctl inside an unprivileged container; both
+#     are set. Installing Docker and deploying the application are separate
+#     plays, deliberately not done here.
+#
+# Dry run first (--check): the read-only discovery steps still run, so the
+# preview reflects the node's real state; nothing is created.
+#
+# Run from this repo root (documentation-range values shown):
+#   ansible-playbook -i environments/$ACTIVE_ENV/ansible/inventory.yml \
+#     ansible/playbooks/provision-compose-app-lxc.yml \
+#     -e target_host=<proxmox-node-alias> -e ct_id=<id> \
+#     -e ct_hostname=<name> -e ct_ip=192.0.2.50/24 -e ct_gateway=192.0.2.1 \
+#     [-e @environments/$ACTIVE_ENV/playbooks/<vars-file>.yml] --check
+
+- name: Provision a Docker-capable LXC container for a compose application
+  # target_host is supplied at run time with `-e target_host=<host>`; the
+  # linter cannot know that, and the assert below fails loudly if it is
+  # missing. A per-line ignore, never skip_list (#83).
+  hosts: "{{ target_host }}"  # noqa: syntax-check[specific]
+  gather_facts: false
+
+  vars:
+    # --- Required, no defaults. See the assert below. --------------------
+    # ct_id        container ID to create
+    # ct_hostname  container hostname (also how an existing container is
+    #              recognised as "ours" when the ID is already in use)
+    # ct_ip        CIDR address for the container, e.g. 192.0.2.50/24
+    # ct_gateway   default gateway for the container
+
+    # --- Sizing: modest, all overridable ---------------------------------
+    ct_cores: 2
+    ct_memory_mb: 2048
+    ct_swap_mb: 1024
+    ct_disk_gb: 20
+
+    # --- Placement -------------------------------------------------------
+    ct_storage: local-lvm
+    ct_template_storage: local
+    ct_bridge: vmbr0
+    ct_ostemplate_name: debian-12-standard_12.12-1_amd64.tar.zst
+
+    # --- Name resolution: omitted from the command when empty ------------
+    ct_nameserver: ""
+    ct_searchdomain: ""
+
+    # --- Behaviour -------------------------------------------------------
+    ct_unprivileged: true
+    ct_onboot: false
+    ct_start_after_create: false
+
+    # Firewall: see SAFETY POSTURE above.
+    ct_firewall: true
+    # Only consulted when ct_firewall is true.
+    require_datacenter_firewall: true
+
+  tasks:
+    - name: Require the parameters that must never be guessed
+      ansible.builtin.assert:
+        that:
+          - ct_id is defined
+          - ct_hostname is defined
+          - ct_ip is defined
+          - ct_gateway is defined
+        fail_msg: >-
+          Pass -e ct_id=<id> -e ct_hostname=<name> -e ct_ip=<address/prefix>
+          -e ct_gateway=<address>. The ID and address are allocated per
+          environment and have no default on purpose: inventing one would
+          either collide with a live guest or silently create an unreachable
+          container.
+
+    - name: Reject an address that is not in CIDR form
+      ansible.builtin.assert:
+        that:
+          - "'/' in ct_ip"
+        fail_msg: >-
+          ct_ip must include a prefix length (e.g. 192.0.2.50/24). Without one
+          pct assumes /24, which is a guess about someone else's network.
+
+    # Strict literals, not `| bool`: Ansible's bool filter maps any
+    # unrecognised string to false without complaint, so a typo such as
+    # -e ct_firewall=treu would silently build an unfirewalled container.
+    - name: Reject an unrecognised value for the firewall choice
+      ansible.builtin.assert:
+        that:
+          - ct_firewall in [true, false, 'true', 'false', 'True', 'False']
+          - require_datacenter_firewall in [true, false, 'true', 'false', 'True', 'False']
+        fail_msg: >-
+          ct_firewall is '{{ ct_firewall }}' and require_datacenter_firewall is
+          '{{ require_datacenter_firewall }}'; each must be exactly true or
+          false. Refusing to guess: an unrecognised value would otherwise be
+          read as false and quietly drop the firewall.
+
+    # A container firewall does nothing unless the DATACENTER firewall is on.
+    # Checked BEFORE anything is created so a refusal costs nothing. Only when
+    # a firewall was actually asked for.
+    - name: Verify the datacenter firewall can honour a container firewall
+      when: ct_firewall | bool
+      block:
+        - name: Check whether the datacenter firewall config file exists at all
+          ansible.builtin.stat:
+            path: /etc/pve/firewall/cluster.fw
+          register: cluster_fw_stat
+
+        - name: Read the datacenter firewall switch
+          ansible.builtin.slurp:
+            src: /etc/pve/firewall/cluster.fw
+          register: cluster_fw
+          failed_when: false
+          when: cluster_fw_stat.stat.exists
+
+        - name: Establish whether the datacenter firewall is enabled
+          # The LAST `enable:` wins, not the first match anywhere in the file.
+          ansible.builtin.set_fact:
+            datacenter_firewall_on: >-
+              {{ cluster_fw_stat.stat.exists
+                 and (cluster_fw.content is defined)
+                 and (((cluster_fw.content | b64decode)
+                       | regex_findall('(?m)^\s*enable:\s*([01])\s*$')
+                       | last | default('0')) == '1') }}
+            datacenter_firewall_unreadable: >-
+              {{ cluster_fw_stat.stat.exists and (cluster_fw.content is not defined) }}
+
+        - name: Refuse to claim isolation the datacenter firewall would not deliver
+          ansible.builtin.assert:
+            that:
+              - datacenter_firewall_on or not (require_datacenter_firewall | bool)
+              - not (datacenter_firewall_unreadable | bool)
+            fail_msg: >-
+              {{ 'Could NOT READ /etc/pve/firewall/cluster.fw on ' ~ target_host ~
+                 ' (' ~ (cluster_fw.msg | default('unknown error')) ~ '). This is
+                 most likely a permissions or connection problem, so fix that
+                 rather than disabling the check.'
+                 if (datacenter_firewall_unreadable | bool)
+                 else 'The datacenter firewall is NOT enabled on ' ~ target_host ~
+                 ', so a per-container firewall would do nothing and this
+                 container would be fully reachable. Either enable it
+                 deliberately at Datacenter -> Firewall -> Options (cluster-wide
+                 state), or re-run with -e ct_firewall=false to provision
+                 knowingly without a firewall, or with
+                 -e require_datacenter_firewall=false to keep the flag but skip
+                 this check.' }}
+
+    # Read-only discovery. check_mode: false so a --check run still sees the
+    # node's real state; without it these are skipped, existing_ct is never
+    # set, and the dry run shows nothing.
+    - name: Read the existing container config, if any
+      ansible.builtin.command: "pct config {{ ct_id }}"
+      register: existing_ct
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Refuse to touch a container ID already used by something else
+      ansible.builtin.assert:
+        that:
+          - "existing_ct.stdout is search('(?m)^hostname: ' ~ ct_hostname ~ '$')"
+        fail_msg: >-
+          CT {{ ct_id }} already exists on {{ target_host }} and its hostname is
+          not {{ ct_hostname }}. Refusing to adopt or overwrite it: pick a free
+          ct_id, or confirm this really is the container you meant.
+      when: existing_ct.rc == 0
+
+    - name: Report that the container already exists
+      ansible.builtin.debug:
+        msg: >-
+          CT {{ ct_id }} ({{ ct_hostname }}) already exists on {{ target_host }}:
+          leaving it alone. This play creates the container; it does not
+          reconfigure one.
+      when: existing_ct.rc == 0
+
+    # ---- Everything below runs only when the container does not exist ----
+
+    - name: Ensure the OS template is present on the node
+      when: existing_ct.rc != 0
+      block:
+        - name: List templates already downloaded
+          ansible.builtin.command:
+            cmd: "pveam list {{ ct_template_storage }}"
+          register: template_list
+          changed_when: false
+          check_mode: false
+
+        - name: Refresh the template catalogue
+          ansible.builtin.command: pveam update
+          changed_when: true
+          when: ct_ostemplate_name not in template_list.stdout
+
+        - name: Download the OS template
+          ansible.builtin.command:
+            cmd: "pveam download {{ ct_template_storage }} {{ ct_ostemplate_name }}"
+          changed_when: true
+          when: ct_ostemplate_name not in template_list.stdout
+
+    - name: Create the container
+      ansible.builtin.command:
+        cmd: >-
+          pct create {{ ct_id }}
+          {{ ct_template_storage }}:vztmpl/{{ ct_ostemplate_name }}
+          --hostname {{ ct_hostname }}
+          --cores {{ ct_cores }}
+          --memory {{ ct_memory_mb }}
+          --swap {{ ct_swap_mb }}
+          --rootfs {{ ct_storage }}:{{ ct_disk_gb }}
+          --net0 name=eth0,bridge={{ ct_bridge }},ip={{ ct_ip }},gw={{ ct_gateway }}{{ ',firewall=1' if (ct_firewall | bool) else '' }}
+          --unprivileged {{ 1 if (ct_unprivileged | bool) else 0 }}
+          --onboot {{ 1 if (ct_onboot | bool) else 0 }}
+          --features nesting=1{{ ',keyctl=1' if (ct_unprivileged | bool) else '' }}
+          {{ ('--nameserver ' ~ ct_nameserver) if ct_nameserver else '' }}
+          {{ ('--searchdomain ' ~ ct_searchdomain) if ct_searchdomain else '' }}
+          --start 0
+      changed_when: true
+      when: existing_ct.rc != 0
+
+    - name: Write a default-deny firewall rules file for the container  # noqa: command-instead-of-module
+      # Third of the three things Proxmox needs for a firewall (the vNIC flag and
+      # the datacenter switch being the other two). An empty rules file with
+      # policy_in: DROP means nothing reaches the container until a rule is
+      # added deliberately. A plain shell redirect, not ansible.builtin.copy:
+      # /etc/pve is pmxcfs, which rejects chmod() and the atomic rename copy
+      # uses (proven live for the runner LXC play, #209).
+      ansible.builtin.shell: |
+        cat > /etc/pve/firewall/{{ ct_id }}.fw <<'FWEOF'
+        [OPTIONS]
+        enable: 1
+        policy_in: DROP
+        policy_out: ACCEPT
+
+        [RULES]
+        FWEOF
+      when:
+        - existing_ct.rc != 0
+        - ct_firewall | bool
+      changed_when: true
+
+    # Ungated by existing_ct (runs on every real run) so a container that was
+    # created but whose rules file failed to write is not silently left
+    # unfirewalled (#240). Skipped under --check: nothing exists to check yet.
+    - name: Check whether the firewall rules file exists
+      ansible.builtin.stat:
+        path: "/etc/pve/firewall/{{ ct_id }}.fw"
+      register: ct_firewall_rules_file
+      when:
+        - ct_firewall | bool
+        - not ansible_check_mode
+
+    - name: Refuse to report success without a firewall rules file
+      ansible.builtin.assert:
+        that:
+          - ct_firewall_rules_file.stat.exists
+        fail_msg: >-
+          CT {{ ct_id }}'s firewall rules file (/etc/pve/firewall/{{ ct_id }}.fw)
+          is missing. If the container was created on a prior run whose rules
+          write failed, this create-only play will not self-heal it: write the
+          file by hand (content in the task above) or remove and recreate the
+          container.
+      when:
+        - ct_firewall | bool
+        - not ansible_check_mode
+
+    - name: Start the container
+      ansible.builtin.command: "pct start {{ ct_id }}"
+      changed_when: true
+      when:
+        - existing_ct.rc != 0
+        - ct_start_after_create | bool
+
+    - name: Report what check mode would do
+      ansible.builtin.debug:
+        msg: >-
+          [check mode] would create CT {{ ct_id }} ({{ ct_hostname }}) on
+          {{ target_host }}: {{ ct_cores }} cores, {{ ct_memory_mb }} MB RAM,
+          {{ ct_swap_mb }} MB swap, {{ ct_disk_gb }} GB on {{ ct_storage }},
+          {{ ct_ip }} via {{ ct_gateway }} on {{ ct_bridge }}, template
+          {{ ct_ostemplate_name }}, unprivileged={{ ct_unprivileged }},
+          onboot={{ ct_onboot }}, start after create={{ ct_start_after_create }},
+          nesting+keyctl enabled, firewall={{ ct_firewall }}.
+          Nothing was changed.
+      when:
+        - existing_ct.rc != 0
+        - ansible_check_mode
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          CT {{ ct_id }} ({{ ct_hostname }}) provisioned on {{ target_host }}:
+          {{ ct_cores }} cores, {{ ct_memory_mb }} MB RAM, {{ ct_disk_gb }} GB disk,
+          nesting+keyctl enabled.
+          Firewall: {{ ('ISOLATED (default-deny rules written, vNIC firewall on,
+                         datacenter firewall on).'
+                         if (datacenter_firewall_on | default(false) | bool)
+                         else 'rules and vNIC flag set, but the datacenter
+                         firewall is off, so they are inert and this container
+                         is reachable.')
+                       if (ct_firewall | bool)
+                       else 'NOT firewalled (ct_firewall=false): this container
+                         is reachable on its network.' }}
+          Next: install Docker and deploy the compose stack, which are separate
+          plays and deliberately not done here.
+      when:
+        - existing_ct.rc != 0
+        - not ansible_check_mode
