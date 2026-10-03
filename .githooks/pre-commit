@@ -3,6 +3,15 @@ set -euo pipefail
 
 echo "=== opskit pre-commit ==="
 
+# Worktree isolation — refuse commits on main in the primary checkout.
+# The agent must acknowledge the override via --allow-main (hard to do accidentally).
+# This is the only reliable gate: pre-push is too late, commit-msg has no content,
+# and procedural checks in my workflow are not enforced. See worktree-isolation.md.
+bash bin/check-worktree.sh 2>/dev/null || {
+    echo "  To override (acknowledge the risk): bin/check-worktree.sh --allow-main"
+    exit 1
+}
+
 # Fast grep-based secret scan. Patterns live in bin/secret-scan.sh, shared with
 # CI, so the local gate and the server-side gate cannot drift — they did, and a
 # commit that passed every local check failed CI on a pattern the hook lacked
