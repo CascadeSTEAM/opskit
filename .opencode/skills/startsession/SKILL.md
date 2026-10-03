@@ -1,127 +1,67 @@
 ---
 name: startsession
-description: Bring the opskit repo and its subfolders up to date at session start — git fetch/pull on the current branch, verify .githooks hooksPath, and check worktrees and gitignored environment layers via env-sync.sh. Use when starting a session, or when told to update/sync this project folder and any subfolders.
+description: Bring the opskit repo and its subfolders up to date at session start — git fetch/pull on the current branch, verify .githooks hooksPath, and check worktrees and gitignored environment layers via env-sync.sh. Use when starting a session, or when told to update/sync this project folder and its subfolders.
 mode: skill
 triggers: startsession,start session,session start,update project folder,update this project,sync repo,project update
 ---
 
 # Startsession
 
-<!-- Scaffolded by bin/automation-ladder.py. Replace the placeholder
-     steps but KEEP step 0: it is how the automation ladder measures
-     whether this skill deserves a codified script/tool. -->
+**Primary tool:** `bin/startsession.sh` — a single-command codification of
+the full session-start procedure (usage tracking, sync, hooks, worktrees,
+env layers, context surfacing, vault check). Use this instead of running
+the steps manually.
 
-## Steps
+```bash
+bash bin/startsession.sh                          # full run
+bash bin/startsession.sh --no-fetch               # skip fetch (local state current)
+bash bin/startsession.sh --no-env-pull            # status only for env layers
+```
 
-0. **Usage tracking (always, before anything else):**
+## Steps (for manual debugging or when the script fails)
 
-   ```bash
-   python3 bin/automation-ladder.py tick --skill startsession
-   ```
+0. **Usage tracking:** `python3 bin/automation-ladder.py tick --skill startsession`.
+    If `"offer_upgrade": true` was just consumed (you are reading the
+    codification it triggered), this is expected. If asked to `mute` instead,
+    run `python3 bin/automation-ladder.py mute --skill startsession`.
 
-   If the output has `"offer_upgrade": true`, tell the operator this
-   skill has crossed the usage threshold and offer to codify it. Target
-   selection (IaC rule): if this skill changes the state of ANY system —
-   remote host or the local workstation — the codified form is an
-   **Ansible playbook/role** in `ansible/`; a plain script only for
-   repo/dev workflow. Offer an MCP tool under `mcp/` if a
-   playbook/script already backs it. If they decline permanently, run
-   `python3 bin/automation-ladder.py mute --skill startsession`
-   so they are never asked again.
+1. **Branch check** — `git branch --show-current` must print the repo's
+    default branch (`main`). If off-`main`, STOP and report; never switch
+    it yourself (worktree hard rule).
+2. **Sync** — `git fetch --all --prune && git pull`. If it fails, STOP and
+    report; never force-merge.
+3. **Hooks** — `git config core.hooksPath` must resolve to `.githooks`.
+    If not, `bash bin/setup-hooks.sh`.
+4. **Worktrees** — `git worktree list`, `git -C <path> pull --ff-only`
+    for each (skip primary checkout and `worktree/` subdirectory).
+5. **Env layers** — `bin/env-sync.sh <env> status` for each directory
+    under `environments/` except `example/`. Report dirty/clean.
+6. **Context surfacing:**
+    - Read `RESUME.md` first line if present.
+    - Check `.local/session-reminders.md` if present.
+    - `bin/hd-ticket-triage.py --summary` (one-line, ignore errors).
+    - Mail-auth freshness if `mail-domains.yml` exists.
+7. **Vault check** — `bin/bwunlock.sh --check`. Exit 1 → offer to run
+    the default form; never run it yourself.
+8. **Report** — one line per item: branch, sync, hooks, each worktree,
+    each env layer, context items, vault.
 
-1. **Verify the primary checkout is on the default branch (hard rule,
-   AGENTS.md "Git & GitHub Workflow" #2 — worktree required).** This
-   directory may be shared by concurrent sessions; it should never be
-   anywhere but `main` outside of a session actively mid-worktree-setup.
+## Failure handling
 
-   ```bash
-   git branch --show-current
-   ```
+- Primary checkout not on `main` → STOP, report the branch and its state
+  (`git status`, `git log -1`), ask how to proceed.
+- `git pull` conflict or divergent branches → STOP, report the affected
+  branch and files, ask how to proceed.
+- `env-sync.sh` reports unpushed/uncloned work → report it; do not push
+  without the operator's go-ahead.
+- Vault session stale → OFFER `bin/bwunlock.sh`; never auto-run it.
 
-   If it isn't the repo's default branch (`main`), STOP and report —
-   don't switch it yourself. Being off-`main` here is itself a sign of the
-   exact drift the worktree hard rule exists to prevent (another session
-   may have left work in progress there), and silently switching could
-   destroy it. Ask the operator how to proceed.
-2. **Sync (hard rule, AGENTS.md "Git & GitHub Workflow" #1):** only once
-   step 1 confirms `main`:
+## Do NOT
 
-   ```bash
-   git fetch --all --prune && git pull
-   ```
-
-   If the pull fails (conflict, diverged), STOP and report — do not merge or
-   rebase on your own.
-3. **Verify hooks are wired (hard rule "Hooks auto-setup"):**
-
-   ```bash
-   git config core.hooksPath   # must print .githooks
-   ```
-
-   If it does not, run `bash bin/setup-hooks.sh` and confirm it prints `.githooks`.
-4. **Update subfolders that are their own repos:**
-   - Worktrees: `git worktree list` — pull each one on its own branch.
-   - Environment layers (gitignored, private): `bin/env-sync.sh <env> status`
-     for each dir under `environments/` except `example/`; run `clone`/`pull`
-     as it reports. A bare `git pull` never touches these.
-5. **Pin this session's ticket if others may be working in this same
-   checkout.** `.current-ticket` is shared, unscoped file state — any
-   concurrent session that runs `switch-env.sh`/`open-ticket.sh` here
-   silently clobbers it out from under every other session (hit live
-   during opskit #209's handoff-skill rehearsal: a peer session switched
-   environments mid-session and a later commit would have been tagged
-   against the wrong ticket entirely). If more than one session might
-   touch this checkout at once, export `OPSKIT_TICKET=<this session's
-   ticket>` now — `bin/active_ticket.py` honors it over `.current-ticket`
-   (opskit #158) — and re-supply it inline on every command that needs it,
-   since exported shell state does not persist between separate tool
-   calls in this harness. Skip this step for a genuinely solo session.
-6. **Surface persistent session context.** These are read-only inputs — this
-   step never writes any of them, only reads and reports what's there:
-   - `RESUME.md` (repo root): if present, read it and lead your report with
-     its "Start here" / open-risk content — it's the last session's own
-     handoff note, written for exactly this moment.
-   - `.local/session-reminders.md`: a gitignored, per-clone convention file
-     (same `.local/` directory helpdesk-ticket already uses for local
-     templates) for operator-authored reminders that don't belong in a
-     tracked file. If present, read it and fold it in. If absent, say
-     nothing about it — it's opt-in, not a gap to flag.
-   - HD ticket triage summary: `bin/hd-ticket-triage.py --summary` (defaults
-     to the active environment; see the `ticket-triage` skill). If it errors
-     (stale vault session, `gh` unavailable, no active environment set),
-     report the one-line failure and move on — a missing vault unlock at
-     session start is routine, not a blocker for anything else in this list.
-   - Mail-authentication freshness (opt-in: only when the active environment has
-     `environments/$ACTIVE_ENV/mail-domains.yml`; otherwise say nothing):
-
-     ```bash
-     if [ -f "environments/$ACTIVE_ENV/mail-domains.yml" ]; then
-       python3 bin/mail-auth-check.py --status --max-age-days 10
-     fi
-     ```
-
-     Exit 0 → say nothing. Exit 3 (never run, or the last run is older than 10 days) or
-     exit 2 (the last run found a FAIL) → one line to the operator, and offer to run
-     `python3 bin/mail-auth-check.py --save` (read-only lookups). Never change DNS from
-     here; see the `mail-auth-check` skill for the proposal and approval procedure.
-7. **Offer vault-session refresh if the vault is locked (offer-only, never
-   automatic).** A stale session cache needs the operator's master password
-   behind a popup — an agent must never do that unprompted. Check quietly:
-
-   ```bash
-   bin/bwunlock.sh --check >/dev/null 2>&1
-   ```
-
-   - Exit 0 → nothing to do, say nothing.
-   - Exit 1 → mention that the vault session is stale/locked and offer
-     `bin/bwunlock.sh` (opens a password popup). Wait for a go/no-go; do not
-     run the default (writing) form yourself. `BW_SESSION` popups and
-     `bitwarden_unlock` also work, but `bwunlock.sh` is the documented path for
-     this repo and writes the cache file agents consume.
-8. **Report back:** one line each for the branch check, repo sync, hooks
-   path, each subfolder/Env layer, whether a ticket pin was set, and the
-   persistent-context surfacing above (plus the mail-authentication nudge when it
-   fired) — state synced, or what is blocked and why.
+- Start infra work from this skill alone — infra changes additionally
+  require `switch-env.sh` + a helpdesk ticket (see AGENTS.md "Session
+  start sequence"). This skill only brings the repo tree up to date.
+- Edit or commit anything while doing the update itself.
 
 ## Failure handling
 
